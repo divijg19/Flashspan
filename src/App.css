@@ -1,0 +1,669 @@
+.app {
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.endScreen {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.endCard {
+  width: min(560px, 92vw);
+  border-radius: 16px;
+  padding: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.65);
+  cursor: pointer;
+  user-select: none;
+}
+
+.endCard:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.28);
+  outline-offset: 3px;
+}
+
+.endTitle {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.endSub {
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.answerCard {
+  width: min(900px, 94vw);
+  height: min(720px, 88vh);
+  border-radius: 16px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+}
+
+.endBody {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  overflow: auto;
+  padding: 2px 0;
+}
+
+.endFooter {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.endFooterInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.autoRepeatStatus {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  opacity: 0.75;
+  letter-spacing: 0.04em;
+}
+
+.answerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.answerActions {
+  display: flex;
+  gap: 10px;
+}
+
+.answerText {
+  flex: 1;
+  overflow: auto;
+  width: 100%;
+  max-width: 720px;
+  text-align: left;
+  margin: 0;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.55);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.endHeaderCenter {
+  text-align: center;
+  width: 100%;
+  max-width: 560px;
+}
+
+.actionField {
+  width: 100%;
+  max-width: 560px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.centerActions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sumInput {
+  width: 100%;
+  max-width: 560px;
+  height: 54px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 22px;
+  text-align: center;
+  outline: none;
+}
+
+.sumInput::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.sumInput:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.22);
+  outline-offset: 2px;
+}
+
+.sumCard {
+  padding: 14px 16px;
+  width: 100%;
+  max-width: 520px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  display: grid;
+  gap: 6px;
+  text-align: center;
+  margin: 0 auto;
+}
+
+.sumLabel {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.sumValue {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 40px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.answerInput {
+  flex: 1;
+  resize: none;
+  width: 100%;
+  margin: 0;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 18px;
+  line-height: 1.35;
+  text-align: center;
+  outline: none;
+}
+
+.answerInput:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.22);
+  outline-offset: 2px;
+}
+
+.validationText {
+  margin: 0;
+  width: 100%;
+  max-width: 560px;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.panel {
+  width: min(520px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.iconButton {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: transparent;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 30;
+}
+
+.iconButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.advancedOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.advancedPanel {
+  position: fixed;
+  top: 66px;
+  right: 18px;
+  width: min(360px, 88vw);
+  box-sizing: border-box;
+  max-height: calc(100vh - 84px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px;
+  border-radius: 12px;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.advancedTitle {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  margin: 0;
+}
+
+.advancedDivider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.advancedSectionTitle {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.hint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  opacity: 0.65;
+  margin-top: -4px;
+}
+
+.title {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fieldRow {
+  display: grid;
+  grid-template-columns: 1fr 140px;
+  gap: 12px;
+  align-items: center;
+}
+
+.label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 14px;
+  opacity: 0.85;
+}
+
+.input {
+  height: 40px;
+  background: transparent;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  padding: 0 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 14px;
+  outline: none;
+}
+
+.input:disabled {
+  opacity: 0.45;
+}
+
+.range {
+  width: 100%;
+  height: 24px;
+  background: transparent;
+}
+
+.range:disabled {
+  opacity: 0.45;
+}
+
+.advancedSetting {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.segmentedOption {
+  position: relative;
+  display: inline-flex;
+}
+
+.segmentedInput {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmentedLabel {
+  min-width: 62px;
+  text-align: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  user-select: none;
+}
+
+.segmentedOption input:checked + .segmentedLabel {
+  background: #fff;
+  color: #000;
+}
+
+.segmentedOption input:disabled + .segmentedLabel {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.segmentedOption input:focus-visible + .segmentedLabel {
+  outline: 2px solid rgba(255, 255, 255, 0.28);
+  outline-offset: 2px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+}
+
+.button {
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: #fff;
+  color: #000;
+  border: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.error {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.number {
+  --len: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  /* Fit long digit strings without overflow (approx monospace glyph width ~0.62em). */
+  font-size: min(70vh, calc(92vw / (var(--len) * 0.62)));
+  line-height: 1;
+  letter-spacing: 0.03em;
+  user-select: none;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+/* Countdown needs a stable, premium composition: digit comfortably inside ring. */
+.number.countdown {
+  font-size: min(44vh, 44vw);
+  letter-spacing: 0.02em;
+}
+
+.countdownShutter {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(74vh, 74vw);
+  height: min(74vh, 74vw);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 0;
+
+  /* Blade-like shutter look (6 segments), kept away from center so digits stay readable. */
+  background:
+    conic-gradient(
+      from -90deg,
+      rgba(255, 255, 255, 0.20) 0deg 18deg,
+      rgba(255, 255, 255, 0.02) 18deg 60deg,
+      rgba(255, 255, 255, 0.20) 60deg 78deg,
+      rgba(255, 255, 255, 0.02) 78deg 120deg,
+      rgba(255, 255, 255, 0.20) 120deg 138deg,
+      rgba(255, 255, 255, 0.02) 138deg 180deg,
+      rgba(255, 255, 255, 0.20) 180deg 198deg,
+      rgba(255, 255, 255, 0.02) 198deg 240deg,
+      rgba(255, 255, 255, 0.20) 240deg 258deg,
+      rgba(255, 255, 255, 0.02) 258deg 300deg,
+      rgba(255, 255, 255, 0.20) 300deg 318deg,
+      rgba(255, 255, 255, 0.02) 318deg 360deg
+    );
+
+  -webkit-mask-image: radial-gradient(circle, transparent 0 33%, #000 34% 100%);
+  mask-image: radial-gradient(circle, transparent 0 33%, #000 34% 100%);
+
+  filter: drop-shadow(0 0 18px rgba(255, 255, 255, 0.12));
+  opacity: 0.55;
+  transform: translate(-50%, -50%);
+}
+
+.countdownShutter.shutterA {
+  animation: shutterSnapA 1s steps(1, end) forwards;
+}
+
+.countdownShutter.shutterB {
+  animation: shutterSnapB 1s steps(1, end) forwards;
+}
+
+@keyframes shutterSnapA {
+  0% {
+    transform: translate(-50%, -50%) rotate(0deg) scale(1);
+    opacity: 0.45;
+  }
+  18% {
+    transform: translate(-50%, -50%) rotate(90deg) scale(0.94);
+    opacity: 0.78;
+  }
+  34% {
+    transform: translate(-50%, -50%) rotate(140deg) scale(1);
+    opacity: 0.50;
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(360deg) scale(1);
+    opacity: 0.45;
+  }
+}
+
+@keyframes shutterSnapB {
+  0% {
+    transform: translate(-50%, -50%) rotate(0deg) scale(1);
+    opacity: 0.45;
+  }
+  18% {
+    transform: translate(-50%, -50%) rotate(90deg) scale(0.94);
+    opacity: 0.78;
+  }
+  34% {
+    transform: translate(-50%, -50%) rotate(140deg) scale(1);
+    opacity: 0.50;
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(360deg) scale(1);
+    opacity: 0.45;
+  }
+}
+
+.countdownRing {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(78vh, 78vw);
+  height: min(78vh, 78vw);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.countdownTrack {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 5;
+}
+
+.countdownProgress {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 5;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  stroke-dasharray: 276.46;
+  stroke-dashoffset: 0;
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.28));
+}
+
+.countdownProgressA {
+  animation: countdownSweepA 1s linear forwards;
+}
+
+.countdownProgressB {
+  animation: countdownSweepB 1s linear forwards;
+}
+
+@keyframes countdownSweepA {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 276.46;
+  }
+}
+
+@keyframes countdownSweepB {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 276.46;
+  }
+}
+
+
+.signedNumber {
+  position: relative;
+  display: inline-block;
+  z-index: 2;
+}
+
+.countdownDigit {
+  position: relative;
+  z-index: 2;
+}
+
+.magnitude {
+  display: inline-block;
+  text-align: center;
+}
+
+.signOverlay {
+  position: absolute;
+  top: 0;
+  right: 100%;
+  width: 1ch;
+  text-align: left;
+  pointer-events: none;
+}
