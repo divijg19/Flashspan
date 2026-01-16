@@ -4,7 +4,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import "./App.css";
 
-invoke("ping").then(console.log);
+if (import.meta.env.DEV) {
+  invoke("ping").then(console.log).catch(() => { });
+}
 
 function isEscapeKey(event) {
   return event.key === "Escape";
