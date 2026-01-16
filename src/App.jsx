@@ -243,6 +243,19 @@ function App() {
     return Math.round(clamped * 10) / 10;
   };
 
+  const goHome = () => {
+    setPhase("idle");
+    setShowAnswer(false);
+    setAnswerText("");
+    setAnswerSum(0);
+    setTypedAnswer("");
+    setValidationSummary("");
+    setShowNumbersList(false);
+    setHasValidated(false);
+    setAutoRepeatRemaining(0);
+    capturedNumbers = [];
+  };
+
   const start = async (opts) => {
     const isAutoRepeatStart = Boolean(opts?.autoRepeat);
 
@@ -709,18 +722,7 @@ function App() {
                       <button
                         class="button"
                         type="button"
-                        onClick={() => {
-                          setPhase("idle");
-                          setShowAnswer(false);
-                          setAnswerText("");
-                          setAnswerSum(0);
-                          setTypedAnswer("");
-                          setValidationSummary("");
-                          setShowNumbersList(false);
-                          setHasValidated(false);
-                          setAutoRepeatRemaining(0);
-                          capturedNumbers = [];
-                        }}
+                        onClick={goHome}
                       >
                         Home
                       </button>
@@ -787,18 +789,7 @@ function App() {
                       <button
                         class="button"
                         type="button"
-                        onClick={() => {
-                          setPhase("idle");
-                          setShowAnswer(false);
-                          setAnswerText("");
-                          setAnswerSum(0);
-                          setTypedAnswer("");
-                          setValidationSummary("");
-                          setShowNumbersList(false);
-                          setHasValidated(false);
-                          setAutoRepeatRemaining(0);
-                          capturedNumbers = [];
-                        }}
+                        onClick={goHome}
                       >
                         Home
                       </button>

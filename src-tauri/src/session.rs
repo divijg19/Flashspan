@@ -25,7 +25,11 @@ pub struct SessionConfig {
 #[derive(Debug, Clone)]
 pub enum SessionState {
     Idle,
-    ShowingNumbers { current: u32, total: u32 },
+    #[allow(dead_code)]
+    ShowingNumbers {
+        current: u32,
+        total: u32,
+    },
     Complete,
 }
 
