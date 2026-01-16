@@ -334,7 +334,7 @@ function App() {
     <div class="app">
       {phase() === "idle" ? (
         <div class="panel">
-          <div class="title">Flashspan</div>
+          <div class="title">Ascent Flash</div>
           <button
             class="iconButton"
             type="button"
