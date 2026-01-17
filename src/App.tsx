@@ -355,10 +355,10 @@ export default function App() {
     setNumbers([]);
 
     const config: SessionConfigInput = {
-      digits_per_number: Math.round(digitsPerNumber()),
+      digits_per_number: Math.trunc(digitsPerNumber()),
       number_duration_s: numberDurationSeconds(),
       delay_between_numbers_s: delayBetweenNumbersSeconds(),
-      total_numbers: Math.round(totalNumbers()),
+      total_numbers: Math.trunc(totalNumbers()),
       allow_negative_numbers: allowNegativeNumbers(),
     };
 
@@ -366,7 +366,7 @@ export default function App() {
       setPhase("starting");
       setDisplayText("");
 
-      setAutoRepeatRemaining(autoRepeatEnabled() ? Math.round(autoRepeatCount()) : 0);
+      setAutoRepeatRemaining(autoRepeatEnabled() ? Math.trunc(autoRepeatCount()) : 0);
 
       await forceFullscreenBeforeStart();
       const resp = await startSession(
@@ -374,7 +374,7 @@ export default function App() {
         autoRepeatEnabled()
           ? {
               enabled: true,
-              repeats: Math.round(autoRepeatCount()),
+              repeats: Math.trunc(autoRepeatCount()),
               delay_s: autoRepeatDelaySeconds(),
             }
           : null

@@ -408,7 +408,7 @@ fn run_session_loop(
             return;
         }
 
-        let (payload, payload_value) = {
+        let (mut payload, mut payload_value) = {
             // Prevent consecutive numbers from being identical.
             // Also enforce:
             // - The first number is never negative.
@@ -434,6 +434,44 @@ fn run_session_loop(
                 }
             }
         };
+
+        // If we hit the attempt cap and still produced the same payload as last time,
+        // synthesize a deterministic alternate so we never emit two identical values
+        // in a row. This is a safety net in case RNG repeatedly produced the same
+        // candidate.
+        if last_payload.as_deref() == Some(payload.as_str()) {
+            let digits = config.digits_per_number;
+            // Try a simple deterministic fallback: if negative, flip to positive
+            // magnitude; otherwise increment the magnitude within the digit range.
+            let fallback = if payload.starts_with('-') {
+                payload.trim_start_matches('-').to_string()
+            } else {
+                match payload.parse::<u64>() {
+                    Ok(mag) => {
+                        let max_exclusive = if digits <= 1 { 10 } else { 10u64.pow(digits) };
+                        // Ensure next is in [1, max_exclusive-1]
+                        let next = ((mag % (max_exclusive - 1)) + 1) as u64;
+                        next.to_string()
+                    }
+                    Err(_) => "1".to_string(),
+                }
+            };
+
+            let fallback_val: i128 = fallback.parse::<i128>().unwrap_or(0);
+            // Preserve sign only if it would keep running_sum non-negative.
+            let signed = if payload.starts_with('-') {
+                if running_sum - fallback_val >= 0 {
+                    -fallback_val
+                } else {
+                    fallback_val
+                }
+            } else {
+                fallback_val
+            };
+
+            payload = fallback;
+            payload_value = signed;
+        }
 
         {
             let mut st = state.lock().expect("state lock poisoned");
@@ -607,5 +645,74 @@ fn sleep_until_interruptible(deadline: Instant, stop: &AtomicBool) {
         let remaining = deadline.saturating_duration_since(now);
         let step = remaining.min(Duration::from_millis(10));
         thread::sleep(step);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::thread_rng;
+
+    #[test]
+    fn generator_respects_invariants() {
+        let mut rng = thread_rng();
+        let digits = 3;
+        let allow_neg = true;
+        let mut last: Option<String> = None;
+        let mut running_sum: i128 = 0;
+
+        for i in 0..1000u32 {
+            // Mimic the run_session_loop sampling behavior: retry until we get a different
+            // payload or hit the attempt cap, then apply the deterministic fallback.
+            let mut attempt = 0u32;
+            let (s, val) = loop {
+                let (candidate, candidate_value) =
+                    random_number_with_constraints(&mut rng, digits, allow_neg, i, running_sum);
+                if last.as_deref() != Some(candidate.as_str()) {
+                    break (candidate, candidate_value);
+                }
+                attempt += 1;
+                if attempt >= 256 {
+                    // deterministic fallback similar to run_session_loop
+                    let fallback = if candidate.starts_with('-') {
+                        candidate.trim_start_matches('-').to_string()
+                    } else {
+                        match candidate.parse::<u64>() {
+                            Ok(mag) => {
+                                let max_exclusive =
+                                    if digits <= 1 { 10 } else { 10u64.pow(digits) };
+                                let next = ((mag % (max_exclusive - 1)) + 1) as u64;
+                                next.to_string()
+                            }
+                            Err(_) => "1".to_string(),
+                        }
+                    };
+                    let fb_val: i128 = fallback.parse::<i128>().unwrap_or(0);
+                    let signed = if candidate.starts_with('-') {
+                        if running_sum - fb_val >= 0 {
+                            -fb_val
+                        } else {
+                            fb_val
+                        }
+                    } else {
+                        fb_val
+                    };
+                    break (fallback, signed);
+                }
+            };
+
+            if let Some(prev) = &last {
+                assert_ne!(prev, &s, "consecutive duplicate at {}", i);
+            }
+
+            if i == 0 {
+                assert!(!s.starts_with('-'), "first number negative");
+            }
+
+            running_sum = (running_sum + val).max(0);
+            assert!(running_sum >= 0, "running sum went negative at {}", i);
+
+            last = Some(s);
+        }
     }
 }

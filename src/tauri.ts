@@ -99,11 +99,11 @@ export async function getAppSettings(): Promise<AppSettings> {
 }
 
 export async function setColorScheme(color_scheme: ColorScheme): Promise<AppSettings> {
-  return invoke<AppSettings>("set_color_scheme", { colorScheme: color_scheme });
+  return invoke<AppSettings>("set_color_scheme", { color_scheme: color_scheme });
 }
 
 export async function setThemeMode(theme_mode: ThemeMode): Promise<AppSettings> {
-  return invoke<AppSettings>("set_theme_mode", { themeMode: theme_mode });
+  return invoke<AppSettings>("set_theme_mode", { theme_mode: theme_mode });
 }
 
 export async function startSession(
@@ -112,7 +112,7 @@ export async function startSession(
 ): Promise<StartSessionResponse> {
   return invoke<StartSessionResponse>("start_session", {
     config,
-    autoRepeat: autoRepeat ?? null,
+    auto_repeat: autoRepeat ?? null,
   });
 }
 
@@ -125,13 +125,13 @@ export async function cancelAutoRepeat(): Promise<void> {
 }
 
 export async function markValidated(session_id: number): Promise<AutoRepeatWaitingPayload | null> {
-  return invoke<AutoRepeatWaitingPayload | null>("mark_validated", { sessionId: session_id });
+  return invoke<AutoRepeatWaitingPayload | null>("mark_validated", { session_id: session_id });
 }
 
 export async function acknowledgeComplete(
   session_id: number
 ): Promise<AutoRepeatWaitingPayload | null> {
-  return invoke<AutoRepeatWaitingPayload | null>("acknowledge_complete", { sessionId: session_id });
+  return invoke<AutoRepeatWaitingPayload | null>("acknowledge_complete", { session_id: session_id });
 }
 
 export async function submitAnswer(
@@ -139,8 +139,8 @@ export async function submitAnswer(
   provided_sum: number
 ): Promise<SubmitAnswerResponse> {
   return invoke<SubmitAnswerResponse>("submit_answer", {
-    sessionId: session_id,
-    providedSum: provided_sum,
+    session_id: session_id,
+    provided_sum: provided_sum,
   });
 }
 
@@ -149,8 +149,8 @@ export async function submitAnswerText(
   provided_text: string
 ): Promise<SubmitAnswerResponse> {
   return invoke<SubmitAnswerResponse>("submit_answer_text", {
-    sessionId: session_id,
-    providedText: provided_text,
+    session_id: session_id,
+    provided_text: provided_text,
   });
 }
 
