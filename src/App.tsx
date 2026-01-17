@@ -1,18 +1,36 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import "./App.css";
+import {
+  AutoRepeatWaitingPayload,
+  SubmitAnswerResponse,
+  Phase,
+  SessionCompleteV2,
+  acknowledgeComplete,
+  cancelAutoRepeat,
+  onAutoRepeatWaiting,
+  onClearScreen,
+  onCountdownTick,
+  onSessionCompleteLegacy,
+  onSessionCompleteV2,
+  onShowNumberLegacy,
+  onShowNumberV2,
+  ping,
+  SessionConfig,
+  startSessionV2,
+  submitAnswer,
+  stopSession,
+} from "./tauri";
 
 if (import.meta.env.DEV) {
-  invoke("ping").then(console.log).catch(() => { });
+  ping().then(console.log).catch(() => {});
 }
 
-function isEscapeKey(event) {
+function isEscapeKey(event: KeyboardEvent): boolean {
   return event.key === "Escape";
 }
 
-async function setFullscreen(enabled) {
+async function setFullscreen(enabled: boolean): Promise<void> {
   const win = getCurrentWindow();
   try {
     const isFullscreen = await win.isFullscreen();
@@ -24,7 +42,7 @@ async function setFullscreen(enabled) {
   }
 }
 
-async function forceFullscreenBeforeStart() {
+async function forceFullscreenBeforeStart(): Promise<void> {
   const win = getCurrentWindow();
 
   try {
@@ -47,28 +65,63 @@ async function forceFullscreenBeforeStart() {
   throw new Error("Unable to enter fullscreen");
 }
 
-function App() {
-  const [displayText, setDisplayText] = createSignal("");
-  const [phase, setPhase] = createSignal("idle");
-  const [errorText, setErrorText] = createSignal("");
+export default function App() {
+  const [displayText, setDisplayText] = createSignal<string>("");
+  const [phase, setPhase] = createSignal<Phase>("idle");
+  const [errorText, setErrorText] = createSignal<string>("");
 
-  const [showAnswer, setShowAnswer] = createSignal(false);
-  const [answerText, setAnswerText] = createSignal("");
-  const [answerMode, setAnswerMode] = createSignal("reveal");
-  const [typedAnswer, setTypedAnswer] = createSignal("");
-  const [validationSummary, setValidationSummary] = createSignal("");
-  const [showNumbersList, setShowNumbersList] = createSignal(false);
-  const [hasValidated, setHasValidated] = createSignal(false);
-  const [answerSum, setAnswerSum] = createSignal(0);
-  let capturedNumbers = [];
+  const [showAnswer, setShowAnswer] = createSignal<boolean>(false);
+  const [answerText, setAnswerText] = createSignal<string>("");
+  const [answerMode, setAnswerMode] = createSignal<"reveal" | "type">("reveal");
+  const [typedAnswer, setTypedAnswer] = createSignal<string>("");
+  const [validationSummary, setValidationSummary] = createSignal<string>("");
+  const [showNumbersList, setShowNumbersList] = createSignal<boolean>(false);
+  const [hasValidated, setHasValidated] = createSignal<boolean>(false);
+  const [answerSum, setAnswerSum] = createSignal<number>(0);
 
-  const [autoRepeatEnabled, setAutoRepeatEnabled] = createSignal(false);
-  const [autoRepeatCount, setAutoRepeatCount] = createSignal(5);
-  const [autoRepeatDelaySeconds, setAutoRepeatDelaySeconds] = createSignal(5);
-  const [autoRepeatRemaining, setAutoRepeatRemaining] = createSignal(0);
-  const [autoRepeatSecondsLeft, setAutoRepeatSecondsLeft] = createSignal(null);
+  const [sessionId, setSessionId] = createSignal<number | null>(null);
+  const [numbers, setNumbers] = createSignal<number[]>([]);
 
-  const sumCapturedNumbers = (values) => {
+  // Fallback capture for legacy events.
+  let capturedNumbers: string[] = [];
+
+  const [autoRepeatEnabled, setAutoRepeatEnabled] = createSignal<boolean>(false);
+  const [autoRepeatCount, setAutoRepeatCount] = createSignal<number>(5);
+  const [autoRepeatDelaySeconds, setAutoRepeatDelaySeconds] = createSignal<number>(5);
+  const [autoRepeatRemaining, setAutoRepeatRemaining] = createSignal<number>(0);
+  const [autoRepeatNextStartAtMs, setAutoRepeatNextStartAtMs] =
+    createSignal<number | null>(null);
+  const [autoRepeatSecondsLeft, setAutoRepeatSecondsLeft] =
+    createSignal<number | null>(null);
+
+  const [showAdvanced, setShowAdvanced] = createSignal<boolean>(false);
+  const [countdownTickId, setCountdownTickId] = createSignal<number>(0);
+
+  const [digitsPerNumber, setDigitsPerNumber] = createSignal<number>(1);
+  const [numberDurationSeconds, setNumberDurationSeconds] = createSignal<number>(0.5);
+  const [delayBetweenNumbersSeconds, setDelayBetweenNumbersSeconds] = createSignal<number>(0);
+  const [totalNumbers, setTotalNumbers] = createSignal<number>(5);
+
+  const [allowNegativeNumbers, setAllowNegativeNumbers] = createSignal<boolean>(false);
+
+  let sumInputRef: HTMLInputElement | undefined;
+
+  const isRunning = (): boolean => phase() === "starting" || phase() === "flashing";
+
+  const clampInt = (raw: unknown, min: number, max: number): number => {
+    const n = Number.parseInt(String(raw), 10);
+    if (!Number.isFinite(n)) return min;
+    return Math.max(min, Math.min(max, n));
+  };
+
+  const clampFloat1 = (raw: unknown, min: number, max: number): number => {
+    const n = Number.parseFloat(String(raw));
+    const safe = Number.isFinite(n) ? n : min;
+    const clamped = Math.max(min, Math.min(max, safe));
+    return Math.round(clamped * 10) / 10;
+  };
+
+  const sumCapturedNumbers = (values: string[]): number => {
     let total = 0;
     for (const raw of values) {
       const n = Number.parseInt(String(raw).trim(), 10);
@@ -78,117 +131,176 @@ function App() {
     return total;
   };
 
-  const parseUserSum = (raw) => {
+  const parseUserSum = (raw: unknown): number | null => {
     const cleaned = String(raw).trim().replace(/,/g, "");
     if (!cleaned) return null;
-    // Strict integer parse (allows leading + or -)
     if (!/^[+-]?\d+$/.test(cleaned)) return null;
     const n = Number.parseInt(cleaned, 10);
     return Number.isFinite(n) ? n : null;
   };
 
-  const validateTypedAnswer = () => {
-    const expected = answerSum();
-    const provided = parseUserSum(typedAnswer());
-    if (provided === null) {
-      setValidationSummary(
-        "Enter a single integer answer (e.g. 42 or -17)."
-      );
+  const resetForIncomingSessionIfComplete = () => {
+    if (phase() !== "complete") return;
+    setShowAnswer(false);
+    setAnswerText("");
+    setAnswerSum(0);
+    setTypedAnswer("");
+    setValidationSummary("");
+    setShowNumbersList(false);
+    setHasValidated(false);
+    setAutoRepeatNextStartAtMs(null);
+    setAutoRepeatSecondsLeft(null);
+    capturedNumbers = [];
+  };
+
+  const goHome = () => {
+    setPhase("idle");
+    setDisplayText("");
+    setShowAnswer(false);
+    setAnswerText("");
+    setAnswerSum(0);
+    setTypedAnswer("");
+    setValidationSummary("");
+    setShowNumbersList(false);
+    setHasValidated(false);
+    setAutoRepeatRemaining(0);
+    setAutoRepeatNextStartAtMs(null);
+    setAutoRepeatSecondsLeft(null);
+    setSessionId(null);
+    setNumbers([]);
+    capturedNumbers = [];
+  };
+
+  const applyAutoRepeatWaiting = (payload: AutoRepeatWaitingPayload) => {
+    setAutoRepeatRemaining(payload.remaining);
+    setAutoRepeatNextStartAtMs(payload.next_start_at_ms);
+  };
+
+  createEffect(() => {
+    const nextAt = autoRepeatNextStartAtMs();
+    if (nextAt == null) {
+      setAutoRepeatSecondsLeft(null);
       return;
     }
 
-    setHasValidated(true);
-
-    const delta = provided - expected;
-    const ok = delta === 0;
-
-    const lines = [
-      ok ? "Correct ✅" : "Incorrect",
-      `Expected answer: ${expected}`,
-      `You entered: ${provided}`,
-    ];
-
-    if (!ok) lines.push(`Difference: ${delta > 0 ? "+" : ""}${delta}`);
-
-    setValidationSummary(lines.join("\n"));
-  };
-
-  const [showAdvanced, setShowAdvanced] = createSignal(false);
-
-  const [countdownTickId, setCountdownTickId] = createSignal(0);
-
-  const [digitsPerNumber, setDigitsPerNumber] = createSignal(1);
-  const [numberDurationSeconds, setNumberDurationSeconds] = createSignal(0.5);
-  const [delayBetweenNumbersSeconds, setDelayBetweenNumbersSeconds] = createSignal(0);
-  const [totalNumbers, setTotalNumbers] = createSignal(5);
-
-  const [allowNegativeNumbers, setAllowNegativeNumbers] = createSignal(false);
-
-  let sumInputRef;
-
-  createEffect(() => {
-    setAutoRepeatSecondsLeft(null);
-
-    if (phase() !== "complete") return;
-    if (!autoRepeatEnabled()) return;
-    if (!hasValidated()) return;
-    if (autoRepeatRemaining() <= 0) return;
-
-    const delaySeconds = Math.max(5, autoRepeatDelaySeconds());
-    const nextAtMs = Date.now() + delaySeconds * 1000;
-
-    const updateSecondsLeft = () => {
-      const remainingMs = nextAtMs - Date.now();
+    const update = () => {
+      const remainingMs = nextAt - Date.now();
       const secondsLeft = Math.max(0, Math.ceil(remainingMs / 1000));
       setAutoRepeatSecondsLeft(secondsLeft);
     };
 
-    updateSecondsLeft();
-
-    const intervalId = window.setInterval(updateSecondsLeft, 200);
-    const timerId = window.setTimeout(() => {
-      if (phase() !== "complete") return;
-      if (!autoRepeatEnabled()) return;
-      if (!hasValidated()) return;
-      setAutoRepeatRemaining((n) => Math.max(0, n - 1));
-      void start({ autoRepeat: true });
-    }, delaySeconds * 1000);
-
-    onCleanup(() => {
-      window.clearInterval(intervalId);
-      window.clearTimeout(timerId);
-      setAutoRepeatSecondsLeft(null);
-    });
+    update();
+    const intervalId = window.setInterval(update, 200);
+    onCleanup(() => window.clearInterval(intervalId));
   });
 
   createEffect(() => {
     if (phase() !== "complete") return;
     if (answerMode() !== "type") return;
-    // Focus is best-effort; some platforms may block programmatic focus.
     requestAnimationFrame(() => sumInputRef?.focus?.());
   });
 
+  const applySubmitAnswerResponse = (resp: SubmitAnswerResponse) => {
+    const { validation } = resp;
+    const ok = validation.correct;
+
+    const lines = [
+      ok ? "Correct ✅" : "Incorrect",
+      `Expected answer: ${validation.expected_sum}`,
+      `You entered: ${validation.provided_sum}`,
+    ];
+
+    if (!ok) {
+      const d = validation.delta;
+      lines.push(`Difference: ${d > 0 ? "+" : ""}${d}`);
+    }
+
+    setValidationSummary(lines.join("\n"));
+
+    if (resp.auto_repeat_waiting) {
+      applyAutoRepeatWaiting(resp.auto_repeat_waiting);
+    }
+  };
+
+  const validateTypedAnswer = async () => {
+    const provided = parseUserSum(typedAnswer());
+    if (provided === null) {
+      setValidationSummary("Enter a single integer answer (e.g. 42 or -17).\n");
+      return;
+    }
+
+    setHasValidated(true);
+
+    const sid = sessionId();
+    if (sid == null) {
+      setValidationSummary("No active session id to validate.");
+      return;
+    }
+
+    try {
+      const resp = await submitAnswer(sid, provided);
+      applySubmitAnswerResponse(resp);
+    } catch (e) {
+      setValidationSummary(String(e));
+    }
+  };
+
   onMount(async () => {
-    const unlistenCountdown = await listen("countdown_tick", (event) => {
+    let gotCompleteV2 = false;
+
+    const unlistenCountdown = await onCountdownTick((value) => {
+      resetForIncomingSessionIfComplete();
       setPhase("countdown");
-      setDisplayText(String(event.payload ?? ""));
+      setDisplayText(value);
       setCountdownTickId((n) => n + 1);
       void setFullscreen(true);
     });
 
-    const unlistenFlash = await listen("show_number", (event) => {
+    const unlistenFlashV2 = await onShowNumberV2((payload) => {
+      resetForIncomingSessionIfComplete();
+      setSessionId(payload.session_id);
       setPhase("flashing");
-      const value = String(event.payload ?? "");
+      setDisplayText(String(payload.value));
+      void setFullscreen(true);
+    });
+
+    const unlistenFlash = await onShowNumberLegacy((value) => {
+      resetForIncomingSessionIfComplete();
+      setPhase("flashing");
       capturedNumbers.push(value);
       setDisplayText(value);
       void setFullscreen(true);
     });
 
-    const unlistenClear = await listen("clear_screen", () => {
+    const unlistenClear = await onClearScreen(() => {
       setDisplayText("");
     });
 
-    const unlistenComplete = await listen("session_complete", () => {
+    const unlistenAutoRepeatWaiting = await onAutoRepeatWaiting((payload) => {
+      if (!autoRepeatEnabled()) return;
+      applyAutoRepeatWaiting(payload);
+    });
+
+    const unlistenCompleteV2 = await onSessionCompleteV2((payload) => {
+      gotCompleteV2 = true;
+      setPhase("complete");
+      setDisplayText("");
+      setShowAnswer(false);
+      setNumbers(payload.numbers);
+      setAnswerText(payload.numbers.join("\n"));
+      setAnswerSum(payload.sum);
+      setTypedAnswer("");
+      setValidationSummary("");
+      setShowNumbersList(false);
+      setHasValidated(false);
+      setAutoRepeatNextStartAtMs(null);
+      setAutoRepeatSecondsLeft(null);
+      setSessionId(payload.session_id);
+      void setFullscreen(false);
+    });
+
+    const unlistenComplete = await onSessionCompleteLegacy(() => {
+      if (gotCompleteV2) return;
       setPhase("complete");
       setDisplayText("");
       setShowAnswer(false);
@@ -198,25 +310,15 @@ function App() {
       setValidationSummary("");
       setShowNumbersList(false);
       setHasValidated(false);
+      setAutoRepeatNextStartAtMs(null);
+      setAutoRepeatSecondsLeft(null);
       void setFullscreen(false);
     });
 
-    const onKeyDown = (e) => {
+    const onKeyDown = (e: KeyboardEvent) => {
       if (!isEscapeKey(e)) return;
       if (phase() !== "flashing" && phase() !== "starting" && phase() !== "countdown") return;
-      invoke("stop_session");
-      setPhase("idle");
-      setErrorText("");
-      setDisplayText("");
-      setShowAnswer(false);
-      setAnswerText("");
-      setAnswerSum(0);
-      setTypedAnswer("");
-      setValidationSummary("");
-      setShowNumbersList(false);
-      setHasValidated(false);
-      capturedNumbers = [];
-      void setFullscreen(false);
+      void stop();
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -224,45 +326,19 @@ function App() {
     onCleanup(() => {
       window.removeEventListener("keydown", onKeyDown);
       unlistenCountdown();
+      unlistenFlashV2();
       unlistenFlash();
       unlistenClear();
+      unlistenAutoRepeatWaiting();
+      unlistenCompleteV2();
       unlistenComplete();
     });
   });
 
-  const isRunning = () => phase() === "starting" || phase() === "flashing";
-
-  const clampInt = (raw, min, max) => {
-    const n = Number.parseInt(String(raw), 10);
-    if (!Number.isFinite(n)) return min;
-    return Math.max(min, Math.min(max, n));
-  };
-
-  const clampFloat1 = (raw, min, max) => {
-    const n = Number.parseFloat(String(raw));
-    const safe = Number.isFinite(n) ? n : min;
-    const clamped = Math.max(min, Math.min(max, safe));
-    return Math.round(clamped * 10) / 10;
-  };
-
-  const goHome = () => {
-    setPhase("idle");
-    setShowAnswer(false);
-    setAnswerText("");
-    setAnswerSum(0);
-    setTypedAnswer("");
-    setValidationSummary("");
-    setShowNumbersList(false);
-    setHasValidated(false);
-    setAutoRepeatRemaining(0);
-    capturedNumbers = [];
-  };
-
-  const start = async (opts) => {
-    const isAutoRepeatStart = Boolean(opts?.autoRepeat);
-
+  const start = async () => {
     setErrorText("");
     setShowAdvanced(false);
+
     setShowAnswer(false);
     setAnswerText("");
     setAnswerSum(0);
@@ -270,9 +346,15 @@ function App() {
     setValidationSummary("");
     setShowNumbersList(false);
     setHasValidated(false);
+
+    setAutoRepeatNextStartAtMs(null);
+    setAutoRepeatSecondsLeft(null);
+
+    setSessionId(null);
+    setNumbers([]);
     capturedNumbers = [];
 
-    const config = {
+    const config: SessionConfig = {
       digits_per_number: digitsPerNumber(),
       number_duration_ms: Math.round(numberDurationSeconds() * 1000),
       delay_between_numbers_ms: Math.round(delayBetweenNumbersSeconds() * 1000),
@@ -280,11 +362,7 @@ function App() {
       allow_negative_numbers: allowNegativeNumbers(),
     };
 
-    if (
-      config.digits_per_number <= 0 ||
-      config.number_duration_ms <= 0 ||
-      config.total_numbers <= 0
-    ) {
+    if (config.digits_per_number <= 0 || config.number_duration_ms <= 0 || config.total_numbers <= 0) {
       setErrorText("Digits, duration, and total numbers must be > 0");
       return;
     }
@@ -293,17 +371,24 @@ function App() {
       setPhase("starting");
       setDisplayText("");
 
-      // Initialize auto-repeat budget for this run (only on manual starts).
-      if (!isAutoRepeatStart) {
-        if (autoRepeatEnabled()) {
-          setAutoRepeatRemaining(clampInt(autoRepeatCount(), 1, 20));
-        } else {
-          setAutoRepeatRemaining(0);
-        }
+      if (autoRepeatEnabled()) {
+        setAutoRepeatRemaining(clampInt(autoRepeatCount(), 1, 20));
+      } else {
+        setAutoRepeatRemaining(0);
       }
 
       await forceFullscreenBeforeStart();
-      await invoke("start_session", { config });
+      const sid = await startSessionV2(
+        config,
+        autoRepeatEnabled()
+          ? {
+              enabled: true,
+              repeats: clampInt(autoRepeatCount(), 1, 20),
+              delay_ms: clampInt(autoRepeatDelaySeconds(), 5, 120) * 1000,
+            }
+          : null
+      );
+      setSessionId(sid);
     } catch (e) {
       setPhase("idle");
       void setFullscreen(false);
@@ -313,7 +398,7 @@ function App() {
 
   const stop = async () => {
     try {
-      await invoke("stop_session");
+      await stopSession();
     } finally {
       setPhase("idle");
       setDisplayText("");
@@ -325,6 +410,10 @@ function App() {
       setShowNumbersList(false);
       setHasValidated(false);
       setAutoRepeatRemaining(0);
+      setAutoRepeatNextStartAtMs(null);
+      setAutoRepeatSecondsLeft(null);
+      setSessionId(null);
+      setNumbers([]);
       capturedNumbers = [];
       void setFullscreen(false);
     }
@@ -374,7 +463,13 @@ function App() {
                           value="off"
                           disabled={isRunning()}
                           checked={!autoRepeatEnabled()}
-                          onInput={() => setAutoRepeatEnabled(false)}
+                          onInput={() => {
+                            setAutoRepeatEnabled(false);
+                            setAutoRepeatRemaining(0);
+                            setAutoRepeatNextStartAtMs(null);
+                            setAutoRepeatSecondsLeft(null);
+                            void cancelAutoRepeat();
+                          }}
                         />
                         <span class="segmentedLabel">Off</span>
                       </label>
@@ -618,9 +713,7 @@ function App() {
                 step="0.1"
                 value={numberDurationSeconds()}
                 disabled={isRunning()}
-                onInput={(e) =>
-                  setNumberDurationSeconds(clampFloat1(e.currentTarget.value, 0.1, 5))
-                }
+                onInput={(e) => setNumberDurationSeconds(clampFloat1(e.currentTarget.value, 0.1, 5))}
               />
             </div>
 
@@ -652,7 +745,7 @@ function App() {
           </div>
 
           <div class="actions">
-            <button class="button" disabled={isRunning()} onClick={() => start()}>
+            <button class="button" disabled={isRunning()} onClick={start}>
               Start
             </button>
           </div>
@@ -674,9 +767,18 @@ function App() {
                     <button
                       class="button"
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         setHasValidated(true);
                         setShowAnswer(true);
+                        const sid = sessionId();
+                        if (sid != null) {
+                          try {
+                            const waiting = await acknowledgeComplete(sid);
+                            if (waiting) applyAutoRepeatWaiting(waiting);
+                          } catch {
+                            // Best-effort.
+                          }
+                        }
                       }}
                     >
                       Show answer
@@ -721,20 +823,15 @@ function App() {
                           {showNumbersList() ? "Hide numbers" : "Show numbers"}
                         </button>
                       ) : null}
-                      <button
-                        class="button"
-                        type="button"
-                        onClick={goHome}
-                      >
+                      <button class="button" type="button" onClick={() => void stop()}>
                         Home
                       </button>
                     </div>
                   </div>
 
-                  {autoRepeatEnabled() && hasValidated() && autoRepeatRemaining() > 0 ? (
+                  {autoRepeatEnabled() && hasValidated() && autoRepeatNextStartAtMs() != null ? (
                     <div class="autoRepeatStatus">
-                      Next question in {autoRepeatSecondsLeft() ?? Math.max(5, autoRepeatDelaySeconds())}
-                      s · {autoRepeatRemaining()} remaining
+                      Next question in {autoRepeatSecondsLeft() ?? 0}s · {autoRepeatRemaining()} remaining
                     </div>
                   ) : null}
                 </div>
@@ -749,7 +846,7 @@ function App() {
 
               <div class="endBody">
                 <input
-                  ref={sumInputRef}
+                  ref={(el) => (sumInputRef = el)}
                   class="sumInput"
                   type="text"
                   inputmode="numeric"
@@ -758,25 +855,21 @@ function App() {
                   value={typedAnswer()}
                   onInput={(e) => setTypedAnswer(e.currentTarget.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") validateTypedAnswer();
+                    if (e.key === "Enter") void validateTypedAnswer();
                   }}
                   spellcheck={false}
                 />
 
-                {validationSummary() ? (
-                  <pre class="validationText">{validationSummary()}</pre>
-                ) : null}
+                {validationSummary() ? <pre class="validationText">{validationSummary()}</pre> : null}
 
-                {hasValidated() && showNumbersList() ? (
-                  <pre class="answerText">{answerText()}</pre>
-                ) : null}
+                {hasValidated() && showNumbersList() ? <pre class="answerText">{answerText()}</pre> : null}
               </div>
 
               <div class="endFooter">
                 <div class="endFooterInner">
                   <div class="actionField">
                     <div class="centerActions">
-                      <button class="button" type="button" onClick={validateTypedAnswer}>
+                      <button class="button" type="button" onClick={() => void validateTypedAnswer()}>
                         Validate
                       </button>
                       {hasValidated() && validationSummary() ? (
@@ -788,20 +881,15 @@ function App() {
                           {showNumbersList() ? "Hide numbers" : "Show numbers"}
                         </button>
                       ) : null}
-                      <button
-                        class="button"
-                        type="button"
-                        onClick={goHome}
-                      >
+                      <button class="button" type="button" onClick={() => void stop()}>
                         Home
                       </button>
                     </div>
                   </div>
 
-                  {autoRepeatEnabled() && hasValidated() && autoRepeatRemaining() > 0 ? (
+                  {autoRepeatEnabled() && hasValidated() && autoRepeatNextStartAtMs() != null ? (
                     <div class="autoRepeatStatus">
-                      Next question in {autoRepeatSecondsLeft() ?? Math.max(5, autoRepeatDelaySeconds())}
-                      s · {autoRepeatRemaining()} remaining
+                      Next question in {autoRepeatSecondsLeft() ?? 0}s · {autoRepeatRemaining()} remaining
                     </div>
                   ) : null}
                 </div>
@@ -816,7 +904,7 @@ function App() {
             "--len": Math.max(
               1,
               (displayText().startsWith("-") ? displayText().slice(1) : displayText()).length +
-              (allowNegativeNumbers() ? 1 : 0)
+                (allowNegativeNumbers() ? 1 : 0)
             ),
           }}
         >
@@ -868,5 +956,3 @@ function App() {
     </div>
   );
 }
-
-export default App;

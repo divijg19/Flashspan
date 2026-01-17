@@ -1,8 +1,9 @@
 use rand::Rng;
 use serde::Deserialize;
 use std::{
+    collections::VecDeque,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     thread,
@@ -10,6 +11,30 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter};
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SessionResult {
+    pub session_id: u64,
+    pub numbers: Vec<i64>,
+    pub sum: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ShowNumberV2 {
+    pub session_id: u64,
+    pub index: u32,
+    pub total: u32,
+    pub value: i64,
+    pub running_sum: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AutoRepeatPlan {
+    pub remaining: u32,
+    pub delay_ms: u64,
+    pub config: SessionConfig,
+    pub awaiting_validation_session_id: Option<u64>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionConfig {
@@ -37,6 +62,10 @@ pub struct SessionManager {
     state: Arc<Mutex<SessionState>>,
     worker: Mutex<Option<JoinHandle<()>>>,
     stop: Mutex<Option<Arc<AtomicBool>>>,
+    next_session_id: AtomicU64,
+    recent_results: Arc<Mutex<VecDeque<SessionResult>>>,
+    auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
+    auto_repeat_generation: AtomicU64,
 }
 
 impl Default for SessionManager {
@@ -45,11 +74,17 @@ impl Default for SessionManager {
             state: Arc::new(Mutex::new(SessionState::Idle)),
             worker: Mutex::new(None),
             stop: Mutex::new(None),
+            next_session_id: AtomicU64::new(1),
+            recent_results: Arc::new(Mutex::new(VecDeque::new())),
+            auto_repeat_plan: Arc::new(Mutex::new(None)),
+            auto_repeat_generation: AtomicU64::new(1),
         }
     }
 }
 
 impl SessionManager {
+    const MAX_RECENT_RESULTS: usize = 8;
+
     fn cleanup_finished_worker(&self) {
         let mut worker = self.worker.lock().expect("worker lock poisoned");
         if let Some(handle) = worker.as_ref() {
@@ -61,7 +96,7 @@ impl SessionManager {
         }
     }
 
-    pub fn start(&self, app: AppHandle, config: SessionConfig) -> Result<(), String> {
+    pub fn start(&self, app: AppHandle, config: SessionConfig) -> Result<u64, String> {
         self.cleanup_finished_worker();
 
         validate_config(&config)?;
@@ -86,17 +121,102 @@ impl SessionManager {
             };
         }
 
+        // New session id for this run.
+        let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
+
         let state_arc = Arc::clone(&self.state);
+        let recent_results_arc = Arc::clone(&self.recent_results);
+        let plan_arc = Arc::clone(&self.auto_repeat_plan);
         let handle = thread::spawn(move || {
-            run_session_loop(app, config, state_arc, stop_flag);
+            run_session_loop(
+                app,
+                config,
+                state_arc,
+                stop_flag,
+                session_id,
+                recent_results_arc,
+                plan_arc,
+            );
         });
 
         *self.worker.lock().expect("worker lock poisoned") = Some(handle);
-        Ok(())
+        Ok(session_id)
+    }
+
+    pub fn configure_auto_repeat(&self, plan: Option<AutoRepeatPlan>) {
+        *self
+            .auto_repeat_plan
+            .lock()
+            .expect("auto_repeat_plan lock poisoned") = plan;
+        // Bump generation so any previously scheduled starts become no-ops.
+        self.auto_repeat_generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn auto_repeat_generation(&self) -> u64 {
+        self.auto_repeat_generation.load(Ordering::SeqCst)
+    }
+
+    pub fn result_for(&self, session_id: u64) -> Result<SessionResult, String> {
+        let guard = self
+            .recent_results
+            .lock()
+            .expect("recent_results lock poisoned");
+
+        for result in guard.iter().rev() {
+            if result.session_id == session_id {
+                return Ok(result.clone());
+            }
+        }
+
+        Err("session result not found".to_string())
+    }
+
+    pub fn mark_validated_and_schedule_info(
+        &self,
+        session_id: u64,
+    ) -> Result<Option<(u64, u32, SessionConfig, u64)>, String> {
+        let generation = self.auto_repeat_generation.load(Ordering::SeqCst);
+
+        let (delay_ms, config, remaining_after_decrement) = {
+            let mut plan_guard = self
+                .auto_repeat_plan
+                .lock()
+                .expect("auto_repeat_plan lock poisoned");
+            let Some(plan) = plan_guard.as_mut() else {
+                return Ok(None);
+            };
+
+            if plan.awaiting_validation_session_id != Some(session_id) {
+                return Ok(None);
+            }
+
+            if plan.remaining == 0 {
+                return Ok(None);
+            }
+
+            plan.awaiting_validation_session_id = None;
+            plan.remaining = plan.remaining.saturating_sub(1);
+
+            (plan.delay_ms, plan.config.clone(), plan.remaining)
+        };
+
+        Ok(Some((
+            delay_ms,
+            remaining_after_decrement,
+            config,
+            generation,
+        )))
     }
 
     pub fn stop(&self) {
         self.cleanup_finished_worker();
+
+        // Cancel any pending auto-repeat and forget last result.
+        self.configure_auto_repeat(None);
+        self.recent_results
+            .lock()
+            .expect("recent_results lock poisoned")
+            .clear();
 
         let stop_flag = self.stop.lock().expect("stop lock poisoned").take();
         if let Some(flag) = stop_flag {
@@ -125,6 +245,20 @@ fn validate_config(config: &SessionConfig) -> Result<(), String> {
         return Err("digits_per_number must be <= 18".to_string());
     }
 
+    // Defensive caps: UI enforces ranges, but IPC inputs must be treated as untrusted.
+    // These limits are generous enough for real use while preventing accidental runaway sessions.
+    if config.total_numbers > 10_000 {
+        return Err("total_numbers must be <= 10000".to_string());
+    }
+
+    if config.number_duration_ms > 60_000 {
+        return Err("number_duration_ms must be <= 60000".to_string());
+    }
+
+    if config.delay_between_numbers_ms > 60_000 {
+        return Err("delay_between_numbers_ms must be <= 60000".to_string());
+    }
+
     Ok(())
 }
 
@@ -133,6 +267,9 @@ fn run_session_loop(
     config: SessionConfig,
     state: Arc<Mutex<SessionState>>,
     stop: Arc<AtomicBool>,
+    session_id: u64,
+    recent_results: Arc<Mutex<VecDeque<SessionResult>>>,
+    auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
 ) {
     let _ = app.emit("clear_screen", ());
 
@@ -178,6 +315,8 @@ fn run_session_loop(
     let mut rng = rand::thread_rng();
     let mut last_payload: Option<String> = None;
     let mut running_sum: i128 = 0;
+    let mut numbers: Vec<i64> = Vec::with_capacity(config.total_numbers as usize);
+    let mut sum_i128: i128 = 0;
 
     for i in 0..config.total_numbers {
         if stop.load(Ordering::SeqCst) {
@@ -232,7 +371,26 @@ fn run_session_loop(
 
         last_payload = Some(payload.clone());
         running_sum = (running_sum + payload_value).max(0);
+        sum_i128 += payload_value;
+
+        let value_i64: i64 = payload_value
+            .try_into()
+            .expect("payload_value should fit into i64 with current constraints");
+        numbers.push(value_i64);
+
         let _ = app.emit("show_number", payload);
+        let _ = app.emit(
+            "show_number_v2",
+            ShowNumberV2 {
+                session_id,
+                index: i + 1,
+                total: config.total_numbers,
+                value: value_i64,
+                running_sum: running_sum
+                    .try_into()
+                    .expect("running_sum should fit into i64 with current constraints"),
+            },
+        );
 
         let shown_at = Instant::now();
         sleep_until_interruptible(shown_at + number_duration, &stop);
@@ -250,6 +408,36 @@ fn run_session_loop(
 
     let _ = app.emit("clear_screen", ());
     let _ = app.emit("session_complete", ());
+
+    let sum_i64: i64 = sum_i128
+        .try_into()
+        .expect("sum should fit into i64 with current constraints");
+    let result = SessionResult {
+        session_id,
+        numbers,
+        sum: sum_i64,
+    };
+
+    {
+        let mut guard = recent_results.lock().expect("recent_results lock poisoned");
+        guard.push_back(result.clone());
+        while guard.len() > SessionManager::MAX_RECENT_RESULTS {
+            guard.pop_front();
+        }
+    }
+    let _ = app.emit("session_complete_v2", result.clone());
+
+    // If auto-repeat is configured and there are repeats remaining, arm it to wait for validation.
+    {
+        let mut plan_guard = auto_repeat_plan
+            .lock()
+            .expect("auto_repeat_plan lock poisoned");
+        if let Some(plan) = plan_guard.as_mut() {
+            if plan.remaining > 0 {
+                plan.awaiting_validation_session_id = Some(session_id);
+            }
+        }
+    }
 
     let mut st = state.lock().expect("state lock poisoned");
     *st = SessionState::Complete;
