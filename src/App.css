@@ -1,11 +1,213 @@
 .app {
+  --app-bg: #000;
+  --app-fg: #fff;
+  --app-bg-rgb: 0, 0, 0;
+  --app-fg-rgb: 255, 255, 255;
+
   width: 100vw;
   height: 100vh;
-  background: #000;
-  color: #fff;
+  background: var(--app-bg);
+  color: var(--app-fg);
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.app.theme-midnight {
+  --app-bg: #000000;
+  --app-fg: #ffffff;
+  --app-bg-rgb: 0, 0, 0;
+  --app-fg-rgb: 255, 255, 255;
+  --accent: #4fd1ff;
+  --accent-contrast: #00121a;
+  --sw-midnight: #000000;
+  --sw-crimson: #2a0b0b;
+  --sw-aqua: #052027;
+  --sw-violet: #1a0825;
+  --sw-amber: #241400;
+  --sw-ivory: #f9fafb;
+}
+
+.app.theme-ivory {
+  --app-bg: #f9fafb;
+  --app-fg: #111827;
+  --app-bg-rgb: 249, 250, 251;
+  --app-fg-rgb: 17, 24, 39;
+  --accent: #1d4ed8;
+  --accent-contrast: #f8fafc;
+  --sw-midnight: #111827;
+  --sw-crimson: #ffdede;
+  --sw-aqua: #e6fffb;
+  --sw-violet: #f3e8ff;
+  --sw-amber: #fff4d6;
+  --sw-ivory: #ffffff;
+}
+
+/* Ivory dark-mode variant: a tasteful dark shell while keeping Ivory previews light */
+.app.theme-ivory.theme-dark {
+  --app-bg: #1f2937; /* Obsidian (lighter, greyer) */
+  --app-fg: #f8fafc;
+  --app-bg-rgb: 31, 41, 55;
+  --app-fg-rgb: 248, 250, 252;
+  --accent: #60a5fa;
+  --accent-contrast: #171e28;
+  --sw-midnight: #06121a;
+  --sw-crimson: #2a0b0b;
+  --sw-aqua: #052027;
+  --sw-violet: #1a0825;
+  --sw-amber: #241400;
+  --sw-ivory: #f9fafb;
+}
+
+.app.theme-crimson {
+  --app-bg: #2a0b0b;
+  --app-fg: #ffecec;
+  --app-bg-rgb: 42, 11, 11;
+  --app-fg-rgb: 255, 236, 236;
+  --accent: #ff6b8a;
+  --accent-contrast: #2b0000;
+  --sw-midnight: #070607;
+  --sw-crimson: #2a0b0b;
+  --sw-aqua: #083437;
+  --sw-violet: #2b052f;
+  --sw-amber: #3b1600;
+  --sw-ivory: #fff6f7;
+}
+
+.app.theme-aqua {
+  --app-bg: #052027;
+  --app-fg: #dffbff;
+  --app-bg-rgb: 5, 32, 39;
+  --app-fg-rgb: 223, 251, 255;
+  --accent: #2dd4bf;
+  --accent-contrast: #001f1f;
+  --sw-midnight: #001018;
+  --sw-crimson: #2b0b0b;
+  --sw-aqua: #052027;
+  --sw-violet: #0f0520;
+  --sw-amber: #241400;
+  --sw-ivory: #dffbff;
+}
+
+.app.theme-violet {
+  --app-bg: #1a0825;
+  --app-fg: #f6e9ff;
+  --app-bg-rgb: 26, 8, 37;
+  --app-fg-rgb: 246, 233, 255;
+  --accent: #a78bfa;
+  --accent-contrast: #190819;
+  --sw-midnight: #07020b;
+  --sw-crimson: #2a0b0b;
+  --sw-aqua: #031018;
+  --sw-violet: #1a0825;
+  --sw-amber: #2b1400;
+  --sw-ivory: #f6e9ff;
+}
+
+.app.theme-amber {
+  --app-bg: #241400;
+  --app-fg: #fff4d6;
+  --app-bg-rgb: 36, 20, 0;
+  --app-fg-rgb: 255, 244, 214;
+  --accent: #ffc857;
+  --accent-contrast: #2a1500;
+  --sw-midnight: #060404;
+  --sw-crimson: #3a0b07;
+  --sw-aqua: #041616;
+  --sw-violet: #2a0718;
+  --sw-amber: #241400;
+  --sw-ivory: #fff4d6;
+}
+
+/* Light-mode variants for each color theme (keeps accent but swaps background/foreground) */
+.app.theme-midnight.theme-light {
+  --app-bg: #e6f9ff; /* pale sky blue */
+  --app-fg: #062331;
+  --app-bg-rgb: 230, 249, 255;
+  --app-fg-rgb: 6, 35, 49;
+  --accent: #0284c7;
+  --accent-contrast: #e6f9ff;
+  --sw-midnight: #cfeeff;
+  --sw-crimson: #ffdede;
+  --sw-aqua: #dafaf8;
+  --sw-violet: #f2e9ff;
+  --sw-amber: #fff5db;
+  --sw-ivory: #ffffff;
+}
+
+.app.theme-ivory.theme-light {
+  --app-bg: #ffffff; /* keep Ivory as pure white theme */
+  --app-fg: #071020;
+  --app-bg-rgb: 255, 255, 255;
+  --app-fg-rgb: 7, 16, 32;
+  --accent: #1e40af;
+  --accent-contrast: #ffffff;
+  --sw-midnight: #111827;
+  --sw-crimson: #ffdede;
+  --sw-aqua: #e6fffb;
+  --sw-violet: #f3e8ff;
+  --sw-amber: #fff4d6;
+  --sw-ivory: #ffffff;
+}
+
+.app.theme-crimson.theme-light {
+  --app-bg: #fff0f2; /* soft blush */
+  --app-fg: #3a0b0f;
+  --app-bg-rgb: 255, 240, 242;
+  --app-fg-rgb: 58, 11, 15;
+  --accent: #e11d48;
+  --accent-contrast: #fff0f2;
+  --sw-midnight: #fdeef0;
+  --sw-crimson: #ffd6da;
+  --sw-aqua: #e6fbfa;
+  --sw-violet: #f7eefe;
+  --sw-amber: #fff3e6;
+  --sw-ivory: #fff6f7;
+}
+
+.app.theme-aqua.theme-light {
+  --app-bg: #e8fffb; /* sea-glass */
+  --app-fg: #013733;
+  --app-bg-rgb: 232, 255, 251;
+  --app-fg-rgb: 1, 55, 51;
+  --accent: #0ea5a4;
+  --accent-contrast: #e8fffb;
+  --sw-midnight: #e6f9fb;
+  --sw-crimson: #fff0f1;
+  --sw-aqua: #d6fffb;
+  --sw-violet: #f6f0ff;
+  --sw-amber: #fff8e6;
+  --sw-ivory: #dffbff;
+}
+
+.app.theme-violet.theme-light {
+  --app-bg: #f7f0ff; /* pale lilac */
+  --app-fg: #2b0f32;
+  --app-bg-rgb: 247, 240, 255;
+  --app-fg-rgb: 43, 15, 50;
+  --accent: #8b5cf6;
+  --accent-contrast: #f7f0ff;
+  --sw-midnight: #f1eef8;
+  --sw-crimson: #fff2f4;
+  --sw-aqua: #eafaf9;
+  --sw-violet: #efe6ff;
+  --sw-amber: #fff6e8;
+  --sw-ivory: #f7f0ff;
+}
+
+.app.theme-amber.theme-light {
+  --app-bg: #fff7e6; /* warm saffron tint */
+  --app-fg: #3b2600;
+  --app-bg-rgb: 255, 247, 230;
+  --app-fg-rgb: 59, 38, 0;
+  --accent: #f59e0b;
+  --accent-contrast: #fff7e6;
+  --sw-midnight: #fff6ee;
+  --sw-crimson: #fff2f1;
+  --sw-aqua: #f3fffb;
+  --sw-violet: #fff6fb;
+  --sw-amber: #fff6e6;
+  --sw-ivory: #fffdf5;
 }
 
 .endScreen {
@@ -21,14 +223,14 @@
   width: min(560px, 92vw);
   border-radius: 16px;
   padding: 22px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.22);
+  background: rgba(var(--app-bg-rgb), 0.65);
   cursor: pointer;
   user-select: none;
 }
 
 .endCard:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.28);
+  outline: 2px solid rgba(var(--app-fg-rgb), 0.28);
   outline-offset: 3px;
 }
 
@@ -53,8 +255,8 @@
   height: min(720px, 88vh);
   border-radius: 16px;
   padding: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.22);
+  background: rgba(var(--app-bg-rgb), 0.65);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -116,8 +318,8 @@
   margin: 0;
   padding: 14px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.16);
+  background: rgba(var(--app-bg-rgb), 0.55);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
   font-size: 13px;
@@ -137,8 +339,8 @@
   max-width: 560px;
   padding: 12px;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.16);
+  background: rgba(var(--app-fg-rgb), 0.06);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -157,9 +359,9 @@
   max-width: 560px;
   height: 54px;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  border: 1px solid rgba(var(--app-fg-rgb), 0.16);
+  background: rgba(var(--app-bg-rgb), 0.55);
+  color: var(--app-fg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
   font-size: 22px;
@@ -168,11 +370,11 @@
 }
 
 .sumInput::placeholder {
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(var(--app-fg-rgb), 0.45);
 }
 
 .sumInput:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.22);
+  outline: 2px solid rgba(var(--app-fg-rgb), 0.22);
   outline-offset: 2px;
 }
 
@@ -180,8 +382,8 @@
   padding: 14px 16px;
   width: 100%;
   max-width: 520px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(var(--app-fg-rgb), 0.06);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.12);
   border-radius: 14px;
   display: grid;
   gap: 6px;
@@ -193,7 +395,7 @@
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(var(--app-fg-rgb), 0.6);
 }
 
 .sumValue {
@@ -201,7 +403,7 @@
     "Liberation Mono", "Courier New", monospace;
   font-size: 40px;
   line-height: 1;
-  color: rgba(255, 255, 255, 0.96);
+  color: rgba(var(--app-fg-rgb), 0.96);
 }
 
 .answerInput {
@@ -211,9 +413,9 @@
   margin: 0;
   padding: 14px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  border: 1px solid rgba(var(--app-fg-rgb), 0.16);
+  background: rgba(var(--app-bg-rgb), 0.55);
+  color: var(--app-fg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
   font-size: 18px;
@@ -223,7 +425,7 @@
 }
 
 .answerInput:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.22);
+  outline: 2px solid rgba(var(--app-fg-rgb), 0.22);
   outline-offset: 2px;
 }
 
@@ -234,8 +436,8 @@
   text-align: left;
   padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.16);
+  background: rgba(var(--app-fg-rgb), 0.06);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
   font-size: 13px;
@@ -255,8 +457,8 @@
   height: 40px;
   border-radius: 10px;
   background: transparent;
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--app-fg);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.18);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
@@ -275,7 +477,7 @@
   position: fixed;
   inset: 0;
   z-index: 20;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(var(--app-bg-rgb), 0.55);
 }
 
 .advancedPanel {
@@ -289,8 +491,8 @@
   overscroll-behavior: contain;
   padding: 16px;
   border-radius: 12px;
-  background: #000;
-  border: 1px solid rgba(255, 255, 255, 0.26);
+  background: rgba(var(--app-bg-rgb), 0.92);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.26);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -308,7 +510,7 @@
 
 .advancedDivider {
   height: 1px;
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(var(--app-fg-rgb), 0.14);
 }
 
 .advancedSectionTitle {
@@ -374,8 +576,8 @@
 .input {
   height: 40px;
   background: transparent;
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--app-fg);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.18);
   border-radius: 8px;
   padding: 0 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
@@ -416,8 +618,116 @@
   gap: 2px;
   padding: 2px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.18);
+  background: rgba(var(--app-fg-rgb), 0.04);
+}
+
+/* Color grid: 3 columns of selectable boxes */
+.colorGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.colorOption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.colorOption .segmentedInput {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.modeControl {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 10px;
+  align-items: center;
+}
+
+.modeVertical {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  align-items: flex-start;
+}
+
+.modeVertical .segmentedLabel {
+  min-width: 44px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.smallOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.smallLabel {
+  font-size: 11px;
+  color: rgba(var(--app-fg-rgb), 0.85);
+}
+
+.colorOption .colorSwatch {
+  width: 64px;
+  height: 40px;
+}
+
+.colorSwatch {
+  width: 52px;
+  height: 36px;
+  border-radius: 8px;
+  border: 2px solid rgba(var(--app-fg-rgb), 0.12);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.18);
+}
+
+.colorLabel {
+  font-size: 12px;
+  color: rgba(var(--app-fg-rgb), 0.92);
+}
+
+/* Explicit preview swatch colors per mode so clicking a swatch (selecting theme)
+   doesn't change the other swatches' appearance. Scoped under .app to avoid
+   matching unrelated elements. */
+.app.theme-dark .sw-preview-midnight { background: #000000; }
+.app.theme-light .sw-preview-midnight { background: #cfeeff; }
+
+.app.theme-dark .sw-preview-crimson { background: #2a0b0b; }
+.app.theme-light .sw-preview-crimson { background: #ffd6da; }
+
+.app.theme-dark .sw-preview-aqua { background: #052027; }
+.app.theme-light .sw-preview-aqua { background: #d6fffb; }
+
+.app.theme-dark .sw-preview-violet { background: #1a0825; }
+.app.theme-light .sw-preview-violet { background: #efe6ff; }
+
+.app.theme-dark .sw-preview-amber { background: #241400; }
+.app.theme-light .sw-preview-amber { background: #fff6e6; }
+
+.app.theme-dark .sw-preview-ivory { background: #f9fafb; border: 2px solid rgba(0,0,0,0.06); }
+.app.theme-light .sw-preview-ivory { background: #ffffff; border: 2px solid rgba(0,0,0,0.06); }
+
+/* Selected state */
+.colorOption input:checked + .colorSwatch,
+.colorOption input:checked ~ .colorSwatch {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Light-mode adjustments: swap bg/fg for lighter palettes */
+.theme-light {
+  --app-bg-opacity-panel: 0.98;
 }
 
 .segmentedOption {
@@ -440,14 +750,14 @@
     "Liberation Mono", "Courier New", monospace;
   font-size: 13px;
   letter-spacing: 0.02em;
-  color: rgba(255, 255, 255, 0.92);
+  color: rgba(var(--app-fg-rgb), 0.92);
   cursor: pointer;
   user-select: none;
 }
 
 .segmentedOption input:checked + .segmentedLabel {
-  background: #fff;
-  color: #000;
+  background: var(--app-fg);
+  color: var(--app-bg);
 }
 
 .segmentedOption input:disabled + .segmentedLabel {
@@ -456,7 +766,7 @@
 }
 
 .segmentedOption input:focus-visible + .segmentedLabel {
-  outline: 2px solid rgba(255, 255, 255, 0.28);
+  outline: 2px solid rgba(var(--app-fg-rgb), 0.28);
   outline-offset: 2px;
 }
 
@@ -469,8 +779,8 @@
   height: 44px;
   padding: 0 14px;
   border-radius: 10px;
-  background: #fff;
-  color: #000;
+  background: var(--app-fg);
+  color: var(--app-bg);
   border: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
@@ -532,13 +842,13 @@
   object-fit: contain;
   transform: translateY(-12%);
   pointer-events: none;
-  filter: drop-shadow(0 8px 24px rgba(0,0,0,0.6));
+  filter: drop-shadow(0 8px 24px rgba(var(--app-bg-rgb), 0.6));
 }
 
 .splashText {
   margin-top: 12px;
   text-align: center;
-  color: rgba(255,255,255,0.96);
+  color: rgba(var(--app-fg-rgb), 0.96);
   pointer-events: none;
 }
 
@@ -577,24 +887,24 @@
   background:
     conic-gradient(
       from -90deg,
-      rgba(255, 255, 255, 0.20) 0deg 18deg,
-      rgba(255, 255, 255, 0.02) 18deg 60deg,
-      rgba(255, 255, 255, 0.20) 60deg 78deg,
-      rgba(255, 255, 255, 0.02) 78deg 120deg,
-      rgba(255, 255, 255, 0.20) 120deg 138deg,
-      rgba(255, 255, 255, 0.02) 138deg 180deg,
-      rgba(255, 255, 255, 0.20) 180deg 198deg,
-      rgba(255, 255, 255, 0.02) 198deg 240deg,
-      rgba(255, 255, 255, 0.20) 240deg 258deg,
-      rgba(255, 255, 255, 0.02) 258deg 300deg,
-      rgba(255, 255, 255, 0.20) 300deg 318deg,
-      rgba(255, 255, 255, 0.02) 318deg 360deg
+      rgba(var(--app-fg-rgb), 0.20) 0deg 18deg,
+      rgba(var(--app-fg-rgb), 0.02) 18deg 60deg,
+      rgba(var(--app-fg-rgb), 0.20) 60deg 78deg,
+      rgba(var(--app-fg-rgb), 0.02) 78deg 120deg,
+      rgba(var(--app-fg-rgb), 0.20) 120deg 138deg,
+      rgba(var(--app-fg-rgb), 0.02) 138deg 180deg,
+      rgba(var(--app-fg-rgb), 0.20) 180deg 198deg,
+      rgba(var(--app-fg-rgb), 0.02) 198deg 240deg,
+      rgba(var(--app-fg-rgb), 0.20) 240deg 258deg,
+      rgba(var(--app-fg-rgb), 0.02) 258deg 300deg,
+      rgba(var(--app-fg-rgb), 0.20) 300deg 318deg,
+      rgba(var(--app-fg-rgb), 0.02) 318deg 360deg
     );
 
   -webkit-mask-image: radial-gradient(circle, transparent 0 33%, #000 34% 100%);
   mask-image: radial-gradient(circle, transparent 0 33%, #000 34% 100%);
 
-  filter: drop-shadow(0 0 18px rgba(255, 255, 255, 0.12));
+  filter: drop-shadow(0 0 18px rgba(var(--app-fg-rgb), 0.12));
   opacity: 0.55;
   transform: translate(-50%, -50%);
 }
@@ -658,20 +968,20 @@
 
 .countdownTrack {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.12);
+  stroke: rgba(var(--app-fg-rgb), 0.12);
   stroke-width: 5;
 }
 
 .countdownProgress {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.92);
+  stroke: rgba(var(--app-fg-rgb), 0.92);
   stroke-width: 5;
   stroke-linecap: round;
   transform: rotate(-90deg);
   transform-origin: 50% 50%;
   stroke-dasharray: 276.46;
   stroke-dashoffset: 0;
-  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.28));
+  filter: drop-shadow(0 0 10px rgba(var(--app-fg-rgb), 0.28));
 }
 
 .countdownProgressA {

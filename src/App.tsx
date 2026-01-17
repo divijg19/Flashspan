@@ -3,18 +3,26 @@ import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import "./App.css";
 import {
   AutoRepeatWaitingPayload,
+  ColorScheme,
   SubmitAnswerResponse,
   Phase,
+  StartSessionResponse,
   acknowledgeComplete,
   cancelAutoRepeat,
+  getAppSettings,
+  onAppSettingsChanged,
+  onAutoRepeatTick,
   onAutoRepeatWaiting,
   onClearScreen,
   onCountdownTick,
   onSessionComplete,
   onShowNumber,
   ping,
-  SessionConfig,
+  SessionConfigInput,
   startSession,
+  setColorScheme as setColorSchemeCmd,
+  ThemeMode,
+  setThemeMode as setThemeModeCmd,
   submitAnswerText,
   stopSession,
 } from "./tauri";
@@ -65,6 +73,11 @@ async function forceFullscreenBeforeStart(): Promise<void> {
 export default function App() {
   const [showSplash, setShowSplash] = createSignal<boolean>(true);
   const [splashVisible, setSplashVisible] = createSignal<boolean>(false);
+
+  const [colorScheme, setColorScheme] = createSignal<ColorScheme>("midnight");
+  const [themeMode, setThemeMode] = createSignal<ThemeMode>("dark");
+  const themeClass = () => `theme-${colorScheme()}`;
+  const modeClass = () => `theme-${themeMode()}`;
 
   // Fade durations (ms)
   const fadeMs = 2000; // 2s fade in/out
@@ -131,8 +144,6 @@ export default function App() {
   const [autoRepeatCount, setAutoRepeatCount] = createSignal<number>(5);
   const [autoRepeatDelaySeconds, setAutoRepeatDelaySeconds] = createSignal<number>(5);
   const [autoRepeatRemaining, setAutoRepeatRemaining] = createSignal<number>(0);
-  const [autoRepeatNextStartAtMs, setAutoRepeatNextStartAtMs] =
-    createSignal<number | null>(null);
   const [autoRepeatSecondsLeft, setAutoRepeatSecondsLeft] =
     createSignal<number | null>(null);
 
@@ -150,19 +161,6 @@ export default function App() {
 
   const isRunning = (): boolean => phase() === "starting" || phase() === "flashing";
 
-  const clampInt = (raw: unknown, min: number, max: number): number => {
-    const n = Number.parseInt(String(raw), 10);
-    if (!Number.isFinite(n)) return min;
-    return Math.max(min, Math.min(max, n));
-  };
-
-  const clampFloat1 = (raw: unknown, min: number, max: number): number => {
-    const n = Number.parseFloat(String(raw));
-    const safe = Number.isFinite(n) ? n : min;
-    const clamped = Math.max(min, Math.min(max, safe));
-    return Math.round(clamped * 10) / 10;
-  };
-
   const resetForIncomingSessionIfComplete = () => {
     if (phase() !== "complete") return;
     setShowAnswer(false);
@@ -172,7 +170,6 @@ export default function App() {
     setValidationSummary("");
     setShowNumbersList(false);
     setHasValidated(false);
-    setAutoRepeatNextStartAtMs(null);
     setAutoRepeatSecondsLeft(null);
   };
 
@@ -187,7 +184,6 @@ export default function App() {
     setShowNumbersList(false);
     setHasValidated(false);
     setAutoRepeatRemaining(0);
-    setAutoRepeatNextStartAtMs(null);
     setAutoRepeatSecondsLeft(null);
     setSessionId(null);
     setNumbers([]);
@@ -195,26 +191,9 @@ export default function App() {
 
   const applyAutoRepeatWaiting = (payload: AutoRepeatWaitingPayload) => {
     setAutoRepeatRemaining(payload.remaining);
-    setAutoRepeatNextStartAtMs(payload.next_start_at_ms);
+    // seconds are driven from Rust tick events.
+    setAutoRepeatSecondsLeft(null);
   };
-
-  createEffect(() => {
-    const nextAt = autoRepeatNextStartAtMs();
-    if (nextAt == null) {
-      setAutoRepeatSecondsLeft(null);
-      return;
-    }
-
-    const update = () => {
-      const remainingMs = nextAt - Date.now();
-      const secondsLeft = Math.max(0, Math.ceil(remainingMs / 1000));
-      setAutoRepeatSecondsLeft(secondsLeft);
-    };
-
-    update();
-    const intervalId = window.setInterval(update, 200);
-    onCleanup(() => window.clearInterval(intervalId));
-  });
 
   createEffect(() => {
     if (phase() !== "complete") return;
@@ -262,6 +241,14 @@ export default function App() {
   };
 
   onMount(async () => {
+    try {
+      const settings = await getAppSettings();
+      setColorScheme(settings.color_scheme);
+      setThemeMode(settings.theme_mode ?? "dark");
+    } catch {
+      // Best-effort.
+    }
+
     const unlistenCountdown = await onCountdownTick((value) => {
       resetForIncomingSessionIfComplete();
       setPhase("countdown");
@@ -287,6 +274,19 @@ export default function App() {
       applyAutoRepeatWaiting(payload);
     });
 
+    const unlistenAutoRepeatTick = await onAutoRepeatTick((payload) => {
+      if (!autoRepeatEnabled()) return;
+      setAutoRepeatRemaining(payload.remaining);
+      setAutoRepeatSecondsLeft(payload.seconds_left);
+    });
+
+    const unlistenSettings = await onAppSettingsChanged((payload) => {
+      setColorScheme(payload.color_scheme);
+      // payload.theme_mode may be 'dark' | 'light'
+      // ensure UI reflects server-side change     
+      setThemeMode(payload.theme_mode ?? ("dark" as any));
+    });
+
     const unlistenComplete = await onSessionComplete((payload) => {
       setPhase("complete");
       setDisplayText("");
@@ -298,7 +298,6 @@ export default function App() {
       setValidationSummary("");
       setShowNumbersList(false);
       setHasValidated(false);
-      setAutoRepeatNextStartAtMs(null);
       setAutoRepeatSecondsLeft(null);
       setSessionId(payload.session_id);
       void setFullscreen(false);
@@ -318,9 +317,25 @@ export default function App() {
       unlistenFlash();
       unlistenClear();
       unlistenAutoRepeatWaiting();
+      unlistenAutoRepeatTick();
+      unlistenSettings();
       unlistenComplete();
     });
   });
+
+  const applyStartSessionResponse = (resp: StartSessionResponse) => {
+    setSessionId(resp.session_id);
+    setDigitsPerNumber(resp.effective_config.digits_per_number);
+    setNumberDurationSeconds(resp.effective_config.number_duration_s);
+    setDelayBetweenNumbersSeconds(resp.effective_config.delay_between_numbers_s);
+    setTotalNumbers(resp.effective_config.total_numbers);
+    setAllowNegativeNumbers(resp.effective_config.allow_negative_numbers);
+
+    if (resp.effective_auto_repeat) {
+      setAutoRepeatCount(resp.effective_auto_repeat.repeats);
+      setAutoRepeatDelaySeconds(resp.effective_auto_repeat.delay_s);
+    }
+  };
 
   const start = async () => {
     setErrorText("");
@@ -334,47 +349,37 @@ export default function App() {
     setShowNumbersList(false);
     setHasValidated(false);
 
-    setAutoRepeatNextStartAtMs(null);
     setAutoRepeatSecondsLeft(null);
 
     setSessionId(null);
     setNumbers([]);
 
-    const config: SessionConfig = {
-      digits_per_number: digitsPerNumber(),
-      number_duration_ms: Math.round(numberDurationSeconds() * 1000),
-      delay_between_numbers_ms: Math.round(delayBetweenNumbersSeconds() * 1000),
-      total_numbers: totalNumbers(),
+    const config: SessionConfigInput = {
+      digits_per_number: Math.round(digitsPerNumber()),
+      number_duration_s: numberDurationSeconds(),
+      delay_between_numbers_s: delayBetweenNumbersSeconds(),
+      total_numbers: Math.round(totalNumbers()),
       allow_negative_numbers: allowNegativeNumbers(),
     };
-
-    if (config.digits_per_number <= 0 || config.number_duration_ms <= 0 || config.total_numbers <= 0) {
-      setErrorText("Digits, duration, and total numbers must be > 0");
-      return;
-    }
 
     try {
       setPhase("starting");
       setDisplayText("");
 
-      if (autoRepeatEnabled()) {
-        setAutoRepeatRemaining(clampInt(autoRepeatCount(), 1, 20));
-      } else {
-        setAutoRepeatRemaining(0);
-      }
+      setAutoRepeatRemaining(autoRepeatEnabled() ? Math.round(autoRepeatCount()) : 0);
 
       await forceFullscreenBeforeStart();
-      const sid = await startSession(
+      const resp = await startSession(
         config,
         autoRepeatEnabled()
           ? {
               enabled: true,
-              repeats: clampInt(autoRepeatCount(), 1, 20),
-              delay_ms: clampInt(autoRepeatDelaySeconds(), 5, 120) * 1000,
+              repeats: Math.round(autoRepeatCount()),
+              delay_s: autoRepeatDelaySeconds(),
             }
           : null
       );
-      setSessionId(sid);
+      applyStartSessionResponse(resp);
     } catch (e) {
       setPhase("idle");
       void setFullscreen(false);
@@ -396,7 +401,6 @@ export default function App() {
       setShowNumbersList(false);
       setHasValidated(false);
       setAutoRepeatRemaining(0);
-      setAutoRepeatNextStartAtMs(null);
       setAutoRepeatSecondsLeft(null);
       setSessionId(null);
       setNumbers([]);
@@ -405,7 +409,7 @@ export default function App() {
   };
 
   return (
-    <div class="app">
+    <div classList={{ app: true, [themeClass()]: true, [modeClass()]: true }}>
       {showSplash() ? (
         <div classList={{ splash: true, visible: splashVisible() }}>
           <img src="/src-tauri/icons/Ascent_Banner.png" alt="Ascent Banner" class="splashBanner" />
@@ -463,7 +467,6 @@ export default function App() {
                           onInput={() => {
                             setAutoRepeatEnabled(false);
                             setAutoRepeatRemaining(0);
-                            setAutoRepeatNextStartAtMs(null);
                             setAutoRepeatSecondsLeft(null);
                             void cancelAutoRepeat();
                           }}
@@ -500,7 +503,11 @@ export default function App() {
                           value={autoRepeatCount()}
                           disabled={isRunning()}
                           onInput={(e) =>
-                            setAutoRepeatCount(clampInt(e.currentTarget.value, 1, 20))
+                            setAutoRepeatCount(
+                              Number.isFinite(e.currentTarget.valueAsNumber)
+                                ? e.currentTarget.valueAsNumber
+                                : 1
+                            )
                           }
                         />
                       </div>
@@ -513,7 +520,11 @@ export default function App() {
                         value={autoRepeatCount()}
                         disabled={isRunning()}
                         onInput={(e) =>
-                          setAutoRepeatCount(clampInt(e.currentTarget.value, 1, 20))
+                          setAutoRepeatCount(
+                            Number.isFinite(e.currentTarget.valueAsNumber)
+                              ? e.currentTarget.valueAsNumber
+                              : 1
+                          )
                         }
                       />
                     </div>
@@ -531,7 +542,9 @@ export default function App() {
                           disabled={isRunning()}
                           onInput={(e) =>
                             setAutoRepeatDelaySeconds(
-                              clampInt(e.currentTarget.value, 5, 120)
+                              Number.isFinite(e.currentTarget.valueAsNumber)
+                                ? e.currentTarget.valueAsNumber
+                                : 5
                             )
                           }
                         />
@@ -577,6 +590,93 @@ export default function App() {
 
                 <div class="advancedSetting">
                   <div class="settingRow">
+                      <div class="label">
+                        Color
+                        <div class="modeVertical" role="radiogroup" aria-label="Theme mode">
+                          <label class="segmentedOption">
+                            <input
+                              class="segmentedInput"
+                              type="radio"
+                              name="theme-mode"
+                              value="dark"
+                              disabled={isRunning()}
+                              checked={themeMode() === "dark"}
+                              onInput={() => {
+                                setThemeMode("dark");
+                                void setThemeModeCmd("dark");
+                              }}
+                            />
+                            <span class="segmentedLabel">Dark</span>
+                          </label>
+                          <label class="segmentedOption">
+                            <input
+                              class="segmentedInput"
+                              type="radio"
+                              name="theme-mode"
+                              value="light"
+                              disabled={isRunning()}
+                              checked={themeMode() === "light"}
+                              onInput={() => {
+                                setThemeMode("light");
+                                void setThemeModeCmd("light");
+                              }}
+                            />
+                            <span class="segmentedLabel">Light</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div class="colorGrid" role="radiogroup" aria-label="Color">
+                      {
+                        ((): any => {
+                          const values = ["midnight", "crimson", "aqua", "violet", "amber", "ivory"] as const;
+                          const darkNames: Record<string, string> = {
+                            midnight: "Midnight",
+                            crimson: "Crimson",
+                            aqua: "Aqua",
+                            violet: "Violet",
+                            amber: "Amber",
+                            ivory: "Obsidian",
+                          };
+                          const lightNames: Record<string, string> = {
+                            midnight: "Dawn",
+                            crimson: "Blush",
+                            aqua: "Sea Glass",
+                            violet: "Lilac",
+                            amber: "Saffron",
+                            ivory: "Ivory",
+                          };
+
+                          return values.map((value) => {
+                            const label = themeMode() === "light" ? lightNames[value] : darkNames[value];
+                            return (
+                              <label class="colorOption" title={label}>
+                                <input
+                                  class="segmentedInput"
+                                  type="radio"
+                                  name="color-scheme"
+                                  value={value}
+                                  disabled={isRunning()}
+                                  checked={colorScheme() === value}
+                                  onInput={() => {
+                                    setColorScheme(value);
+                                    void setColorSchemeCmd(value);
+                                  }}
+                                />
+                                <span classList={{ colorSwatch: true, [`sw-preview-${value}`]: true }} aria-hidden="true" />
+                                <span class="colorLabel">{label}</span>
+                              </label>
+                            );
+                          });
+                        })()
+                      }
+                    </div>
+                  </div>
+                </div>
+
+                
+
+                <div class="advancedSetting">
+                  <div class="settingRow">
                     <div class="label">Allow negative numbers</div>
                     <div
                       class="segmented"
@@ -611,6 +711,8 @@ export default function App() {
                   </div>
                 </div>
 
+                <div class="advancedDivider" />
+
                 <div class="advancedSetting field">
                   <div class="fieldRow">
                     <div class="label">Delay between numbers (s)</div>
@@ -624,7 +726,9 @@ export default function App() {
                       disabled={isRunning()}
                       onInput={(e) =>
                         setDelayBetweenNumbersSeconds(
-                          clampFloat1(e.currentTarget.value, 0, 5)
+                          Number.isFinite(e.currentTarget.valueAsNumber)
+                            ? e.currentTarget.valueAsNumber
+                            : 0
                         )
                       }
                     />
@@ -639,7 +743,9 @@ export default function App() {
                     disabled={isRunning()}
                     onInput={(e) =>
                       setDelayBetweenNumbersSeconds(
-                        clampFloat1(e.currentTarget.value, 0, 5)
+                        Number.isFinite(e.currentTarget.valueAsNumber)
+                          ? e.currentTarget.valueAsNumber
+                          : 0
                       )
                     }
                   />
@@ -671,7 +777,13 @@ export default function App() {
                   step="1"
                   value={digitsPerNumber()}
                   disabled={isRunning()}
-                  onInput={(e) => setDigitsPerNumber(clampInt(e.currentTarget.value, 1, 18))}
+                  onInput={(e) =>
+                    setDigitsPerNumber(
+                      Number.isFinite(e.currentTarget.valueAsNumber)
+                        ? e.currentTarget.valueAsNumber
+                        : 1
+                    )
+                  }
                 />
               </div>
               <input
@@ -682,7 +794,13 @@ export default function App() {
                 step="1"
                 value={digitsPerNumber()}
                 disabled={isRunning()}
-                onInput={(e) => setDigitsPerNumber(clampInt(e.currentTarget.value, 1, 18))}
+                onInput={(e) =>
+                  setDigitsPerNumber(
+                    Number.isFinite(e.currentTarget.valueAsNumber)
+                      ? e.currentTarget.valueAsNumber
+                      : 1
+                  )
+                }
               />
             </div>
 
@@ -698,7 +816,11 @@ export default function App() {
                   value={numberDurationSeconds()}
                   disabled={isRunning()}
                   onInput={(e) =>
-                    setNumberDurationSeconds(clampFloat1(e.currentTarget.value, 0.1, 5))
+                    setNumberDurationSeconds(
+                      Number.isFinite(e.currentTarget.valueAsNumber)
+                        ? e.currentTarget.valueAsNumber
+                        : 0.1
+                    )
                   }
                 />
               </div>
@@ -710,7 +832,13 @@ export default function App() {
                 step="0.1"
                 value={numberDurationSeconds()}
                 disabled={isRunning()}
-                onInput={(e) => setNumberDurationSeconds(clampFloat1(e.currentTarget.value, 0.1, 5))}
+                onInput={(e) =>
+                  setNumberDurationSeconds(
+                    Number.isFinite(e.currentTarget.valueAsNumber)
+                      ? e.currentTarget.valueAsNumber
+                      : 0.1
+                  )
+                }
               />
             </div>
 
@@ -725,7 +853,13 @@ export default function App() {
                   step="1"
                   value={totalNumbers()}
                   disabled={isRunning()}
-                  onInput={(e) => setTotalNumbers(clampInt(e.currentTarget.value, 1, 1500))}
+                  onInput={(e) =>
+                    setTotalNumbers(
+                      Number.isFinite(e.currentTarget.valueAsNumber)
+                        ? e.currentTarget.valueAsNumber
+                        : 1
+                    )
+                  }
                 />
               </div>
               <input
@@ -736,7 +870,13 @@ export default function App() {
                 step="1"
                 value={totalNumbers()}
                 disabled={isRunning()}
-                onInput={(e) => setTotalNumbers(clampInt(e.currentTarget.value, 1, 1500))}
+                onInput={(e) =>
+                  setTotalNumbers(
+                    Number.isFinite(e.currentTarget.valueAsNumber)
+                      ? e.currentTarget.valueAsNumber
+                      : 1
+                  )
+                }
               />
             </div>
           </div>
@@ -826,7 +966,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {autoRepeatEnabled() && hasValidated() && autoRepeatNextStartAtMs() != null ? (
+                  {autoRepeatEnabled() && hasValidated() && autoRepeatSecondsLeft() != null ? (
                     <div class="autoRepeatStatus">
                       Next question in {autoRepeatSecondsLeft() ?? 0}s · {autoRepeatRemaining()} remaining
                     </div>
@@ -884,7 +1024,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {autoRepeatEnabled() && hasValidated() && autoRepeatNextStartAtMs() != null ? (
+                  {autoRepeatEnabled() && hasValidated() && autoRepeatSecondsLeft() != null ? (
                     <div class="autoRepeatStatus">
                       Next question in {autoRepeatSecondsLeft() ?? 0}s · {autoRepeatRemaining()} remaining
                     </div>

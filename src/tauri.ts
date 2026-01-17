@@ -3,10 +3,33 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type Phase = "idle" | "starting" | "countdown" | "flashing" | "complete";
 
-export interface SessionConfig {
+export type ColorScheme =
+  | "midnight"
+  | "ivory"
+  | "crimson"
+  | "aqua"
+  | "violet"
+  | "amber";
+
+export type ThemeMode = "dark" | "light";
+
+export interface AppSettings {
+  color_scheme: ColorScheme;
+  theme_mode: ThemeMode;
+}
+
+export interface SessionConfigInput {
   digits_per_number: number;
-  number_duration_ms: number;
-  delay_between_numbers_ms: number;
+  number_duration_s: number;
+  delay_between_numbers_s: number;
+  total_numbers: number;
+  allow_negative_numbers: boolean;
+}
+
+export interface SessionConfigEffective {
+  digits_per_number: number;
+  number_duration_s: number;
+  delay_between_numbers_s: number;
   total_numbers: number;
   allow_negative_numbers: boolean;
 }
@@ -14,7 +37,19 @@ export interface SessionConfig {
 export interface AutoRepeatConfig {
   enabled: boolean;
   repeats: number;
-  delay_ms: number;
+  delay_s: number;
+}
+
+export interface AutoRepeatEffective {
+  enabled: boolean;
+  repeats: number;
+  delay_s: number;
+}
+
+export interface StartSessionResponse {
+  session_id: number;
+  effective_config: SessionConfigEffective;
+  effective_auto_repeat: AutoRepeatEffective | null;
 }
 
 export interface ShowNumber {
@@ -37,6 +72,12 @@ export interface AutoRepeatWaitingPayload {
   remaining: number;
 }
 
+export interface AutoRepeatTickPayload {
+  session_id: number;
+  seconds_left: number;
+  remaining: number;
+}
+
 export interface ValidationResult {
   expected_sum: number;
   provided_sum: number;
@@ -53,11 +94,23 @@ export async function ping(): Promise<string> {
   return invoke<string>("ping");
 }
 
+export async function getAppSettings(): Promise<AppSettings> {
+  return invoke<AppSettings>("get_app_settings");
+}
+
+export async function setColorScheme(color_scheme: ColorScheme): Promise<AppSettings> {
+  return invoke<AppSettings>("set_color_scheme", { colorScheme: color_scheme });
+}
+
+export async function setThemeMode(theme_mode: ThemeMode): Promise<AppSettings> {
+  return invoke<AppSettings>("set_theme_mode", { themeMode: theme_mode });
+}
+
 export async function startSession(
-  config: SessionConfig,
+  config: SessionConfigInput,
   autoRepeat?: AutoRepeatConfig | null
-): Promise<number> {
-  return invoke<number>("start_session", {
+): Promise<StartSessionResponse> {
+  return invoke<StartSessionResponse>("start_session", {
     config,
     autoRepeat: autoRepeat ?? null,
   });
@@ -120,6 +173,16 @@ export function onAutoRepeatWaiting(
   return listen<AutoRepeatWaitingPayload>("auto_repeat_waiting", (event) =>
     handler(event.payload)
   );
+}
+
+export function onAutoRepeatTick(
+  handler: (payload: AutoRepeatTickPayload) => void
+): Promise<UnlistenFn> {
+  return listen<AutoRepeatTickPayload>("auto_repeat_tick", (event) => handler(event.payload));
+}
+
+export function onAppSettingsChanged(handler: (payload: AppSettings) => void): Promise<UnlistenFn> {
+  return listen<AppSettings>("app_settings_changed", (event) => handler(event.payload));
 }
 
 export function onSessionComplete(
