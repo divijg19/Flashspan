@@ -337,6 +337,14 @@
   opacity: 0.9;
 }
 
+.headerLogo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
 .grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -497,6 +505,56 @@
   align-items: center;
   justify-content: center;
   position: relative;
+}
+
+/* Splash screen */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 2s ease;
+}
+
+.splash.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.splashBanner {
+  max-width: 64vw;
+  max-height: 28vh;
+  object-fit: contain;
+  transform: translateY(-12%);
+  pointer-events: none;
+  filter: drop-shadow(0 8px 24px rgba(0,0,0,0.6));
+}
+
+.splashText {
+  margin-top: 12px;
+  text-align: center;
+  color: rgba(255,255,255,0.96);
+  pointer-events: none;
+}
+
+.splashTitle {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 20px;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+
+.splashSubtitle {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  opacity: 0.85;
 }
 
 /* Countdown needs a stable, premium composition: digit comfortably inside ring. */

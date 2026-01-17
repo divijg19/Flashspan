@@ -63,6 +63,54 @@ async function forceFullscreenBeforeStart(): Promise<void> {
 }
 
 export default function App() {
+  const [showSplash, setShowSplash] = createSignal<boolean>(true);
+  const [splashVisible, setSplashVisible] = createSignal<boolean>(false);
+
+  // Fade durations (ms)
+  const fadeMs = 2000; // 2s fade in/out
+  const holdMs = 800; // visible hold between fades
+
+  onMount(() => {
+    if (!showSplash()) return;
+
+    // trigger fade-in on next tick
+    const enterTimer = window.setTimeout(() => setSplashVisible(true), 10);
+
+    // schedule fade-out after fade-in + hold
+    const exitTimer = window.setTimeout(() => setSplashVisible(false), fadeMs + holdMs + 10);
+
+    // schedule unmount after fade-out completes
+    const unmountTimer = window.setTimeout(() => setShowSplash(false), fadeMs + holdMs + fadeMs + 20);
+
+    const onKey = (e: KeyboardEvent) => {
+      if (!showSplash()) return;
+      // Any key press skips splash: start fade-out immediately if visible
+      if (splashVisible()) {
+        // clear pending timers and start immediate fade-out
+        window.clearTimeout(exitTimer);
+        window.clearTimeout(unmountTimer);
+        setSplashVisible(false);
+        window.setTimeout(() => setShowSplash(false), fadeMs);
+      } else {
+        // If not yet visible, abort and unmount quickly
+        window.clearTimeout(enterTimer);
+        window.clearTimeout(exitTimer);
+        window.clearTimeout(unmountTimer);
+        setSplashVisible(false);
+        setShowSplash(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+
+    onCleanup(() => {
+      window.clearTimeout(enterTimer);
+      window.clearTimeout(exitTimer);
+      window.clearTimeout(unmountTimer);
+      window.removeEventListener("keydown", onKey);
+    });
+  });
+
   const [displayText, setDisplayText] = createSignal<string>("");
   const [phase, setPhase] = createSignal<Phase>("idle");
   const [errorText, setErrorText] = createSignal<string>("");
@@ -358,9 +406,21 @@ export default function App() {
 
   return (
     <div class="app">
+      {showSplash() ? (
+        <div classList={{ splash: true, visible: splashVisible() }}>
+          <img src="/src-tauri/icons/Ascent_Banner.png" alt="Ascent Banner" class="splashBanner" />
+          <div class="splashText">
+            <div class="splashTitle">Ascent Abacus &amp; Brain Gym</div>
+            <div class="splashSubtitle">Your one stop solution for IQ improvement</div>
+          </div>
+        </div>
+      ) : null}
       {phase() === "idle" ? (
         <div class="panel">
-          <div class="title">Ascent Flash</div>
+          <div class="title">
+            <img src="/src/assets/Ascent_Logo.png" alt="logo" class="headerLogo" />
+            Ascent Flash
+          </div>
           <button
             class="iconButton"
             type="button"
