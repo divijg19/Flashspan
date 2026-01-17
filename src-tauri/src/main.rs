@@ -15,16 +15,6 @@ fn ping() -> String {
 }
 
 #[tauri::command]
-fn start_session(
-    app: tauri::AppHandle,
-    manager: tauri::State<'_, Arc<SessionManager>>,
-    config: SessionConfig,
-) -> Result<(), String> {
-    let _ = manager.start(app, config)?;
-    Ok(())
-}
-
-#[tauri::command]
 fn stop_session(manager: tauri::State<'_, Arc<SessionManager>>) {
     manager.stop();
 }
@@ -60,6 +50,22 @@ struct ValidationResult {
 struct SubmitAnswerResponse {
     validation: ValidationResult,
     auto_repeat_waiting: Option<AutoRepeatWaitingPayload>,
+}
+
+fn parse_answer_text(input: &str) -> Result<i64, String> {
+    let cleaned = input.trim().replace(',', "");
+    if cleaned.is_empty() {
+        return Err("Enter a single integer answer (e.g. 42 or -17).".to_string());
+    }
+
+    // Defensive bound: avoid absurd payload sizes.
+    if cleaned.len() > 64 {
+        return Err("Enter a single integer answer (e.g. 42 or -17).".to_string());
+    }
+
+    cleaned
+        .parse::<i64>()
+        .map_err(|_| "Enter a single integer answer (e.g. 42 or -17).".to_string())
 }
 
 fn now_ms() -> u64 {
@@ -102,7 +108,7 @@ fn schedule_auto_repeat_if_needed(
 }
 
 #[tauri::command]
-fn start_session_v2(
+fn start_session(
     app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<SessionManager>>,
     config: SessionConfig,
@@ -174,18 +180,29 @@ fn submit_answer(
     })
 }
 
+#[tauri::command]
+fn submit_answer_text(
+    app: tauri::AppHandle,
+    manager: tauri::State<'_, Arc<SessionManager>>,
+    session_id: u64,
+    provided_text: String,
+) -> Result<SubmitAnswerResponse, String> {
+    let provided_sum = parse_answer_text(&provided_text)?;
+    submit_answer(app, manager, session_id, provided_sum)
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(Arc::new(SessionManager::default()))
         .invoke_handler(tauri::generate_handler![
             ping,
             start_session,
-            start_session_v2,
             stop_session,
             cancel_auto_repeat,
             mark_validated,
             acknowledge_complete,
-            submit_answer
+            submit_answer,
+            submit_answer_text
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

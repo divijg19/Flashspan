@@ -17,7 +17,7 @@ export interface AutoRepeatConfig {
   delay_ms: number;
 }
 
-export interface ShowNumberV2 {
+export interface ShowNumber {
   session_id: number;
   index: number;
   total: number;
@@ -25,7 +25,7 @@ export interface ShowNumberV2 {
   running_sum: number;
 }
 
-export interface SessionCompleteV2 {
+export interface SessionComplete {
   session_id: number;
   numbers: number[];
   sum: number;
@@ -53,11 +53,11 @@ export async function ping(): Promise<string> {
   return invoke<string>("ping");
 }
 
-export async function startSessionV2(
+export async function startSession(
   config: SessionConfig,
   autoRepeat?: AutoRepeatConfig | null
 ): Promise<number> {
-  return invoke<number>("start_session_v2", {
+  return invoke<number>("start_session", {
     config,
     autoRepeat: autoRepeat ?? null,
   });
@@ -91,17 +91,23 @@ export async function submitAnswer(
   });
 }
 
+export async function submitAnswerText(
+  session_id: number,
+  provided_text: string
+): Promise<SubmitAnswerResponse> {
+  return invoke<SubmitAnswerResponse>("submit_answer_text", {
+    sessionId: session_id,
+    providedText: provided_text,
+  });
+}
+
 // --- Events (typed) ---
 export function onCountdownTick(handler: (value: string) => void): Promise<UnlistenFn> {
   return listen<string>("countdown_tick", (event) => handler(String(event.payload ?? "")));
 }
 
-export function onShowNumberV2(handler: (payload: ShowNumberV2) => void): Promise<UnlistenFn> {
-  return listen<ShowNumberV2>("show_number_v2", (event) => handler(event.payload));
-}
-
-export function onShowNumberLegacy(handler: (value: string) => void): Promise<UnlistenFn> {
-  return listen<string>("show_number", (event) => handler(String(event.payload ?? "")));
+export function onShowNumber(handler: (payload: ShowNumber) => void): Promise<UnlistenFn> {
+  return listen<ShowNumber>("show_number", (event) => handler(event.payload));
 }
 
 export function onClearScreen(handler: () => void): Promise<UnlistenFn> {
@@ -116,12 +122,8 @@ export function onAutoRepeatWaiting(
   );
 }
 
-export function onSessionCompleteV2(
-  handler: (payload: SessionCompleteV2) => void
+export function onSessionComplete(
+  handler: (payload: SessionComplete) => void
 ): Promise<UnlistenFn> {
-  return listen<SessionCompleteV2>("session_complete_v2", (event) => handler(event.payload));
-}
-
-export function onSessionCompleteLegacy(handler: () => void): Promise<UnlistenFn> {
-  return listen("session_complete", () => handler());
+  return listen<SessionComplete>("session_complete", (event) => handler(event.payload));
 }

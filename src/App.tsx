@@ -5,20 +5,17 @@ import {
   AutoRepeatWaitingPayload,
   SubmitAnswerResponse,
   Phase,
-  SessionCompleteV2,
   acknowledgeComplete,
   cancelAutoRepeat,
   onAutoRepeatWaiting,
   onClearScreen,
   onCountdownTick,
-  onSessionCompleteLegacy,
-  onSessionCompleteV2,
-  onShowNumberLegacy,
-  onShowNumberV2,
+  onSessionComplete,
+  onShowNumber,
   ping,
   SessionConfig,
-  startSessionV2,
-  submitAnswer,
+  startSession,
+  submitAnswerText,
   stopSession,
 } from "./tauri";
 
@@ -82,9 +79,6 @@ export default function App() {
   const [sessionId, setSessionId] = createSignal<number | null>(null);
   const [numbers, setNumbers] = createSignal<number[]>([]);
 
-  // Fallback capture for legacy events.
-  let capturedNumbers: string[] = [];
-
   const [autoRepeatEnabled, setAutoRepeatEnabled] = createSignal<boolean>(false);
   const [autoRepeatCount, setAutoRepeatCount] = createSignal<number>(5);
   const [autoRepeatDelaySeconds, setAutoRepeatDelaySeconds] = createSignal<number>(5);
@@ -121,24 +115,6 @@ export default function App() {
     return Math.round(clamped * 10) / 10;
   };
 
-  const sumCapturedNumbers = (values: string[]): number => {
-    let total = 0;
-    for (const raw of values) {
-      const n = Number.parseInt(String(raw).trim(), 10);
-      if (!Number.isFinite(n)) continue;
-      total += n;
-    }
-    return total;
-  };
-
-  const parseUserSum = (raw: unknown): number | null => {
-    const cleaned = String(raw).trim().replace(/,/g, "");
-    if (!cleaned) return null;
-    if (!/^[+-]?\d+$/.test(cleaned)) return null;
-    const n = Number.parseInt(cleaned, 10);
-    return Number.isFinite(n) ? n : null;
-  };
-
   const resetForIncomingSessionIfComplete = () => {
     if (phase() !== "complete") return;
     setShowAnswer(false);
@@ -150,7 +126,6 @@ export default function App() {
     setHasValidated(false);
     setAutoRepeatNextStartAtMs(null);
     setAutoRepeatSecondsLeft(null);
-    capturedNumbers = [];
   };
 
   const goHome = () => {
@@ -168,7 +143,6 @@ export default function App() {
     setAutoRepeatSecondsLeft(null);
     setSessionId(null);
     setNumbers([]);
-    capturedNumbers = [];
   };
 
   const applyAutoRepeatWaiting = (payload: AutoRepeatWaitingPayload) => {
@@ -223,14 +197,6 @@ export default function App() {
   };
 
   const validateTypedAnswer = async () => {
-    const provided = parseUserSum(typedAnswer());
-    if (provided === null) {
-      setValidationSummary("Enter a single integer answer (e.g. 42 or -17).\n");
-      return;
-    }
-
-    setHasValidated(true);
-
     const sid = sessionId();
     if (sid == null) {
       setValidationSummary("No active session id to validate.");
@@ -238,16 +204,16 @@ export default function App() {
     }
 
     try {
-      const resp = await submitAnswer(sid, provided);
+      const resp = await submitAnswerText(sid, typedAnswer());
+      setHasValidated(true);
       applySubmitAnswerResponse(resp);
     } catch (e) {
+      setHasValidated(false);
       setValidationSummary(String(e));
     }
   };
 
   onMount(async () => {
-    let gotCompleteV2 = false;
-
     const unlistenCountdown = await onCountdownTick((value) => {
       resetForIncomingSessionIfComplete();
       setPhase("countdown");
@@ -256,19 +222,11 @@ export default function App() {
       void setFullscreen(true);
     });
 
-    const unlistenFlashV2 = await onShowNumberV2((payload) => {
+    const unlistenFlash = await onShowNumber((payload) => {
       resetForIncomingSessionIfComplete();
       setSessionId(payload.session_id);
       setPhase("flashing");
       setDisplayText(String(payload.value));
-      void setFullscreen(true);
-    });
-
-    const unlistenFlash = await onShowNumberLegacy((value) => {
-      resetForIncomingSessionIfComplete();
-      setPhase("flashing");
-      capturedNumbers.push(value);
-      setDisplayText(value);
       void setFullscreen(true);
     });
 
@@ -281,8 +239,7 @@ export default function App() {
       applyAutoRepeatWaiting(payload);
     });
 
-    const unlistenCompleteV2 = await onSessionCompleteV2((payload) => {
-      gotCompleteV2 = true;
+    const unlistenComplete = await onSessionComplete((payload) => {
       setPhase("complete");
       setDisplayText("");
       setShowAnswer(false);
@@ -299,22 +256,6 @@ export default function App() {
       void setFullscreen(false);
     });
 
-    const unlistenComplete = await onSessionCompleteLegacy(() => {
-      if (gotCompleteV2) return;
-      setPhase("complete");
-      setDisplayText("");
-      setShowAnswer(false);
-      setAnswerText(capturedNumbers.join("\n"));
-      setAnswerSum(sumCapturedNumbers(capturedNumbers));
-      setTypedAnswer("");
-      setValidationSummary("");
-      setShowNumbersList(false);
-      setHasValidated(false);
-      setAutoRepeatNextStartAtMs(null);
-      setAutoRepeatSecondsLeft(null);
-      void setFullscreen(false);
-    });
-
     const onKeyDown = (e: KeyboardEvent) => {
       if (!isEscapeKey(e)) return;
       if (phase() !== "flashing" && phase() !== "starting" && phase() !== "countdown") return;
@@ -326,11 +267,9 @@ export default function App() {
     onCleanup(() => {
       window.removeEventListener("keydown", onKeyDown);
       unlistenCountdown();
-      unlistenFlashV2();
       unlistenFlash();
       unlistenClear();
       unlistenAutoRepeatWaiting();
-      unlistenCompleteV2();
       unlistenComplete();
     });
   });
@@ -352,7 +291,6 @@ export default function App() {
 
     setSessionId(null);
     setNumbers([]);
-    capturedNumbers = [];
 
     const config: SessionConfig = {
       digits_per_number: digitsPerNumber(),
@@ -378,7 +316,7 @@ export default function App() {
       }
 
       await forceFullscreenBeforeStart();
-      const sid = await startSessionV2(
+      const sid = await startSession(
         config,
         autoRepeatEnabled()
           ? {
@@ -414,7 +352,6 @@ export default function App() {
       setAutoRepeatSecondsLeft(null);
       setSessionId(null);
       setNumbers([]);
-      capturedNumbers = [];
       void setFullscreen(false);
     }
   };

@@ -13,14 +13,14 @@ use std::{
 use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct SessionResult {
+pub struct SessionComplete {
     pub session_id: u64,
     pub numbers: Vec<i64>,
     pub sum: i64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct ShowNumberV2 {
+pub struct ShowNumber {
     pub session_id: u64,
     pub index: u32,
     pub total: u32,
@@ -63,7 +63,7 @@ pub struct SessionManager {
     worker: Mutex<Option<JoinHandle<()>>>,
     stop: Mutex<Option<Arc<AtomicBool>>>,
     next_session_id: AtomicU64,
-    recent_results: Arc<Mutex<VecDeque<SessionResult>>>,
+    recent_results: Arc<Mutex<VecDeque<SessionComplete>>>,
     auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
     auto_repeat_generation: AtomicU64,
 }
@@ -156,7 +156,7 @@ impl SessionManager {
         self.auto_repeat_generation.load(Ordering::SeqCst)
     }
 
-    pub fn result_for(&self, session_id: u64) -> Result<SessionResult, String> {
+    pub fn result_for(&self, session_id: u64) -> Result<SessionComplete, String> {
         let guard = self
             .recent_results
             .lock()
@@ -268,7 +268,7 @@ fn run_session_loop(
     state: Arc<Mutex<SessionState>>,
     stop: Arc<AtomicBool>,
     session_id: u64,
-    recent_results: Arc<Mutex<VecDeque<SessionResult>>>,
+    recent_results: Arc<Mutex<VecDeque<SessionComplete>>>,
     auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
 ) {
     let _ = app.emit("clear_screen", ());
@@ -378,10 +378,9 @@ fn run_session_loop(
             .expect("payload_value should fit into i64 with current constraints");
         numbers.push(value_i64);
 
-        let _ = app.emit("show_number", payload);
         let _ = app.emit(
-            "show_number_v2",
-            ShowNumberV2 {
+            "show_number",
+            ShowNumber {
                 session_id,
                 index: i + 1,
                 total: config.total_numbers,
@@ -407,12 +406,11 @@ fn run_session_loop(
     }
 
     let _ = app.emit("clear_screen", ());
-    let _ = app.emit("session_complete", ());
 
     let sum_i64: i64 = sum_i128
         .try_into()
         .expect("sum should fit into i64 with current constraints");
-    let result = SessionResult {
+    let result = SessionComplete {
         session_id,
         numbers,
         sum: sum_i64,
@@ -425,7 +423,7 @@ fn run_session_loop(
             guard.pop_front();
         }
     }
-    let _ = app.emit("session_complete_v2", result.clone());
+    let _ = app.emit("session_complete", result.clone());
 
     // If auto-repeat is configured and there are repeats remaining, arm it to wait for validation.
     {
