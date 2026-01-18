@@ -101,7 +101,10 @@ jobs:
       # Build
       # --------------------
       - name: Build Tauri app
+        env:
+            APPIMAGE_EXTRACT_AND_RUN: "1"
         run: bunx @tauri-apps/cli@2.9.5 build
+
 
       # --------------------
       # Artifacts
