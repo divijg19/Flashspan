@@ -1,0 +1,73 @@
+name: AppImage
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    name: Build Linux AppImage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --------------------
+      # Build AppImage in Docker
+      # --------------------
+      - name: Build AppImage (isolated container)
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            ubuntu:22.04 \
+            bash -eux << 'EOF'
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                curl \
+                ca-certificates \
+                build-essential \
+                pkg-config \
+                libgtk-3-dev \
+                libwebkit2gtk-4.1-dev \
+                libayatana-appindicator3-dev \
+                libsecret-1-dev \
+                libasound2-dev \
+                libdbus-1-dev \
+                libssl-dev \
+                xz-utils \
+                file \
+                git
+
+              # ---- Install Bun ----
+              curl -fsSL https://bun.sh/install | bash
+              export PATH="/root/.bun/bin:$PATH"
+
+              # ---- Install Rust ----
+              curl https://sh.rustup.rs -sSf | sh -s -- -y
+              source /root/.cargo/env
+
+              # ---- Build frontend ----
+              bun install --frozen-lockfile
+              bun run build
+
+              # ---- Build AppImage only ----
+              cd src-tauri
+              bunx @tauri-apps/cli@2.9.5 build --bundles appimage
+          EOF
+
+      # --------------------
+      # Upload to GitHub Release
+      # --------------------
+      - name: Upload AppImage to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            src-tauri/target/release/bundle/appimage/*.AppImage

@@ -12,8 +12,6 @@ jobs:
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    env:
-      APPIMAGE_EXTRACT_AND_RUN: "1"
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -82,16 +80,7 @@ jobs:
             curl \
             xz-utils \
             file
-
-      - name: Install linuxdeploy (AppImage tooling)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo curl -L -o /usr/local/bin/linuxdeploy \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          sudo curl -L -o /usr/local/bin/linuxdeploy-plugin-gtk \
-            https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk-x86_64.AppImage
-          sudo chmod +x /usr/local/bin/linuxdeploy /usr/local/bin/linuxdeploy-plugin-gtk
-
+            
       # --------------------
       # Windows dependencies
       # --------------------
@@ -114,7 +103,8 @@ jobs:
         with:
           name: bundles-${{ matrix.os }}
           path: |
-            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
             src-tauri/target/release/bundle/**/*.exe
             src-tauri/target/release/bundle/**/*.dmg
 
@@ -134,6 +124,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           files: |
-            **/*.AppImage
+            **/*.deb
+            **/*.rpm
             **/*.exe
             **/*.dmg
