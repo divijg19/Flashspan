@@ -81,7 +81,7 @@ jobs:
 
       - name: Build Tauri app
         # Single pinned CLI invocation; shell is inferred correctly per OS
-        run: bunx @tauri-apps/cli@2.9.5 build --release
+        run: bunx @tauri-apps/cli@2.9.5 build
 
       - name: Upload distributables
         uses: actions/upload-artifact@v4
