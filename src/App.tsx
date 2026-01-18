@@ -56,8 +56,6 @@ async function forceFullscreenBeforeStart(): Promise<void> {
     // Fall through and verify below.
   }
 
-  // Wait briefly for the window manager to apply fullscreen.
-  // This is UI-only coordination; Rust still owns all flash timing.
   for (let i = 0; i < 30; i += 1) {
     try {
       if (await win.isFullscreen()) return;
@@ -412,7 +410,7 @@ export default function App() {
     <div classList={{ app: true, [themeClass()]: true, [modeClass()]: true }}>
       {showSplash() ? (
         <div classList={{ splash: true, visible: splashVisible() }}>
-          <img src="/src-tauri/icons/Ascent_Banner.png" alt="Ascent Banner" class="splashBanner" />
+          <img src="/Ascent_Banner.png" alt="Ascent Banner" class="splashBanner" />
           <div class="splashText">
             <div class="splashTitle">Ascent Abacus &amp; Brain Gym</div>
             <div class="splashSubtitle">Your one stop solution for IQ improvement</div>
@@ -422,7 +420,7 @@ export default function App() {
       {phase() === "idle" ? (
         <div class="panel">
           <div class="title">
-            <img src="/src/assets/Ascent_Logo.png" alt="logo" class="headerLogo" />
+            <img src="/Ascent_Logo.png" alt="logo" class="headerLogo" />
             Ascent Flash
           </div>
           <button
@@ -487,11 +485,9 @@ export default function App() {
                       </label>
                     </div>
                   </div>
-                </div>
 
-                {autoRepeatEnabled() ? (
-                  <>
-                    <div class="advancedSetting field">
+                  {autoRepeatEnabled() ? (
+                    <div class="field">
                       <div class="fieldRow">
                         <div class="label">Repeats</div>
                         <input
@@ -528,8 +524,10 @@ export default function App() {
                         }
                       />
                     </div>
+                  ) : null}
 
-                    <div class="advancedSetting">
+                  {autoRepeatEnabled() ? (
+                    <>
                       <div class="fieldRow">
                         <div class="label">Delay before next question (s)</div>
                         <input
@@ -550,9 +548,9 @@ export default function App() {
                         />
                       </div>
                       <div class="hint">Starts after you validate.</div>
-                    </div>
-                  </>
-                ) : null}
+                    </>
+                  ) : null}
+                </div>
 
                 <div class="advancedDivider" />
 
