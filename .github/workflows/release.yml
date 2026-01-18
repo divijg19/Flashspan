@@ -12,6 +12,8 @@ jobs:
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: "1"
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -101,8 +103,6 @@ jobs:
       # Build
       # --------------------
       - name: Build Tauri app
-        env:
-            APPIMAGE_EXTRACT_AND_RUN: "1"
         run: bunx @tauri-apps/cli@2.9.5 build
 
 
