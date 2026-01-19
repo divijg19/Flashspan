@@ -27,7 +27,8 @@ jobs:
             -v "$PWD:/workspace" \
             -w /workspace \
             ubuntu:22.04 \
-            bash -euxo pipefail << 'EOF'
+            bash -c '
+              set -euxo pipefail
 
               echo "=== Installing system dependencies ==="
               apt-get update
@@ -52,7 +53,7 @@ jobs:
               curl -fsSL https://bun.sh/install | bash
               export PATH="/root/.bun/bin:$PATH"
 
-              echo "=== Installing Rust (stable) ==="
+              echo "=== Installing Rust ==="
               curl https://sh.rustup.rs -sSf | sh -s -- -y
               source /root/.cargo/env
 
@@ -63,8 +64,7 @@ jobs:
               echo "=== Building AppImage via Tauri ==="
               cd src-tauri
               bunx @tauri-apps/cli@2.9.5 build --bundles appimage
-
-          EOF
+            '
 
       # --------------------------------------------------
       # Upload AppImage to GitHub Release
