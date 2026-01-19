@@ -18,10 +18,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------
-      # Build AppImage in Docker (isolated, reliable)
-      # --------------------
-      - name: Build AppImage (isolated container)
+      # --------------------------------------------------
+      # Build Tauri "app" bundle inside Docker (CI-safe)
+      # --------------------------------------------------
+      - name: Build app bundle (Docker)
         run: |
           docker run --rm \
             -v "$PWD:/workspace" \
@@ -47,7 +47,9 @@ jobs:
                 xz-utils \
                 file \
                 git \
-                unzip
+                unzip \
+                python3 \
+                python3-pip
 
               echo '--- Installing Bun ---'
               curl -fsSL https://bun.sh/install | bash
@@ -61,17 +63,26 @@ jobs:
               bun install --frozen-lockfile
               bun run build
 
-              echo '--- Building AppImage ---'
+              echo '--- Building Tauri app bundle (no AppImage) ---'
               cd src-tauri
-              bunx @tauri-apps/cli@2.9.5 build --bundles appimage
+              bunx @tauri-apps/cli@2.9.5 build --bundles app
             "
 
-      # --------------------
+      # --------------------------------------------------
+      # Build AppImage using appimage-builder (no AppImages executed)
+      # --------------------------------------------------
+      - name: Build AppImage (appimage-builder)
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install appimage-builder
+          appimage-builder --recipe appimagebuilder.yml
+
+      # --------------------------------------------------
       # Upload AppImage to GitHub Release
-      # --------------------
+      # --------------------------------------------------
       - name: Upload AppImage to release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            src-tauri/target/release/bundle/appimage/*.AppImage
+            *.AppImage
