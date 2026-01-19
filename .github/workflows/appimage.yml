@@ -18,10 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # Build AppImage in Ubuntu 22.04 (extract-and-run mode)
-      # --------------------------------------------------
-      - name: Build AppImage (Docker)
+      - name: Build AppImage (Docker, Ubuntu 22.04)
         run: |
           docker run --rm \
             -v "$PWD:/workspace" \
@@ -29,36 +26,27 @@ jobs:
             ubuntu:22.04 \
             bash -c '
               set -euxo pipefail
-
-              # Force AppImages to run without FUSE
               export APPIMAGE_EXTRACT_AND_RUN=1
 
               echo "=== Installing system dependencies ==="
               apt-get update
               apt-get install -y --no-install-recommends \
-                curl \
-                ca-certificates \
-                build-essential \
-                pkg-config \
-                libgtk-3-dev \
-                libwebkit2gtk-4.1-dev \
-                libayatana-appindicator3-dev \
-                libsecret-1-dev \
-                libasound2-dev \
-                libdbus-1-dev \
-                libssl-dev \
-                xz-utils \
-                file \
-                git \
-                unzip
+                curl ca-certificates build-essential pkg-config \
+                libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+                libsecret-1-dev libasound2-dev libdbus-1-dev libssl-dev \
+                xz-utils file git unzip \
+                patchelf zsync libglib2.0-dev
 
               echo "=== Installing Bun ==="
+              export BUN_INSTALL="$HOME/.bun"
               curl -fsSL https://bun.sh/install | bash
-              export PATH="/root/.bun/bin:$PATH"
+              export PATH="$BUN_INSTALL/bin:$PATH"
 
               echo "=== Installing Rust ==="
               curl https://sh.rustup.rs -sSf | sh -s -- -y
-              source /root/.cargo/env
+              source "$HOME/.cargo/env"
+              rustup default stable
+              rustup target add x86_64-unknown-linux-gnu
 
               echo "=== Building frontend ==="
               bun install --frozen-lockfile
@@ -69,9 +57,6 @@ jobs:
               bunx @tauri-apps/cli@2.9.5 build --bundles appimage
             '
 
-      # --------------------------------------------------
-      # Upload AppImage to GitHub Release
-      # --------------------------------------------------
       - name: Upload AppImage to GitHub Release
         uses: softprops/action-gh-release@v1
         with:
