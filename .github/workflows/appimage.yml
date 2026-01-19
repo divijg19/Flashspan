@@ -19,18 +19,17 @@ jobs:
         uses: actions/checkout@v4
 
       # --------------------------------------------------
-      # Build Tauri "app" bundle inside Docker (CI-safe)
+      # Build AppImage in a controlled Ubuntu 22.04 container
       # --------------------------------------------------
-      - name: Build app bundle (Docker)
+      - name: Build AppImage (Docker, Ubuntu 22.04)
         run: |
           docker run --rm \
             -v "$PWD:/workspace" \
             -w /workspace \
             ubuntu:22.04 \
-            bash -c "
-              set -euxo pipefail
+            bash -euxo pipefail << 'EOF'
 
-              echo '--- Installing system dependencies ---'
+              echo "=== Installing system dependencies ==="
               apt-get update
               apt-get install -y --no-install-recommends \
                 curl \
@@ -47,42 +46,32 @@ jobs:
                 xz-utils \
                 file \
                 git \
-                unzip \
-                python3 \
-                python3-pip
+                unzip
 
-              echo '--- Installing Bun ---'
+              echo "=== Installing Bun ==="
               curl -fsSL https://bun.sh/install | bash
-              export PATH=\"/root/.bun/bin:\$PATH\"
+              export PATH="/root/.bun/bin:$PATH"
 
-              echo '--- Installing Rust ---'
+              echo "=== Installing Rust (stable) ==="
               curl https://sh.rustup.rs -sSf | sh -s -- -y
               source /root/.cargo/env
 
-              echo '--- Building frontend ---'
+              echo "=== Building frontend ==="
               bun install --frozen-lockfile
               bun run build
 
-              echo '--- Building Tauri app bundle (no AppImage) ---'
+              echo "=== Building AppImage via Tauri ==="
               cd src-tauri
-              bunx @tauri-apps/cli@2.9.5 build --bundles app
-            "
+              bunx @tauri-apps/cli@2.9.5 build --bundles appimage
 
-      # --------------------------------------------------
-      # Build AppImage using appimage-builder (no AppImages executed)
-      # --------------------------------------------------
-      - name: Build AppImage (appimage-builder)
-        run: |
-          python3 -m pip install --upgrade pip
-          pip3 install appimage-builder
-          appimage-builder --recipe appimagebuilder.yml
+          EOF
 
       # --------------------------------------------------
       # Upload AppImage to GitHub Release
       # --------------------------------------------------
-      - name: Upload AppImage to release
+      - name: Upload AppImage to GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            *.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage
