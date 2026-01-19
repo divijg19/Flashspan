@@ -18,6 +18,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # Build AppImage in Ubuntu 20.04 (CI-safe, no FUSE)
+      # --------------------------------------------------
       - name: Build AppImage (Docker, Ubuntu 20.04)
         run: |
           docker run --rm \
@@ -26,6 +29,8 @@ jobs:
             ubuntu:20.04 \
             bash -c '
               set -euxo pipefail
+
+              # Force AppImages to run without FUSE
               export APPIMAGE_EXTRACT_AND_RUN=1
 
               echo "=== Installing system dependencies ==="
@@ -34,8 +39,9 @@ jobs:
                 curl ca-certificates build-essential pkg-config \
                 libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev \
                 libsecret-1-dev libasound2-dev libdbus-1-dev libssl-dev \
+                libglib2.0-dev \
                 xz-utils file git unzip \
-                patchelf zsync libglib2.0-dev
+                patchelf zsync
 
               echo "=== Installing Bun ==="
               export BUN_INSTALL="$HOME/.bun"
@@ -57,6 +63,9 @@ jobs:
               bunx @tauri-apps/cli@2.9.5 build --bundles appimage
             '
 
+      # --------------------------------------------------
+      # Upload AppImage to GitHub Release
+      # --------------------------------------------------
       - name: Upload AppImage to GitHub Release
         uses: softprops/action-gh-release@v1
         with:
