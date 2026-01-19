@@ -27,7 +27,10 @@ jobs:
             -v "$PWD:/workspace" \
             -w /workspace \
             ubuntu:22.04 \
-            bash -eux << 'EOF'
+            bash -c "
+              set -euxo pipefail
+
+              echo '--- Installing system dependencies ---'
               apt-get update
               apt-get install -y --no-install-recommends \
                 curl \
@@ -45,25 +48,25 @@ jobs:
                 file \
                 git
 
-              # ---- Install Bun ----
+              echo '--- Installing Bun ---'
               curl -fsSL https://bun.sh/install | bash
-              export PATH="/root/.bun/bin:$PATH"
+              export PATH=\"/root/.bun/bin:\$PATH\"
 
-              # ---- Install Rust ----
+              echo '--- Installing Rust ---'
               curl https://sh.rustup.rs -sSf | sh -s -- -y
               source /root/.cargo/env
 
-              # ---- Build frontend ----
+              echo '--- Building frontend ---'
               bun install --frozen-lockfile
               bun run build
 
-              # ---- Build AppImage only ----
+              echo '--- Building AppImage ---'
               cd src-tauri
               bunx @tauri-apps/cli@2.9.5 build --bundles appimage
-          EOF
+            "
 
       # --------------------
-      # Upload to GitHub Release
+      # Upload AppImage to GitHub Release
       # --------------------
       - name: Upload AppImage to release
         uses: softprops/action-gh-release@v1
