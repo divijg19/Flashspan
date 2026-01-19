@@ -57,8 +57,6 @@ jobs:
                 libasound2-dev \
                 libdbus-1-dev \
                 libssl-dev \
-                \
-                # --- CRITICAL for AppImage icon + glib detection ---
                 libglib2.0-dev \
                 librsvg2-dev
 
