@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v4
 
       # --------------------
-      # Build AppImage in Docker
+      # Build AppImage in Docker (isolated, reliable)
       # --------------------
       - name: Build AppImage (isolated container)
         run: |
@@ -46,7 +46,8 @@ jobs:
                 libssl-dev \
                 xz-utils \
                 file \
-                git
+                git \
+                unzip
 
               echo '--- Installing Bun ---'
               curl -fsSL https://bun.sh/install | bash
