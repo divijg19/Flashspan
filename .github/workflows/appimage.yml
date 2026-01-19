@@ -2,8 +2,8 @@ name: AppImage
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - appimage
   workflow_dispatch:
 
 permissions:

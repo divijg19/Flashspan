@@ -92,7 +92,7 @@ jobs:
       # Build
       # --------------------
       - name: Build Tauri app
-        run: bunx @tauri-apps/cli@2.9.5 build
+        run: bunx @tauri-apps/cli@2.9.5 build --bundles deb,rpm,nsis,dmg
 
 
       # --------------------
