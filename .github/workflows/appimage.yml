@@ -58,7 +58,7 @@ jobs:
                 libdbus-1-dev \
                 libssl-dev \
                 \
-                # --- CRITICAL for AppImage icon handling ---
+                # --- CRITICAL for AppImage icon + glib detection ---
                 libglib2.0-dev \
                 librsvg2-dev
 
