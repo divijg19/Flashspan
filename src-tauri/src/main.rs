@@ -147,6 +147,7 @@ struct ValidationResult {
 struct SubmitAnswerResponse {
     validation: ValidationResult,
     auto_repeat_waiting: Option<AutoRepeatWaitingPayload>,
+    message: String,
 }
 
 fn parse_answer_text(input: &str) -> Result<i64, String> {
@@ -163,6 +164,26 @@ fn parse_answer_text(input: &str) -> Result<i64, String> {
     cleaned
         .parse::<i64>()
         .map_err(|_| "Enter a single integer answer (e.g. 42 or -17).".to_string())
+}
+
+#[cfg(test)]
+mod main_tests {
+    use super::*;
+
+    #[test]
+    fn parse_answer_text_accepts_commas_and_spaces() {
+        assert_eq!(parse_answer_text("  42 ").unwrap(), 42);
+        assert_eq!(parse_answer_text("1,234").unwrap(), 1234);
+        assert!(parse_answer_text("").is_err());
+        assert!(parse_answer_text("not a number").is_err());
+    }
+
+    #[test]
+    fn parse_answer_text_bounds_check() {
+        // Very long numeric string is rejected by our defensive bound
+        let long = "1".repeat(100);
+        assert!(parse_answer_text(&long).is_err());
+    }
 }
 
 fn now_ms() -> u64 {
@@ -318,9 +339,21 @@ fn acknowledge_complete(
 fn submit_answer(
     app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<SessionManager>>,
-    session_id: u64,
-    provided_sum: i64,
+    args: serde_json::Value,
 ) -> Result<SubmitAnswerResponse, String> {
+    #[derive(serde::Deserialize)]
+    struct SubmitAnswerArgs {
+        #[serde(alias = "sessionId")]
+        session_id: u64,
+        #[serde(alias = "providedSum")]
+        provided_sum: i64,
+    }
+
+    let parsed: SubmitAnswerArgs =
+        serde_json::from_value(args).map_err(|e| format!("invalid args: {}", e))?;
+    let session_id = parsed.session_id;
+    let provided_sum = parsed.provided_sum;
+
     let result = manager.result_for(session_id)?;
     let expected_sum = result.sum;
 
@@ -335,9 +368,26 @@ fn submit_answer(
     };
 
     let waiting = schedule_auto_repeat_if_needed(app, Arc::clone(&*manager), session_id)?;
+    let message = {
+        let mut lines: Vec<String> = Vec::new();
+        if correct {
+            lines.push("Correct ✅".to_string());
+        } else {
+            lines.push("Incorrect".to_string());
+        }
+        lines.push(format!("Expected answer: {}", expected_sum));
+        lines.push(format!("You entered: {}", provided_sum));
+        if !correct {
+            let d = validation.delta;
+            lines.push(format!("Difference: {}{}", if d > 0 { "+" } else { "" }, d));
+        }
+        lines.join("\n")
+    };
+
     Ok(SubmitAnswerResponse {
         validation,
         auto_repeat_waiting: waiting,
+        message,
     })
 }
 
@@ -345,11 +395,24 @@ fn submit_answer(
 fn submit_answer_text(
     app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<SessionManager>>,
-    session_id: u64,
-    provided_text: String,
+    args: serde_json::Value,
 ) -> Result<SubmitAnswerResponse, String> {
-    let provided_sum = parse_answer_text(&provided_text)?;
-    submit_answer(app, manager, session_id, provided_sum)
+    #[derive(serde::Deserialize)]
+    struct SubmitAnswerTextArgs {
+        #[serde(alias = "sessionId")]
+        session_id: u64,
+        #[serde(alias = "providedText")]
+        provided_text: String,
+    }
+
+    let parsed: SubmitAnswerTextArgs =
+        serde_json::from_value(args).map_err(|e| format!("invalid args: {}", e))?;
+    let provided_sum = parse_answer_text(&parsed.provided_text)?;
+    let args_for_submit = serde_json::json!({
+        "session_id": parsed.session_id,
+        "provided_sum": provided_sum,
+    });
+    submit_answer(app, manager, args_for_submit)
 }
 
 fn main() {

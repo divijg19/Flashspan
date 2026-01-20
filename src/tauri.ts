@@ -139,8 +139,10 @@ export async function submitAnswer(
   provided_sum: number
 ): Promise<SubmitAnswerResponse> {
   return invoke<SubmitAnswerResponse>("submit_answer", {
-    session_id: session_id,
-    provided_sum: provided_sum,
+    args: {
+      session_id: session_id,
+      provided_sum: provided_sum,
+    },
   });
 }
 
@@ -149,8 +151,10 @@ export async function submitAnswerText(
   provided_text: string
 ): Promise<SubmitAnswerResponse> {
   return invoke<SubmitAnswerResponse>("submit_answer_text", {
-    session_id: session_id,
-    provided_text: provided_text,
+    args: {
+      session_id: session_id,
+      provided_text: provided_text,
+    },
   });
 }
 

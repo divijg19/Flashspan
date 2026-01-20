@@ -715,4 +715,222 @@ mod tests {
             last = Some(s);
         }
     }
+
+    #[test]
+    fn normalize_session_config_clamps_and_rounds() {
+        let input = SessionConfigInput {
+            digits_per_number: 0,
+            number_duration_s: 0.049, // below min
+            delay_between_numbers_s: f64::NAN,
+            total_numbers: -5,
+            allow_negative_numbers: true,
+        };
+
+        let (cfg, eff) = normalize_session_config(input);
+        assert_eq!(cfg.digits_per_number, 1);
+        assert!(cfg.number_duration_ms >= 1 && cfg.number_duration_ms <= 60_000);
+        // effective rounds to 1 decimal place
+        assert_eq!(
+            eff.number_duration_s,
+            (cfg.number_duration_ms as f64 / 1000.0 * 10.0).round() / 10.0
+        );
+        assert_eq!(cfg.total_numbers, 1);
+        assert_eq!(eff.allow_negative_numbers, true);
+    }
+
+    #[test]
+    fn random_fixed_digits_no_leading_zero_basic() {
+        let mut rng = thread_rng();
+        // digits=1 should produce 1..=9
+        for _ in 0..50 {
+            let s = random_fixed_digits_no_leading_zero(&mut rng, 1);
+            let v: u32 = s.parse().unwrap();
+            assert!(v >= 1 && v <= 9);
+        }
+
+        // digits=3 should be in [100,999]
+        for _ in 0..50 {
+            let s = random_fixed_digits_no_leading_zero(&mut rng, 3);
+            let v: u64 = s.parse().unwrap();
+            assert!(v >= 100 && v <= 999);
+        }
+    }
+
+    #[test]
+    fn random_fixed_digits_no_leading_zero_capped_behaviour() {
+        let mut rng = thread_rng();
+
+        // When max_inclusive < min for digits > 1, expect None
+        let none = random_fixed_digits_no_leading_zero_capped(&mut rng, 3, 50);
+        assert!(none.is_none());
+
+        // For digits=1 with max_inclusive < 1 -> None
+        let maybe = random_fixed_digits_no_leading_zero_capped(&mut rng, 1, 0);
+        assert!(maybe.is_none());
+
+        // For digits=1 with max_inclusive >=1 -> Some within range
+        let some = random_fixed_digits_no_leading_zero_capped(&mut rng, 1, 5).unwrap();
+        let v: u64 = some.parse().unwrap();
+        assert!(v >= 1 && v <= 5);
+    }
+
+    #[test]
+    fn random_number_with_constraints_first_non_negative_and_respects_running_sum() {
+        let mut rng = thread_rng();
+        let digits = 2;
+        let allow_neg = true;
+        let mut running_sum: i128 = 0;
+
+        for i in 0..200u32 {
+            let (s, val) =
+                random_number_with_constraints(&mut rng, digits, allow_neg, i, running_sum);
+            if i == 0 {
+                assert!(!s.starts_with('-'), "first number negative");
+            }
+            // magnitude should parse
+            let _parsed: i128 = s.trim_start_matches('-').parse().unwrap();
+            // If negative, applying it must not drop running_sum below zero when the function returned it as negative
+            if val < 0 {
+                assert!(running_sum - (-val) >= 0 || running_sum == 0);
+            }
+            running_sum = (running_sum + val).max(0);
+        }
+    }
+
+    #[test]
+    fn session_manager_auto_repeat_and_mark_validated_flow() {
+        let manager = SessionManager::default();
+
+        // prepare a minimal valid SessionConfig
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        });
+
+        let initial_gen = manager.auto_repeat_generation();
+
+        let plan = AutoRepeatPlan {
+            remaining: 3,
+            delay_ms: 1500,
+            config: config.clone(),
+            awaiting_validation_session_id: Some(42),
+        };
+
+        manager.configure_auto_repeat(Some(plan));
+        assert!(manager.auto_repeat_generation() > initial_gen);
+
+        // mark_validated should return scheduling info for session_id 42
+        let res = manager.mark_validated_and_schedule_info(42).unwrap();
+        assert!(res.is_some());
+        let (delay_ms, remaining_after, cfg, gen) = res.unwrap();
+        assert_eq!(delay_ms, 1500);
+        assert_eq!(remaining_after, 2);
+        assert_eq!(cfg.digits_per_number, config.digits_per_number);
+        assert_eq!(gen, manager.auto_repeat_generation());
+
+        // subsequent call for same id should return None (awaiting_validation_session_id cleared)
+        let res2 = manager.mark_validated_and_schedule_info(42).unwrap();
+        assert!(res2.is_none());
+    }
+
+    #[test]
+    fn mark_validated_none_conditions() {
+        let manager = SessionManager::default();
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        });
+
+        // plan without awaiting_validation_session_id -> should return None
+        let plan = AutoRepeatPlan {
+            remaining: 2,
+            delay_ms: 1000,
+            config: config.clone(),
+            awaiting_validation_session_id: None,
+        };
+        manager.configure_auto_repeat(Some(plan));
+        let res = manager.mark_validated_and_schedule_info(123).unwrap();
+        assert!(res.is_none());
+
+        // plan with remaining == 0 -> None
+        let plan2 = AutoRepeatPlan {
+            remaining: 0,
+            delay_ms: 1000,
+            config: config.clone(),
+            awaiting_validation_session_id: Some(123),
+        };
+        manager.configure_auto_repeat(Some(plan2));
+        let res2 = manager.mark_validated_and_schedule_info(123).unwrap();
+        assert!(res2.is_none());
+    }
+
+    #[test]
+    fn result_for_and_stop_clears_state_and_results() {
+        let manager = SessionManager::default();
+
+        // insert a fake recent result
+        let sc = SessionComplete {
+            session_id: 99,
+            numbers: vec![1, 2, 3],
+            sum: 6,
+        };
+
+        {
+            let mut guard = manager.recent_results.lock().expect("lock poisoned");
+            guard.push_back(sc.clone());
+        }
+
+        let got = manager.result_for(99).expect("should find result");
+        assert_eq!(got.sum, 6);
+
+        // configure auto-repeat and a worker thread to ensure stop() clears them and joins
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        });
+
+        manager.configure_auto_repeat(Some(AutoRepeatPlan {
+            remaining: 1,
+            delay_ms: 10,
+            config: config.clone(),
+            awaiting_validation_session_id: None,
+        }));
+
+        // set a stop flag and spawn a short-lived thread as worker
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        *manager.stop.lock().expect("stop lock") = Some(stop_flag.clone());
+
+        let handle = std::thread::spawn(move || {
+            // do a brief sleep to simulate work
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        });
+
+        *manager.worker.lock().expect("worker lock") = Some(handle);
+
+        manager.stop();
+
+        // recent_results should be cleared
+        let guard = manager.recent_results.lock().expect("lock poisoned");
+        assert!(guard.is_empty());
+
+        // auto_repeat_plan cleared
+        let plan_guard = manager.auto_repeat_plan.lock().expect("lock poisoned");
+        assert!(plan_guard.is_none());
+
+        // state should be Idle
+        let state_guard = manager.state.lock().expect("state lock");
+        match &*state_guard {
+            SessionState::Idle => {}
+            _ => panic!("expected Idle state"),
+        }
+    }
 }
