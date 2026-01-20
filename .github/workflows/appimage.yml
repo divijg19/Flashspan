@@ -31,10 +31,6 @@ jobs:
               set -euxo pipefail
 
               # --- Required for AppImage in CI / containers ---
-              export APPIMAGE_EXTRACT_AND_RUN=1
-              export TAURI_DEBUG=1
-              export RUST_LOG=debug
-              export DEBUG=1
 
               echo "=== Installing system dependencies ==="
               apt-get update
