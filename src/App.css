@@ -32,6 +32,65 @@
 
   --preview-ivory-dark: #f9fafb;
   --preview-ivory-light: #ffffff;
+
+  /* UI scale (updated by JS on resize) */
+  --ui-scale: 1;
+
+  /* Responsive UI scale variables (font sizes adapt to viewport) - multiplied by --ui-scale */
+  --home-title: calc(clamp(20px, 3.6vw, 40px) * var(--ui-scale));
+  --home-subtitle: calc(clamp(12px, 1.6vw, 20px) * var(--ui-scale));
+  --panel-title: calc(clamp(16px, 2.4vw, 28px) * var(--ui-scale));
+  --label-size: calc(clamp(16px, 1.4vw, 18px) * var(--ui-scale));
+  --input-size: calc(clamp(13px, 1.4vw, 18px) * var(--ui-scale));
+  --button-size: calc(clamp(13px, 1.6vw, 16px) * var(--ui-scale));
+  /* Responsive spacing unit (scaled) */
+  --space: calc(clamp(8px, 1.6vw, 28px) * var(--ui-scale));
+  /* Inline gap used between label and input and other small inline controls */
+  --inline-gap: calc(var(--space) * 0.6);
+}
+
+/* Bottom-corner branding and info */
+.topLogo {
+  position: fixed;
+  left: calc(var(--space) - 6px); /* moved 2px further left */
+  top: calc(var(--space) + 2px); /* lowered by 2px */
+  width: clamp(40px, 12vw, 120px); /* larger prominent logo */
+  height: auto;
+  z-index: 40;
+  opacity: 0.98;
+  pointer-events: none;
+}
+
+.bottomInfo {
+  position: fixed;
+  right: calc(var(--space) - 8px); /* moved 2px further right */
+  bottom: calc(var(--space) + 2px); /* raised by 2px */
+  z-index: 30;
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: calc(2px * var(--ui-scale));
+  align-items: flex-end;
+  font-size: calc(clamp(8px, 1.2vw, 10px) * var(--ui-scale));
+  color: rgba(var(--app-fg-rgb), 0.92);
+}
+
+.bottomInfo a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: calc(clamp(14px, 1.4vw, 18px) * var(--ui-scale)); /* +2px larger */
+}
+
+.isoRow {
+  display: inline-flex;
+  gap: calc(8px * var(--ui-scale));
+  align-items: center;
+}
+
+.bottomInfo .iso {
+  font-size: calc(clamp(11px, 1.0vw, 13px) * var(--ui-scale));
+  opacity: 0.9;
 }
 
 .app.theme-midnight {
@@ -343,22 +402,68 @@
   background: rgba(var(--app-bg-rgb), 0.55);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 20px;
+  line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.answerNumbers {
+  display: grid;
+  width: 100%;
+  max-width: 720px;
+  margin: 0;
+  padding: 8px 12px;
+  background: rgba(var(--app-bg-rgb), 0.55);
+  border-radius: 12px;
+  border: 1px solid rgba(var(--app-fg-rgb), 0.12);
+  box-sizing: border-box;
+  gap: 6px;
+  max-height: 280px; /* confine height so only this list scrolls */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+
+.answerRow {
+  display: grid;
+  grid-template-columns: calc(48px * var(--ui-scale)) 1fr; /* fixed index column, flexible value column */
+  align-items: center;
+  gap: calc(8px * var(--ui-scale));
+  padding: calc(4px * var(--ui-scale)) calc(6px * var(--ui-scale));
+  border-radius: calc(8px * var(--ui-scale));
+}
+
+.answerIndex {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  color: rgba(var(--app-fg-rgb), 0.7);
+  text-align: right;
+  padding-right: 8px;
+}
+
+.answerValue {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 20px;
+  line-height: 1;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(var(--app-fg-rgb), 0.04);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.06);
+  color: var(--app-fg);
 }
 
 .endHeaderCenter {
   text-align: center;
   width: 100%;
-  max-width: 560px;
+  max-width: min(560px, 92vw);
 }
 
 .actionField {
   width: 100%;
   max-width: 560px;
-  padding: 12px;
+  padding: calc(var(--space) * 0.75);
   border-radius: 14px;
   border: 1px solid rgba(var(--app-fg-rgb), 0.16);
   background: rgba(var(--app-fg-rgb), 0.06);
@@ -378,14 +483,14 @@
 .sumInput {
   width: 100%;
   max-width: 560px;
-  height: 54px;
-  border-radius: 14px;
+  height: calc(54px * var(--ui-scale));
+  border-radius: calc(14px * var(--ui-scale));
   border: 1px solid rgba(var(--app-fg-rgb), 0.16);
   background: rgba(var(--app-bg-rgb), 0.55);
   color: var(--app-fg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 22px;
+  font-size: calc(22px * var(--ui-scale));
   text-align: center;
   outline: none;
 }
@@ -400,20 +505,20 @@
 }
 
 .sumCard {
-  padding: 14px 16px;
+  padding: calc(14px * var(--ui-scale)) calc(16px * var(--ui-scale));
   width: 100%;
-  max-width: 520px;
+  max-width: min(calc(520px * var(--ui-scale)), 92vw);
   background: rgba(var(--app-fg-rgb), 0.06);
   border: 1px solid rgba(var(--app-fg-rgb), 0.12);
-  border-radius: 14px;
+  border-radius: calc(14px * var(--ui-scale));
   display: grid;
-  gap: 6px;
+  gap: calc(6px * var(--ui-scale));
   text-align: center;
   margin: 0 auto;
 }
 
 .sumLabel {
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(var(--app-fg-rgb), 0.6);
@@ -422,7 +527,7 @@
 .sumValue {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 40px;
+  font-size: calc(40px * var(--ui-scale));
   line-height: 1;
   color: rgba(var(--app-fg-rgb), 0.96);
 }
@@ -470,22 +575,23 @@
   width: min(520px, 92vw);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: calc(16px * var(--ui-scale));
+  padding: calc(var(--space) * 0.5);
 }
 
 .iconButton {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: calc(40px * var(--ui-scale));
+  height: calc(40px * var(--ui-scale));
+  border-radius: calc(10px * var(--ui-scale));
   background: transparent;
   color: var(--app-fg);
   border: 1px solid rgba(var(--app-fg-rgb), 0.18);
-  font-size: 16px;
+  font-size: calc(16px * var(--ui-scale));
   line-height: 1;
   cursor: pointer;
   position: fixed;
-  top: 18px;
-  right: 18px;
+  top: calc(18px * var(--ui-scale));
+  right: calc(18px * var(--ui-scale));
   z-index: 30;
 }
 
@@ -499,24 +605,26 @@
   inset: 0;
   z-index: 20;
   background: rgba(var(--app-bg-rgb), 0.55);
+  overflow-x: hidden;
 }
 
 .advancedPanel {
   position: fixed;
-  top: 66px;
-  right: 18px;
-  width: min(360px, 88vw);
+  top: calc(66px * var(--ui-scale));
+  right: calc(18px * var(--ui-scale));
+  /* Never exceed viewport width minus margins */
+  width: min(calc(360px * var(--ui-scale)), calc(100vw - (36px * var(--ui-scale))));
   box-sizing: border-box;
-  max-height: calc(100vh - 84px);
+  max-height: calc(100vh - calc(84px * var(--ui-scale)));
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 16px;
-  border-radius: 12px;
+  padding: calc(12px * var(--ui-scale));
+  border-radius: calc(12px * var(--ui-scale));
   background: rgba(var(--app-bg-rgb), 0.92);
   border: 1px solid rgba(var(--app-fg-rgb), 0.26);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: calc(16px * var(--ui-scale));
 }
 
 .advancedTitle {
@@ -544,7 +652,7 @@
 .advancedSectionTitle {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 12px;
+  font-size: var(--label-size);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   opacity: 0.7;
@@ -553,7 +661,7 @@
 .hint {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 12px;
+  font-size: var(--label-size);
   opacity: 0.65;
   margin-top: -4px;
 }
@@ -561,57 +669,60 @@
 .title {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 18px;
+  font-size: var(--panel-title);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   opacity: 0.9;
 }
 
 .headerLogo {
-  width: 20px;
-  height: 20px;
+  width: calc(20px * var(--ui-scale));
+  height: calc(20px * var(--ui-scale));
   object-fit: contain;
   vertical-align: middle;
-  margin-right: 8px;
+  margin-right: calc(var(--space) * 0.25);
 }
 
 .grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 10px;
+  gap: calc(var(--space) * 0.6);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(var(--space) * 0.5);
 }
 
 .fieldRow {
   display: grid;
-  grid-template-columns: 1fr 140px;
-  gap: 12px;
+  /* keep label flexible and input proportional but bounded */
+  grid-template-columns: 1fr clamp(calc(84px * var(--ui-scale)), 22%, calc(160px * var(--ui-scale)));
+  gap: var(--inline-gap);
   align-items: center;
 }
 
 .label {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 14px;
+  font-size: var(--label-size);
   opacity: 0.85;
 }
 
 .input {
-  height: 40px;
+  height: calc(40px * var(--ui-scale));
   background: transparent;
   color: var(--app-fg);
   border: 1px solid rgba(var(--app-fg-rgb), 0.18);
-  border-radius: 8px;
-  padding: 0 12px;
+  border-radius: calc(8px * var(--ui-scale));
+  padding: 0 calc(12px * var(--ui-scale));
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 14px;
+  font-size: var(--input-size);
   outline: none;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .input:disabled {
@@ -708,14 +819,14 @@
 }
 
 .colorOption .colorSwatch {
-  width: 64px;
-  height: 40px;
+  width: calc(64px * var(--ui-scale));
+  height: calc(40px * var(--ui-scale));
 }
 
 .colorSwatch {
-  width: 52px;
-  height: 36px;
-  border-radius: 8px;
+  width: calc(52px * var(--ui-scale));
+  height: calc(36px * var(--ui-scale));
+  border-radius: calc(8px * var(--ui-scale));
   border: 2px solid rgba(var(--app-fg-rgb), 0.12);
   box-shadow: 0 4px 10px rgba(0,0,0,0.18);
 }
@@ -770,13 +881,13 @@
 }
 
 .segmentedLabel {
-  min-width: 62px;
+  min-width: calc(62px * var(--ui-scale));
   text-align: center;
-  padding: 8px 12px;
+  padding: calc(8px * var(--ui-scale)) calc(12px * var(--ui-scale));
   border-radius: 999px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 13px;
+  font-size: var(--button-size);
   letter-spacing: 0.02em;
   color: rgba(var(--app-fg-rgb), 0.92);
   cursor: pointer;
@@ -801,18 +912,20 @@
 .actions {
   display: flex;
   gap: 10px;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .button {
-  height: 44px;
-  padding: 0 14px;
-  border-radius: 10px;
+  height: calc(44px * var(--ui-scale));
+  padding: 0 calc(14px * var(--ui-scale));
+  border-radius: calc(10px * var(--ui-scale));
   background: var(--app-fg);
   color: var(--app-bg);
   border: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 14px;
+  font-size: var(--button-size);
   letter-spacing: 0.04em;
   cursor: pointer;
 }
@@ -822,6 +935,19 @@
   cursor: default;
 }
 
+/* Sound toggle styling */
+.soundToggle {
+  background: transparent;
+  color: var(--app-fg);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.18);
+  padding: 6px 12px;
+}
+
+.soundToggle.enabled {
+  background: var(--app-fg);
+  color: var(--app-bg);
+}
+
 .error {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
@@ -829,6 +955,16 @@
   opacity: 0.85;
 }
 
+
+/* Label displayed just left of the segmented sound control */
+.soundLabel {
+  font-size: var(--label-size);
+  color: rgba(var(--app-fg-rgb), 0.9);
+  display: inline-flex;
+  align-items: center;
+  padding-right: calc(var(--space) * 0.12);
+  margin-left: 2px; /* tiny nudge to avoid crammed edges */
+}
 .number {
   --len: 1;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
@@ -874,7 +1010,7 @@
 }
 
 .splashText {
-  margin-top: 12px;
+  margin-top: calc(var(--space) * 0.5);
   text-align: center;
   color: rgba(var(--app-fg-rgb), 0.96);
   pointer-events: none;
@@ -883,15 +1019,15 @@
 .splashTitle {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 20px;
+  font-size: var(--home-title);
   letter-spacing: 0.06em;
-  margin-bottom: 6px;
+  margin-bottom: calc(var(--space) * 0.25);
 }
 
 .splashSubtitle {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 13px;
+  font-size: var(--home-subtitle);
   opacity: 0.85;
 }
 

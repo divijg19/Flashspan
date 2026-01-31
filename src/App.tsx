@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { Show, For, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import "./App.css";
 import {
   AutoRepeatWaitingPayload,
@@ -138,6 +138,53 @@ export default function App() {
   const [sessionId, setSessionId] = createSignal<number | null>(null);
   const [numbers, setNumbers] = createSignal<number[]>([]);
 
+  // Interactive logo/title transform based on window size while preserving
+  // proportions relative to the initial app startup dimensions. This keeps
+  // the starting layout identical but makes subsequent resizes animate
+  // the logo gently toward the top-left.
+  onMount(() => {
+    const root = document.documentElement;
+    const baselineW = Math.max(800, window.innerWidth);
+    const baselineH = Math.max(600, window.innerHeight);
+    let raf = 0;
+
+    const update = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const ratio = Math.min(w / baselineW, h / baselineH);
+      const clamped = Math.max(0.75, Math.min(ratio, 1.5));
+
+      // Shift amounts are proportional to baseline dims, capped to sensible px.
+      const shiftX = Math.min(220, Math.max(48, baselineW * 0.06));
+      const shiftY = Math.min(120, Math.max(20, baselineH * 0.035));
+
+      const offsetX = (clamped - 1) * -shiftX; // negative -> move left when larger
+      const offsetY = (clamped - 1) * -shiftY; // negative -> move up when larger
+      const logoScale = 1 + (clamped - 1) * 0.22; // modest scale up
+      const titleOffset = (clamped - 1) * -8; // small title lift
+
+      root.style.setProperty("--ui-scale", `${clamped}`);
+      root.style.setProperty("--home-logo-translate-x", `${offsetX}px`);
+      root.style.setProperty("--home-logo-translate-y", `${offsetY}px`);
+      root.style.setProperty("--home-logo-scale", `${logoScale}`);
+      root.style.setProperty("--home-title-translate-y", `${titleOffset}px`);
+    };
+
+    const handler = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(update);
+    };
+
+    // initialize and listen
+    update();
+    window.addEventListener("resize", handler, { passive: true });
+
+    onCleanup(() => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("resize", handler);
+    });
+  });
+
   const [autoRepeatEnabled, setAutoRepeatEnabled] = createSignal<boolean>(false);
   const [autoRepeatCount, setAutoRepeatCount] = createSignal<number>(5);
   const [autoRepeatDelaySeconds, setAutoRepeatDelaySeconds] = createSignal<number>(5);
@@ -146,6 +193,7 @@ export default function App() {
     createSignal<number | null>(null);
 
   const [showAdvanced, setShowAdvanced] = createSignal<boolean>(false);
+  const [soundEnabled, setSoundEnabled] = createSignal<boolean>(true);
   const [countdownTickId, setCountdownTickId] = createSignal<number>(0);
 
   const [digitsPerNumber, setDigitsPerNumber] = createSignal<number>(1);
@@ -206,7 +254,6 @@ export default function App() {
     const lines = [
       ok ? "Correct ✅" : "Incorrect",
       `Expected answer: ${validation.expected_sum}`,
-      `You entered: ${validation.provided_sum}`,
     ];
 
     if (!ok) {
@@ -407,7 +454,8 @@ export default function App() {
   };
 
   return (
-    <div classList={{ app: true, [themeClass()]: true, [modeClass()]: true }}>
+    <>
+    <div classList={{ app: true, [themeClass()]: true, [modeClass()]: true, home: phase() === "idle" }}>
       {showSplash() ? (
         <div classList={{ splash: true, visible: splashVisible() }}>
           <img src="/Ascent_Banner.png" alt="Ascent Banner" class="splashBanner" />
@@ -419,10 +467,7 @@ export default function App() {
       ) : null}
       {phase() === "idle" ? (
         <div class="panel">
-          <div class="title">
-            <img src="/Ascent_Logo.png" alt="logo" class="headerLogo" />
-            Ascent Flash
-          </div>
+          <div class="title">Ascent Flash</div>
           <button
             class="iconButton"
             type="button"
@@ -446,9 +491,8 @@ export default function App() {
                   e.stopPropagation();
                 }}
               >
-                <div class="advancedTitle">Additional settings</div>
 
-                <div class="advancedSectionTitle">Auto-repeat</div>
+                <div class="advancedSectionTitle">Additional settings</div>
 
                 <div class="advancedSetting">
                   <div class="settingRow">
@@ -551,8 +595,6 @@ export default function App() {
                     </>
                   ) : null}
                 </div>
-
-                <div class="advancedDivider" />
 
                 <div class="advancedSetting">
                   <div class="settingRow">
@@ -880,6 +922,34 @@ export default function App() {
           </div>
 
           <div class="actions">
+              <div class="soundGroup">
+                <div class="soundLabel">Sound</div>
+                <div class="segmented" role="radiogroup" aria-label="Sound">
+                <label class="segmentedOption">
+                  <input
+                    class="segmentedInput"
+                    type="radio"
+                    name="sound"
+                    value="on"
+                    checked={soundEnabled()}
+                    onInput={() => setSoundEnabled(true)}
+                  />
+                  <span class="segmentedLabel">🔊 On</span>
+                </label>
+                <label class="segmentedOption">
+                  <input
+                    class="segmentedInput"
+                    type="radio"
+                    name="sound"
+                    value="off"
+                    checked={!soundEnabled()}
+                    onInput={() => setSoundEnabled(false)}
+                  />
+                  <span class="segmentedLabel">Off</span>
+                </label>
+              </div>
+            </div>
+
             <button class="button" disabled={isRunning()} onClick={start}>
               Start
             </button>
@@ -893,7 +963,7 @@ export default function App() {
             <div class="answerCard">
               <div class="endHeaderCenter">
                 <div class="endTitle">Session complete</div>
-                <div class="endSub">Click mode</div>
+                <div class="endSub">Click to see answer</div>
               </div>
 
               <div class="endBody">
@@ -927,7 +997,14 @@ export default function App() {
                     </div>
 
                     {hasValidated() && showNumbersList() ? (
-                      <pre class="answerText">{answerText()}</pre>
+                      <div class="answerNumbers">
+                        <For each={numbers()}>{(n, idx) => (
+                          <div class="answerRow">
+                            <div class="answerIndex">{idx() + 1}</div>
+                            <div class="answerValue">{n}</div>
+                          </div>
+                        )}</For>
+                      </div>
                     ) : null}
                   </>
                 )}
@@ -976,7 +1053,7 @@ export default function App() {
             <div class="answerCard">
               <div class="endHeaderCenter">
                 <div class="endTitle">Session complete</div>
-                <div class="endSub">Type mode</div>
+                <div class="endSub">Type your answer</div>
               </div>
 
               <div class="endBody">
@@ -997,7 +1074,16 @@ export default function App() {
 
                 {validationSummary() ? <pre class="validationText">{validationSummary()}</pre> : null}
 
-                {hasValidated() && showNumbersList() ? <pre class="answerText">{answerText()}</pre> : null}
+                {hasValidated() && showNumbersList() ? (
+                  <div class="answerNumbers">
+                    <For each={numbers()}>{(n, idx) => (
+                      <div class="answerRow">
+                        <div class="answerIndex">{idx() + 1}</div>
+                        <div class="answerValue">{n}</div>
+                      </div>
+                    )}</For>
+                  </div>
+                ) : null}
               </div>
 
               <div class="endFooter">
@@ -1089,5 +1175,17 @@ export default function App() {
         </div>
       )}
     </div>
-  );
+      {/* Bottom-left lodged logo */}
+      <img src="/Ascent_Logo.png" alt="Ascent logo" class="topLogo" />
+
+      {/* Bottom-right info and certification links */}
+      <div class="bottomInfo">
+        <a href="https://www.ascentabacus.com" target="_blank" rel="noopener noreferrer">www.ascentabacus.com</a>
+        <div class="isoRow">
+          <span class="iso">ISO 9001</span>
+          <span class="iso">ISO 14001</span>
+        </div>
+      </div>
+      </>
+    );
 }

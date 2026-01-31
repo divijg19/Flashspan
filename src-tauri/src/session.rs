@@ -70,8 +70,11 @@ fn round_1_decimal(v: f64) -> f64 {
 }
 
 fn clamp_f64(v: f64, min: f64, max: f64) -> f64 {
-    if !v.is_finite() {
+    if v.is_nan() {
         return min;
+    }
+    if v.is_infinite() {
+        return if v.is_sign_positive() { max } else { min };
     }
     v.max(min).min(max)
 }
@@ -932,5 +935,151 @@ mod tests {
             SessionState::Idle => {}
             _ => panic!("expected Idle state"),
         }
+    }
+
+    #[test]
+    fn clamp_and_round_helpers() {
+        assert_eq!(clamp_f64(f64::NAN, 1.0, 10.0), 1.0);
+        assert_eq!(clamp_f64(f64::INFINITY, 1.0, 10.0), 10.0);
+        assert_eq!(clamp_f64(-5.0, 1.0, 10.0), 1.0);
+        assert_eq!(clamp_f64(5.5, 1.0, 10.0), 5.5);
+
+        assert_eq!(clamp_i64(-5, 0, 10), 0);
+        assert_eq!(clamp_i64(15, 0, 10), 10);
+        assert_eq!(clamp_i64(5, 0, 10), 5);
+
+        assert_eq!(round_1_decimal(1.24), 1.2);
+        assert_eq!(round_1_decimal(1.25), 1.3);
+    }
+
+    #[test]
+    fn seconds_to_ms_clamped_behavior() {
+        assert_eq!(seconds_to_ms_clamped(f64::NAN, 10, 60000), 10);
+        assert_eq!(seconds_to_ms_clamped(-1.0, 10, 60000), 10);
+        assert_eq!(seconds_to_ms_clamped(0.005, 1, 60000), 5);
+        assert_eq!(seconds_to_ms_clamped(61.0, 1, 60000), 60000);
+    }
+
+    #[test]
+    fn random_fixed_digits_edge_cases() {
+        let mut rng = thread_rng();
+
+        // digits = 1, max_inclusive = 1 => must be "1"
+        let s = random_fixed_digits_no_leading_zero_capped(&mut rng, 1, 1).unwrap();
+        assert_eq!(s, "1");
+
+        // digits = 2, max_inclusive = 9 -> None because min for 2 digits is 10
+        assert!(random_fixed_digits_no_leading_zero_capped(&mut rng, 2, 9).is_none());
+    }
+
+    #[test]
+    fn random_number_with_constraints_no_negative() {
+        let mut rng = thread_rng();
+        let mut running_sum: i128 = 0;
+        for i in 0..100u32 {
+            let (s, val) = random_number_with_constraints(&mut rng, 2, false, i, running_sum);
+            assert!(!s.starts_with('-'));
+            assert!(val >= 0);
+            running_sum = running_sum + val;
+        }
+    }
+
+    #[test]
+    fn sleep_until_interruptible_returns_on_stop() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        let stop = Arc::new(AtomicBool::new(true));
+        let deadline = Instant::now() + Duration::from_millis(500);
+        let start = Instant::now();
+        sleep_until_interruptible(deadline, &stop);
+        let elapsed = Instant::now() - start;
+        assert!(elapsed < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn validate_config_rejects_bad_values() {
+        let bad = SessionConfig {
+            digits_per_number: 0,
+            number_duration_ms: 0,
+            delay_between_numbers_ms: 0,
+            total_numbers: 0,
+            allow_negative_numbers: false,
+        };
+        assert!(validate_config(&bad).is_err());
+
+        let too_many_digits = SessionConfig {
+            digits_per_number: 19,
+            number_duration_ms: 1000,
+            delay_between_numbers_ms: 0,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        };
+        assert!(validate_config(&too_many_digits).is_err());
+
+        let too_many_total = SessionConfig {
+            digits_per_number: 2,
+            number_duration_ms: 1000,
+            delay_between_numbers_ms: 0,
+            total_numbers: 20_000,
+            allow_negative_numbers: false,
+        };
+        assert!(validate_config(&too_many_total).is_err());
+
+        let too_long = SessionConfig {
+            digits_per_number: 2,
+            number_duration_ms: 120_000,
+            delay_between_numbers_ms: 0,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        };
+        assert!(validate_config(&too_long).is_err());
+    }
+
+    #[test]
+    fn normalize_session_config_upper_bounds() {
+        let input = SessionConfigInput {
+            digits_per_number: 100,
+            number_duration_s: 120.0,
+            delay_between_numbers_s: 120.0,
+            total_numbers: 100_000,
+            allow_negative_numbers: false,
+        };
+
+        let (cfg, eff) = normalize_session_config(input);
+        assert!(cfg.digits_per_number <= 18);
+        assert!(cfg.number_duration_ms <= 60_000);
+        assert!(cfg.delay_between_numbers_ms <= 60_000);
+        assert!(cfg.total_numbers <= 10_000);
+        assert!(eff.number_duration_s <= 60.0);
+    }
+
+    #[test]
+    fn random_fixed_digits_capped_exact_min() {
+        let mut rng = thread_rng();
+        // digits=2, min = 10, max_inclusive = 10 -> should always produce "10"
+        let res = random_fixed_digits_no_leading_zero_capped(&mut rng, 2, 10).unwrap();
+        // must parse and equal 10
+        let v: u64 = res.parse().unwrap();
+        assert_eq!(v, 10);
+    }
+
+    #[test]
+    fn random_fixed_digits_max_digits_length() {
+        let mut rng = thread_rng();
+        // digits = 18 should produce string length 18
+        let s = random_fixed_digits_no_leading_zero(&mut rng, 18);
+        assert_eq!(s.len(), 18);
+    }
+
+    #[test]
+    fn sleep_until_interruptible_waits_when_not_stopped() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        let stop = Arc::new(AtomicBool::new(false));
+        let deadline = Instant::now() + Duration::from_millis(30);
+        let start = Instant::now();
+        sleep_until_interruptible(deadline, &stop);
+        let elapsed = Instant::now() - start;
+        assert!(elapsed >= Duration::from_millis(25));
     }
 }

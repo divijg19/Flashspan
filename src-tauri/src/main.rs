@@ -376,7 +376,6 @@ fn submit_answer(
             lines.push("Incorrect".to_string());
         }
         lines.push(format!("Expected answer: {}", expected_sum));
-        lines.push(format!("You entered: {}", provided_sum));
         if !correct {
             let d = validation.delta;
             lines.push(format!("Difference: {}{}", if d > 0 { "+" } else { "" }, d));
