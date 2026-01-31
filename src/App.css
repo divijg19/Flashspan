@@ -45,8 +45,9 @@
   --button-size: calc(clamp(13px, 1.6vw, 16px) * var(--ui-scale));
   /* Responsive spacing unit (scaled) */
   --space: calc(clamp(8px, 1.6vw, 28px) * var(--ui-scale));
-  /* Inline gap used between label and input and other small inline controls */
-  --inline-gap: calc(var(--space) * 0.6);
+      /* Inline gap used between label and input and other small inline controls.
+        Increase viewport-driven growth so wide screens receive more spacing. */
+      --inline-gap: calc(clamp(12px, 6vw, 160px) * var(--ui-scale));
 }
 
 /* Bottom-corner branding and info */
@@ -572,7 +573,8 @@
 }
 
 .panel {
-  width: min(520px, 92vw);
+  /* Responsively scale panel width between 520px and 760px as viewport grows */
+  width: clamp(520px, 50vw, 760px);
   display: flex;
   flex-direction: column;
   gap: calc(16px * var(--ui-scale));
@@ -697,9 +699,11 @@
 
 .fieldRow {
   display: grid;
-  /* keep label flexible and input proportional but bounded */
-  grid-template-columns: 1fr clamp(calc(84px * var(--ui-scale)), 22%, calc(160px * var(--ui-scale)));
-  gap: var(--inline-gap);
+  /* Label takes remaining space but can shrink; input column is bounded and
+     grows with viewport but remains smaller than label so the gap becomes
+     visually larger as screen widens. */
+  grid-template-columns: minmax(0, 1fr) minmax(120px, clamp(160px, 12vw, 360px));
+  column-gap: var(--inline-gap);
   align-items: center;
 }
 
@@ -708,6 +712,9 @@
     "Liberation Mono", "Courier New", monospace;
   font-size: var(--label-size);
   opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .input {
@@ -722,6 +729,7 @@
   font-size: var(--input-size);
   outline: none;
   width: 100%;
+  min-width: 0;
   box-sizing: border-box;
 }
 
