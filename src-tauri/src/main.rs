@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio;
 mod session;
 
 use serde::Deserialize;
@@ -102,6 +103,16 @@ impl Default for AppSettings {
 #[tauri::command]
 fn get_app_settings(settings: tauri::State<'_, SettingsState>) -> AppSettings {
     settings.0.lock().expect("settings lock poisoned").clone()
+}
+
+#[tauri::command]
+fn get_sound_enabled() -> bool {
+    crate::audio::is_enabled()
+}
+
+#[tauri::command]
+fn set_sound_enabled(enabled: bool) {
+    crate::audio::set_enabled(enabled);
 }
 
 #[tauri::command]
@@ -367,6 +378,9 @@ fn submit_answer(
         delta,
     };
 
+    // Play feedback sound based on validation result (Rust owns playback).
+    let _ = audio::play_kind(if correct { "applause" } else { "buzzer" });
+
     let waiting = schedule_auto_repeat_if_needed(app, Arc::clone(&*manager), session_id)?;
     let message = {
         let mut lines: Vec<String> = Vec::new();
@@ -429,7 +443,10 @@ fn main() {
             mark_validated,
             acknowledge_complete,
             submit_answer,
-            submit_answer_text
+            submit_answer_text,
+            audio::play_sound_kind,
+            get_sound_enabled,
+            set_sound_enabled
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

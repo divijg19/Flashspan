@@ -1,6 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+const fallback = {
+  beep: new Audio('/src/assets/beep.wav'),
+  applause: new Audio('/src/assets/applause.wav'),
+  buzzer: new Audio('/src/assets/buzzer.wav'),
+};
+Object.values(fallback).forEach(a => { a.preload = 'auto'; a.volume = 0.9; });
+
+export async function playSound(kind: 'beep'|'applause'|'buzzer') {
+  try {
+    await invoke('play_sound_kind', { kind });
+  } catch (e) {
+    // native playback failed or not available — fallback to HTML Audio
+    const a = fallback[kind];
+    try { a.currentTime = 0; await a.play(); } catch { /* ignore */ }
+  }
+}
+
+export default playSound;
+
 export type Phase = "idle" | "starting" | "countdown" | "flashing" | "complete";
 
 export type ColorScheme =
@@ -156,6 +175,14 @@ export async function submitAnswerText(
       provided_text: provided_text,
     },
   });
+}
+
+export async function getSoundEnabled(): Promise<boolean> {
+  return invoke<boolean>('get_sound_enabled');
+}
+
+export async function setSoundEnabled(enabled: boolean): Promise<void> {
+  return invoke<void>('set_sound_enabled', { enabled });
 }
 
 // --- Events (typed) ---

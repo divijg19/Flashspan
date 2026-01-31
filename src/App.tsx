@@ -17,6 +17,7 @@ import {
   onCountdownTick,
   onSessionComplete,
   onShowNumber,
+  playSound,
   ping,
   SessionConfigInput,
   startSession,
@@ -25,10 +26,12 @@ import {
   setThemeMode as setThemeModeCmd,
   submitAnswerText,
   stopSession,
+  getSoundEnabled as getSoundEnabledCmd,
+  setSoundEnabled as setSoundEnabledCmd,
 } from "./tauri";
 
 if (import.meta.env.DEV) {
-  ping().then(console.log).catch(() => {});
+  ping().then(console.log).catch(() => { });
 }
 
 function isEscapeKey(event: KeyboardEvent): boolean {
@@ -263,6 +266,8 @@ export default function App() {
 
     setValidationSummary(lines.join("\n"));
 
+    void playSound(ok ? 'applause' : 'buzzer');
+
     if (resp.auto_repeat_waiting) {
       applyAutoRepeatWaiting(resp.auto_repeat_waiting);
     }
@@ -290,6 +295,12 @@ export default function App() {
       const settings = await getAppSettings();
       setColorScheme(settings.color_scheme);
       setThemeMode(settings.theme_mode ?? "dark");
+      try {
+        const s = await getSoundEnabledCmd();
+        setSoundEnabled(s);
+      } catch {
+        // ignore: best-effort to sync backend sound flag
+      }
     } catch {
       // Best-effort.
     }
@@ -307,6 +318,7 @@ export default function App() {
       setSessionId(payload.session_id);
       setPhase("flashing");
       setDisplayText(String(payload.value));
+      void playSound('beep');
       void setFullscreen(true);
     });
 
@@ -418,10 +430,10 @@ export default function App() {
         config,
         autoRepeatEnabled()
           ? {
-              enabled: true,
-              repeats: Math.trunc(autoRepeatCount()),
-              delay_s: autoRepeatDelaySeconds(),
-            }
+            enabled: true,
+            repeats: Math.trunc(autoRepeatCount()),
+            delay_s: autoRepeatDelaySeconds(),
+          }
           : null
       );
       applyStartSessionResponse(resp);
@@ -455,88 +467,105 @@ export default function App() {
 
   return (
     <>
-    <div classList={{ app: true, [themeClass()]: true, [modeClass()]: true, home: phase() === "idle" }}>
-      {showSplash() ? (
-        <div classList={{ splash: true, visible: splashVisible() }}>
-          <img src="/Ascent_Banner.png" alt="Ascent Banner" class="splashBanner" />
-          <div class="splashText">
-            <div class="splashTitle">Ascent Abacus &amp; Brain Gym</div>
-            <div class="splashSubtitle">Your one stop solution for IQ improvement</div>
+      <div classList={{ app: true, [themeClass()]: true, [modeClass()]: true, home: phase() === "idle" }}>
+        {showSplash() ? (
+          <div classList={{ splash: true, visible: splashVisible() }}>
+            <img src="/Ascent_Banner.png" alt="Ascent Banner" class="splashBanner" />
+            <div class="splashText">
+              <div class="splashTitle">Ascent Abacus &amp; Brain Gym</div>
+              <div class="splashSubtitle">Your one stop solution for IQ improvement</div>
+            </div>
           </div>
-        </div>
-      ) : null}
-      {phase() === "idle" ? (
-        <div class="panel">
-          <div class="title">Ascent Flash</div>
-          <button
-            class="iconButton"
-            type="button"
-            aria-label="Additional settings"
-            disabled={isRunning()}
-            onClick={() => setShowAdvanced((v) => !v)}
-          >
-            ⚙
-          </button>
-
-          {showAdvanced() ? (
-            <div
-              class="advancedOverlay"
-              onMouseDown={(e) => {
-                if (e.target === e.currentTarget) setShowAdvanced(false);
-              }}
+        ) : null}
+        {phase() === "idle" ? (
+          <div class="panel">
+            <div class="title">Ascent Flash</div>
+            <button
+              class="iconButton"
+              type="button"
+              aria-label="Additional settings"
+              disabled={isRunning()}
+              onClick={() => setShowAdvanced((v) => !v)}
             >
+              ⚙
+            </button>
+
+            {showAdvanced() ? (
               <div
-                class="advancedPanel"
+                class="advancedOverlay"
                 onMouseDown={(e) => {
-                  e.stopPropagation();
+                  if (e.target === e.currentTarget) setShowAdvanced(false);
                 }}
               >
+                <div
+                  class="advancedPanel"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                  }}
+                >
 
-                <div class="advancedSectionTitle">Additional settings</div>
+                  <div class="advancedSectionTitle">Additional settings</div>
 
-                <div class="advancedSetting">
-                  <div class="settingRow">
-                    <div class="label">Auto-repeat</div>
-                    <div class="segmented" role="radiogroup" aria-label="Auto-repeat">
-                      <label class="segmentedOption">
-                        <input
-                          class="segmentedInput"
-                          type="radio"
-                          name="auto-repeat-enabled"
-                          value="off"
-                          disabled={isRunning()}
-                          checked={!autoRepeatEnabled()}
-                          onInput={() => {
-                            setAutoRepeatEnabled(false);
-                            setAutoRepeatRemaining(0);
-                            setAutoRepeatSecondsLeft(null);
-                            void cancelAutoRepeat();
-                          }}
-                        />
-                        <span class="segmentedLabel">Off</span>
-                      </label>
-                      <label class="segmentedOption">
-                        <input
-                          class="segmentedInput"
-                          type="radio"
-                          name="auto-repeat-enabled"
-                          value="on"
-                          disabled={isRunning()}
-                          checked={autoRepeatEnabled()}
-                          onInput={() => setAutoRepeatEnabled(true)}
-                        />
-                        <span class="segmentedLabel">On</span>
-                      </label>
+                  <div class="advancedSetting">
+                    <div class="settingRow">
+                      <div class="label">Auto-repeat</div>
+                      <div class="segmented" role="radiogroup" aria-label="Auto-repeat">
+                        <label class="segmentedOption">
+                          <input
+                            class="segmentedInput"
+                            type="radio"
+                            name="auto-repeat-enabled"
+                            value="off"
+                            disabled={isRunning()}
+                            checked={!autoRepeatEnabled()}
+                            onInput={() => {
+                              setAutoRepeatEnabled(false);
+                              setAutoRepeatRemaining(0);
+                              setAutoRepeatSecondsLeft(null);
+                              void cancelAutoRepeat();
+                            }}
+                          />
+                          <span class="segmentedLabel">Off</span>
+                        </label>
+                        <label class="segmentedOption">
+                          <input
+                            class="segmentedInput"
+                            type="radio"
+                            name="auto-repeat-enabled"
+                            value="on"
+                            disabled={isRunning()}
+                            checked={autoRepeatEnabled()}
+                            onInput={() => setAutoRepeatEnabled(true)}
+                          />
+                          <span class="segmentedLabel">On</span>
+                        </label>
+                      </div>
                     </div>
-                  </div>
 
-                  {autoRepeatEnabled() ? (
-                    <div class="field">
-                      <div class="fieldRow">
-                        <div class="label">Repeats</div>
+                    {autoRepeatEnabled() ? (
+                      <div class="field">
+                        <div class="fieldRow">
+                          <div class="label">Repeats</div>
+                          <input
+                            class="input"
+                            type="number"
+                            min="1"
+                            max="20"
+                            step="1"
+                            value={autoRepeatCount()}
+                            disabled={isRunning()}
+                            onInput={(e) =>
+                              setAutoRepeatCount(
+                                Number.isFinite(e.currentTarget.valueAsNumber)
+                                  ? e.currentTarget.valueAsNumber
+                                  : 1
+                              )
+                            }
+                          />
+                        </div>
                         <input
-                          class="input"
-                          type="number"
+                          class="range"
+                          type="range"
                           min="1"
                           max="20"
                           step="1"
@@ -551,85 +580,68 @@ export default function App() {
                           }
                         />
                       </div>
-                      <input
-                        class="range"
-                        type="range"
-                        min="1"
-                        max="20"
-                        step="1"
-                        value={autoRepeatCount()}
-                        disabled={isRunning()}
-                        onInput={(e) =>
-                          setAutoRepeatCount(
-                            Number.isFinite(e.currentTarget.valueAsNumber)
-                              ? e.currentTarget.valueAsNumber
-                              : 1
-                          )
-                        }
-                      />
-                    </div>
-                  ) : null}
+                    ) : null}
 
-                  {autoRepeatEnabled() ? (
-                    <>
-                      <div class="fieldRow">
-                        <div class="label">Delay before next question (s)</div>
-                        <input
-                          class="input"
-                          type="number"
-                          min="5"
-                          max="120"
-                          step="1"
-                          value={autoRepeatDelaySeconds()}
-                          disabled={isRunning()}
-                          onInput={(e) =>
-                            setAutoRepeatDelaySeconds(
-                              Number.isFinite(e.currentTarget.valueAsNumber)
-                                ? e.currentTarget.valueAsNumber
-                                : 5
-                            )
-                          }
-                        />
+                    {autoRepeatEnabled() ? (
+                      <>
+                        <div class="fieldRow">
+                          <div class="label">Delay before next question (s)</div>
+                          <input
+                            class="input"
+                            type="number"
+                            min="5"
+                            max="120"
+                            step="1"
+                            value={autoRepeatDelaySeconds()}
+                            disabled={isRunning()}
+                            onInput={(e) =>
+                              setAutoRepeatDelaySeconds(
+                                Number.isFinite(e.currentTarget.valueAsNumber)
+                                  ? e.currentTarget.valueAsNumber
+                                  : 5
+                              )
+                            }
+                          />
+                        </div>
+                        <div class="hint">Starts after you validate.</div>
+                      </>
+                    ) : null}
+                  </div>
+
+                  <div class="advancedSetting">
+                    <div class="settingRow">
+                      <div class="label">Answer mode</div>
+                      <div class="segmented" role="radiogroup" aria-label="Answer mode">
+                        <label class="segmentedOption">
+                          <input
+                            class="segmentedInput"
+                            type="radio"
+                            name="answer-mode"
+                            value="reveal"
+                            disabled={isRunning()}
+                            checked={answerMode() === "reveal"}
+                            onInput={() => setAnswerMode("reveal")}
+                          />
+                          <span class="segmentedLabel">Click</span>
+                        </label>
+                        <label class="segmentedOption">
+                          <input
+                            class="segmentedInput"
+                            type="radio"
+                            name="answer-mode"
+                            value="type"
+                            disabled={isRunning()}
+                            checked={answerMode() === "type"}
+                            onInput={() => setAnswerMode("type")}
+                          />
+                          <span class="segmentedLabel">Type</span>
+                        </label>
                       </div>
-                      <div class="hint">Starts after you validate.</div>
-                    </>
-                  ) : null}
-                </div>
-
-                <div class="advancedSetting">
-                  <div class="settingRow">
-                    <div class="label">Answer mode</div>
-                    <div class="segmented" role="radiogroup" aria-label="Answer mode">
-                      <label class="segmentedOption">
-                        <input
-                          class="segmentedInput"
-                          type="radio"
-                          name="answer-mode"
-                          value="reveal"
-                          disabled={isRunning()}
-                          checked={answerMode() === "reveal"}
-                          onInput={() => setAnswerMode("reveal")}
-                        />
-                        <span class="segmentedLabel">Click</span>
-                      </label>
-                      <label class="segmentedOption">
-                        <input
-                          class="segmentedInput"
-                          type="radio"
-                          name="answer-mode"
-                          value="type"
-                          disabled={isRunning()}
-                          checked={answerMode() === "type"}
-                          onInput={() => setAnswerMode("type")}
-                        />
-                        <span class="segmentedLabel">Type</span>
-                      </label>
                     </div>
                   </div>
-                </div>
 
-                <div class="advancedSetting">
-                  <div class="settingRow">
+                  <div class="advancedSetting">
+                    <div class="settingRow">
                       <div class="label">
                         Color
                         <div class="modeVertical" role="radiogroup" aria-label="Theme mode">
@@ -666,99 +678,116 @@ export default function App() {
                         </div>
                       </div>
                       <div class="colorGrid" role="radiogroup" aria-label="Color">
-                      {
-                        ((): any => {
-                          const values = ["midnight", "crimson", "aqua", "violet", "amber", "ivory"] as const;
-                          const darkNames: Record<string, string> = {
-                            midnight: "Midnight",
-                            crimson: "Crimson",
-                            aqua: "Aqua",
-                            violet: "Violet",
-                            amber: "Amber",
-                            ivory: "Obsidian",
-                          };
-                          const lightNames: Record<string, string> = {
-                            midnight: "Dawn",
-                            crimson: "Blush",
-                            aqua: "Sea Glass",
-                            violet: "Lilac",
-                            amber: "Saffron",
-                            ivory: "Ivory",
-                          };
+                        {
+                          ((): any => {
+                            const values = ["midnight", "crimson", "aqua", "violet", "amber", "ivory"] as const;
+                            const darkNames: Record<string, string> = {
+                              midnight: "Midnight",
+                              crimson: "Crimson",
+                              aqua: "Aqua",
+                              violet: "Violet",
+                              amber: "Amber",
+                              ivory: "Obsidian",
+                            };
+                            const lightNames: Record<string, string> = {
+                              midnight: "Dawn",
+                              crimson: "Blush",
+                              aqua: "Sea Glass",
+                              violet: "Lilac",
+                              amber: "Saffron",
+                              ivory: "Ivory",
+                            };
 
-                          return values.map((value) => {
-                            const label = themeMode() === "light" ? lightNames[value] : darkNames[value];
-                            return (
-                              <label class="colorOption" title={label}>
-                                <input
-                                  class="segmentedInput"
-                                  type="radio"
-                                  name="color-scheme"
-                                  value={value}
-                                  disabled={isRunning()}
-                                  checked={colorScheme() === value}
-                                  onInput={() => {
-                                    setColorScheme(value);
-                                    void setColorSchemeCmd(value);
-                                  }}
-                                />
-                                <span classList={{ colorSwatch: true, [`sw-preview-${value}`]: true }} aria-hidden="true" />
-                                <span class="colorLabel">{label}</span>
-                              </label>
-                            );
-                          });
-                        })()
-                      }
+                            return values.map((value) => {
+                              const label = themeMode() === "light" ? lightNames[value] : darkNames[value];
+                              return (
+                                <label class="colorOption" title={label}>
+                                  <input
+                                    class="segmentedInput"
+                                    type="radio"
+                                    name="color-scheme"
+                                    value={value}
+                                    disabled={isRunning()}
+                                    checked={colorScheme() === value}
+                                    onInput={() => {
+                                      setColorScheme(value);
+                                      void setColorSchemeCmd(value);
+                                    }}
+                                  />
+                                  <span classList={{ colorSwatch: true, [`sw-preview-${value}`]: true }} aria-hidden="true" />
+                                  <span class="colorLabel">{label}</span>
+                                </label>
+                              );
+                            });
+                          })()
+                        }
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                
 
-                <div class="advancedSetting">
-                  <div class="settingRow">
-                    <div class="label">Allow negative numbers</div>
-                    <div
-                      class="segmented"
-                      role="radiogroup"
-                      aria-label="Allow negative numbers"
-                    >
-                      <label class="segmentedOption">
-                        <input
-                          class="segmentedInput"
-                          type="radio"
-                          name="allow-negative-numbers"
-                          value="off"
-                          disabled={isRunning()}
-                          checked={!allowNegativeNumbers()}
-                          onInput={() => setAllowNegativeNumbers(false)}
-                        />
-                        <span class="segmentedLabel">Off</span>
-                      </label>
-                      <label class="segmentedOption">
-                        <input
-                          class="segmentedInput"
-                          type="radio"
-                          name="allow-negative-numbers"
-                          value="on"
-                          disabled={isRunning()}
-                          checked={allowNegativeNumbers()}
-                          onInput={() => setAllowNegativeNumbers(true)}
-                        />
-                        <span class="segmentedLabel">On</span>
-                      </label>
+
+                  <div class="advancedSetting">
+                    <div class="settingRow">
+                      <div class="label">Allow negative numbers</div>
+                      <div
+                        class="segmented"
+                        role="radiogroup"
+                        aria-label="Allow negative numbers"
+                      >
+                        <label class="segmentedOption">
+                          <input
+                            class="segmentedInput"
+                            type="radio"
+                            name="allow-negative-numbers"
+                            value="off"
+                            disabled={isRunning()}
+                            checked={!allowNegativeNumbers()}
+                            onInput={() => setAllowNegativeNumbers(false)}
+                          />
+                          <span class="segmentedLabel">Off</span>
+                        </label>
+                        <label class="segmentedOption">
+                          <input
+                            class="segmentedInput"
+                            type="radio"
+                            name="allow-negative-numbers"
+                            value="on"
+                            disabled={isRunning()}
+                            checked={allowNegativeNumbers()}
+                            onInput={() => setAllowNegativeNumbers(true)}
+                          />
+                          <span class="segmentedLabel">On</span>
+                        </label>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div class="advancedDivider" />
+                  <div class="advancedDivider" />
 
-                <div class="advancedSetting field">
-                  <div class="fieldRow">
-                    <div class="label">Delay between numbers (s)</div>
+                  <div class="advancedSetting field">
+                    <div class="fieldRow">
+                      <div class="label">Delay between numbers (s)</div>
+                      <input
+                        class="input"
+                        type="number"
+                        min="0"
+                        max="5"
+                        step="0.1"
+                        value={delayBetweenNumbersSeconds()}
+                        disabled={isRunning()}
+                        onInput={(e) =>
+                          setDelayBetweenNumbersSeconds(
+                            Number.isFinite(e.currentTarget.valueAsNumber)
+                              ? e.currentTarget.valueAsNumber
+                              : 0
+                          )
+                        }
+                      />
+                    </div>
                     <input
-                      class="input"
-                      type="number"
+                      class="range"
+                      type="range"
                       min="0"
                       max="5"
                       step="0.1"
@@ -773,45 +802,45 @@ export default function App() {
                       }
                     />
                   </div>
+
+                  <div class="actions">
+                    <button
+                      class="button"
+                      type="button"
+                      onClick={() => setShowAdvanced(false)}
+                      disabled={isRunning()}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div class="grid">
+              <div class="field">
+                <div class="fieldRow">
+                  <div class="label">Digits per number</div>
                   <input
-                    class="range"
-                    type="range"
-                    min="0"
-                    max="5"
-                    step="0.1"
-                    value={delayBetweenNumbersSeconds()}
+                    class="input"
+                    type="number"
+                    min="1"
+                    max="18"
+                    step="1"
+                    value={digitsPerNumber()}
                     disabled={isRunning()}
                     onInput={(e) =>
-                      setDelayBetweenNumbersSeconds(
+                      setDigitsPerNumber(
                         Number.isFinite(e.currentTarget.valueAsNumber)
                           ? e.currentTarget.valueAsNumber
-                          : 0
+                          : 1
                       )
                     }
                   />
                 </div>
-
-                <div class="actions">
-                  <button
-                    class="button"
-                    type="button"
-                    onClick={() => setShowAdvanced(false)}
-                    disabled={isRunning()}
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          <div class="grid">
-            <div class="field">
-              <div class="fieldRow">
-                <div class="label">Digits per number</div>
                 <input
-                  class="input"
-                  type="number"
+                  class="range"
+                  type="range"
                   min="1"
                   max="18"
                   step="1"
@@ -826,30 +855,30 @@ export default function App() {
                   }
                 />
               </div>
-              <input
-                class="range"
-                type="range"
-                min="1"
-                max="18"
-                step="1"
-                value={digitsPerNumber()}
-                disabled={isRunning()}
-                onInput={(e) =>
-                  setDigitsPerNumber(
-                    Number.isFinite(e.currentTarget.valueAsNumber)
-                      ? e.currentTarget.valueAsNumber
-                      : 1
-                  )
-                }
-              />
-            </div>
 
-            <div class="field">
-              <div class="fieldRow">
-                <div class="label">Number duration (s)</div>
+              <div class="field">
+                <div class="fieldRow">
+                  <div class="label">Number duration (s)</div>
+                  <input
+                    class="input"
+                    type="number"
+                    min="0.1"
+                    max="5"
+                    step="0.1"
+                    value={numberDurationSeconds()}
+                    disabled={isRunning()}
+                    onInput={(e) =>
+                      setNumberDurationSeconds(
+                        Number.isFinite(e.currentTarget.valueAsNumber)
+                          ? e.currentTarget.valueAsNumber
+                          : 0.1
+                      )
+                    }
+                  />
+                </div>
                 <input
-                  class="input"
-                  type="number"
+                  class="range"
+                  type="range"
                   min="0.1"
                   max="5"
                   step="0.1"
@@ -864,30 +893,30 @@ export default function App() {
                   }
                 />
               </div>
-              <input
-                class="range"
-                type="range"
-                min="0.1"
-                max="5"
-                step="0.1"
-                value={numberDurationSeconds()}
-                disabled={isRunning()}
-                onInput={(e) =>
-                  setNumberDurationSeconds(
-                    Number.isFinite(e.currentTarget.valueAsNumber)
-                      ? e.currentTarget.valueAsNumber
-                      : 0.1
-                  )
-                }
-              />
-            </div>
 
-            <div class="field">
-              <div class="fieldRow">
-                <div class="label">Total numbers</div>
+              <div class="field">
+                <div class="fieldRow">
+                  <div class="label">Total numbers</div>
+                  <input
+                    class="input"
+                    type="number"
+                    min="1"
+                    max="1500"
+                    step="1"
+                    value={totalNumbers()}
+                    disabled={isRunning()}
+                    onInput={(e) =>
+                      setTotalNumbers(
+                        Number.isFinite(e.currentTarget.valueAsNumber)
+                          ? e.currentTarget.valueAsNumber
+                          : 1
+                      )
+                    }
+                  />
+                </div>
                 <input
-                  class="input"
-                  type="number"
+                  class="range"
+                  type="range"
                   min="1"
                   max="1500"
                   step="1"
@@ -902,279 +931,262 @@ export default function App() {
                   }
                 />
               </div>
-              <input
-                class="range"
-                type="range"
-                min="1"
-                max="1500"
-                step="1"
-                value={totalNumbers()}
-                disabled={isRunning()}
-                onInput={(e) =>
-                  setTotalNumbers(
-                    Number.isFinite(e.currentTarget.valueAsNumber)
-                      ? e.currentTarget.valueAsNumber
-                      : 1
-                  )
-                }
-              />
             </div>
-          </div>
 
-          <div class="actions">
+            <div class="actions">
               <div class="soundGroup">
                 <div class="soundLabel">Sound</div>
                 <div class="segmented" role="radiogroup" aria-label="Sound">
-                <label class="segmentedOption">
-                  <input
-                    class="segmentedInput"
-                    type="radio"
-                    name="sound"
-                    value="on"
-                    checked={soundEnabled()}
-                    onInput={() => setSoundEnabled(true)}
-                  />
-                  <span class="segmentedLabel">🔊 On</span>
-                </label>
-                <label class="segmentedOption">
-                  <input
-                    class="segmentedInput"
-                    type="radio"
-                    name="sound"
-                    value="off"
-                    checked={!soundEnabled()}
-                    onInput={() => setSoundEnabled(false)}
-                  />
-                  <span class="segmentedLabel">Off</span>
-                </label>
+                  <label class="segmentedOption">
+                    <input
+                      class="segmentedInput"
+                      type="radio"
+                      name="sound"
+                      value="on"
+                      checked={soundEnabled()}
+                      onInput={async () => { setSoundEnabled(true); await setSoundEnabledCmd(true); }}
+                    />
+                    <span class="segmentedLabel">🔊 On</span>
+                  </label>
+                  <label class="segmentedOption">
+                    <input
+                      class="segmentedInput"
+                      type="radio"
+                      name="sound"
+                      value="off"
+                      checked={!soundEnabled()}
+                      onInput={async () => { setSoundEnabled(false); await setSoundEnabledCmd(false); }}
+                    />
+                    <span class="segmentedLabel">Off</span>
+                  </label>
+                </div>
               </div>
+
+              <button class="button" disabled={isRunning()} onClick={start}>
+                Start
+              </button>
             </div>
 
-            <button class="button" disabled={isRunning()} onClick={start}>
-              Start
-            </button>
+            {errorText() ? <div class="error">{errorText()}</div> : null}
           </div>
+        ) : phase() === "complete" ? (
+          <div class="endScreen">
+            {answerMode() === "reveal" ? (
+              <div class="answerCard">
+                <div class="endHeaderCenter">
+                  <div class="endTitle">Session complete</div>
+                  <div class="endSub">Click to see answer</div>
+                </div>
 
-          {errorText() ? <div class="error">{errorText()}</div> : null}
-        </div>
-      ) : phase() === "complete" ? (
-        <div class="endScreen">
-          {answerMode() === "reveal" ? (
-            <div class="answerCard">
-              <div class="endHeaderCenter">
-                <div class="endTitle">Session complete</div>
-                <div class="endSub">Click to see answer</div>
-              </div>
-
-              <div class="endBody">
-                {!showAnswer() ? (
-                  <div class="actionField">
-                    <button
-                      class="button"
-                      type="button"
-                      onClick={async () => {
-                        setHasValidated(true);
-                        setShowAnswer(true);
-                        const sid = sessionId();
-                        if (sid != null) {
-                          try {
-                            const waiting = await acknowledgeComplete(sid);
-                            if (waiting) applyAutoRepeatWaiting(waiting);
-                          } catch {
-                            // Best-effort.
+                <div class="endBody">
+                  {!showAnswer() ? (
+                    <div class="actionField">
+                      <button
+                        class="button"
+                        type="button"
+                        onClick={async () => {
+                          setHasValidated(true);
+                          setShowAnswer(true);
+                          const sid = sessionId();
+                          if (sid != null) {
+                            try {
+                              const waiting = await acknowledgeComplete(sid);
+                              if (waiting) applyAutoRepeatWaiting(waiting);
+                            } catch {
+                              // Best-effort.
+                            }
                           }
-                        }
-                      }}
-                    >
-                      Show answer
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div class="sumCard">
-                      <div class="sumLabel">Correct answer</div>
-                      <div class="sumValue">{answerSum()}</div>
+                        }}
+                      >
+                        Show answer
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div class="sumCard">
+                        <div class="sumLabel">Correct answer</div>
+                        <div class="sumValue">{answerSum()}</div>
+                      </div>
+
+                      {hasValidated() && showNumbersList() ? (
+                        <div class="answerNumbers">
+                          <For each={numbers()}>{(n, idx) => (
+                            <div class="answerRow">
+                              <div class="answerIndex">{idx() + 1}</div>
+                              <div class="answerValue">{n}</div>
+                            </div>
+                          )}</For>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+
+                <div class="endFooter">
+                  <div class="endFooterInner">
+                    <div class="actionField">
+                      <div class="centerActions">
+                        {showAnswer() ? (
+                          <button
+                            class="button"
+                            type="button"
+                            onClick={() => {
+                              setShowAnswer(false);
+                              setShowNumbersList(false);
+                            }}
+                          >
+                            Hide
+                          </button>
+                        ) : null}
+                        {showAnswer() && hasValidated() ? (
+                          <button
+                            class="button"
+                            type="button"
+                            onClick={() => setShowNumbersList((v) => !v)}
+                          >
+                            {showNumbersList() ? "Hide numbers" : "Show numbers"}
+                          </button>
+                        ) : null}
+                        <button class="button" type="button" onClick={() => void stop()}>
+                          Home
+                        </button>
+                      </div>
                     </div>
 
-                    {hasValidated() && showNumbersList() ? (
-                      <div class="answerNumbers">
-                        <For each={numbers()}>{(n, idx) => (
-                          <div class="answerRow">
-                            <div class="answerIndex">{idx() + 1}</div>
-                            <div class="answerValue">{n}</div>
-                          </div>
-                        )}</For>
+                    {autoRepeatEnabled() && hasValidated() && autoRepeatSecondsLeft() != null ? (
+                      <div class="autoRepeatStatus">
+                        Next question in {autoRepeatSecondsLeft() ?? 0}s · {autoRepeatRemaining()} remaining
                       </div>
                     ) : null}
-                  </>
-                )}
-              </div>
-
-              <div class="endFooter">
-                <div class="endFooterInner">
-                  <div class="actionField">
-                    <div class="centerActions">
-                      {showAnswer() ? (
-                        <button
-                          class="button"
-                          type="button"
-                          onClick={() => {
-                            setShowAnswer(false);
-                            setShowNumbersList(false);
-                          }}
-                        >
-                          Hide
-                        </button>
-                      ) : null}
-                      {showAnswer() && hasValidated() ? (
-                        <button
-                          class="button"
-                          type="button"
-                          onClick={() => setShowNumbersList((v) => !v)}
-                        >
-                          {showNumbersList() ? "Hide numbers" : "Show numbers"}
-                        </button>
-                      ) : null}
-                      <button class="button" type="button" onClick={() => void stop()}>
-                        Home
-                      </button>
-                    </div>
                   </div>
+                </div>
+              </div>
+            ) : (
+              <div class="answerCard">
+                <div class="endHeaderCenter">
+                  <div class="endTitle">Session complete</div>
+                  <div class="endSub">Type your answer</div>
+                </div>
 
-                  {autoRepeatEnabled() && hasValidated() && autoRepeatSecondsLeft() != null ? (
-                    <div class="autoRepeatStatus">
-                      Next question in {autoRepeatSecondsLeft() ?? 0}s · {autoRepeatRemaining()} remaining
+                <div class="endBody">
+                  <input
+                    ref={(el) => (sumInputRef = el)}
+                    class="sumInput"
+                    type="text"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    placeholder="Enter the answer"
+                    value={typedAnswer()}
+                    onInput={(e) => setTypedAnswer(e.currentTarget.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void validateTypedAnswer();
+                    }}
+                    spellcheck={false}
+                  />
+
+                  {validationSummary() ? <pre class="validationText">{validationSummary()}</pre> : null}
+
+                  {hasValidated() && showNumbersList() ? (
+                    <div class="answerNumbers">
+                      <For each={numbers()}>{(n, idx) => (
+                        <div class="answerRow">
+                          <div class="answerIndex">{idx() + 1}</div>
+                          <div class="answerValue">{n}</div>
+                        </div>
+                      )}</For>
                     </div>
                   ) : null}
                 </div>
-              </div>
-            </div>
-          ) : (
-            <div class="answerCard">
-              <div class="endHeaderCenter">
-                <div class="endTitle">Session complete</div>
-                <div class="endSub">Type your answer</div>
-              </div>
 
-              <div class="endBody">
-                <input
-                  ref={(el) => (sumInputRef = el)}
-                  class="sumInput"
-                  type="text"
-                  inputmode="numeric"
-                  autocomplete="off"
-                  placeholder="Enter the answer"
-                  value={typedAnswer()}
-                  onInput={(e) => setTypedAnswer(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void validateTypedAnswer();
-                  }}
-                  spellcheck={false}
-                />
-
-                {validationSummary() ? <pre class="validationText">{validationSummary()}</pre> : null}
-
-                {hasValidated() && showNumbersList() ? (
-                  <div class="answerNumbers">
-                    <For each={numbers()}>{(n, idx) => (
-                      <div class="answerRow">
-                        <div class="answerIndex">{idx() + 1}</div>
-                        <div class="answerValue">{n}</div>
+                <div class="endFooter">
+                  <div class="endFooterInner">
+                    <div class="actionField">
+                      <div class="centerActions">
+                        <button class="button" type="button" onClick={() => void validateTypedAnswer()}>
+                          Validate
+                        </button>
+                        {hasValidated() && validationSummary() ? (
+                          <button
+                            class="button"
+                            type="button"
+                            onClick={() => setShowNumbersList((v) => !v)}
+                          >
+                            {showNumbersList() ? "Hide numbers" : "Show numbers"}
+                          </button>
+                        ) : null}
+                        <button class="button" type="button" onClick={() => void stop()}>
+                          Home
+                        </button>
                       </div>
-                    )}</For>
-                  </div>
-                ) : null}
-              </div>
-
-              <div class="endFooter">
-                <div class="endFooterInner">
-                  <div class="actionField">
-                    <div class="centerActions">
-                      <button class="button" type="button" onClick={() => void validateTypedAnswer()}>
-                        Validate
-                      </button>
-                      {hasValidated() && validationSummary() ? (
-                        <button
-                          class="button"
-                          type="button"
-                          onClick={() => setShowNumbersList((v) => !v)}
-                        >
-                          {showNumbersList() ? "Hide numbers" : "Show numbers"}
-                        </button>
-                      ) : null}
-                      <button class="button" type="button" onClick={() => void stop()}>
-                        Home
-                      </button>
                     </div>
-                  </div>
 
-                  {autoRepeatEnabled() && hasValidated() && autoRepeatSecondsLeft() != null ? (
-                    <div class="autoRepeatStatus">
-                      Next question in {autoRepeatSecondsLeft() ?? 0}s · {autoRepeatRemaining()} remaining
-                    </div>
-                  ) : null}
+                    {autoRepeatEnabled() && hasValidated() && autoRepeatSecondsLeft() != null ? (
+                      <div class="autoRepeatStatus">
+                        Next question in {autoRepeatSecondsLeft() ?? 0}s · {autoRepeatRemaining()} remaining
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div
-          classList={{ number: true, countdown: phase() === "countdown" }}
-          style={{
-            "--len": Math.max(
-              1,
-              (displayText().startsWith("-") ? displayText().slice(1) : displayText()).length +
+            )}
+          </div>
+        ) : (
+          <div
+            classList={{ number: true, countdown: phase() === "countdown" }}
+            style={{
+              "--len": Math.max(
+                1,
+                (displayText().startsWith("-") ? displayText().slice(1) : displayText()).length +
                 (allowNegativeNumbers() ? 1 : 0)
-            ),
-          }}
-        >
-          <Show when={phase() === "countdown"}>
-            <div
-              classList={{
-                countdownShutter: true,
-                shutterA: countdownTickId() % 2 === 0,
-                shutterB: countdownTickId() % 2 === 1,
-              }}
-              aria-hidden="true"
-            />
-
-            <svg class="countdownRing" viewBox="0 0 100 100" aria-hidden="true">
-              <circle class="countdownTrack" cx="50" cy="50" r="44" />
-              <circle
+              ),
+            }}
+          >
+            <Show when={phase() === "countdown"}>
+              <div
                 classList={{
-                  countdownProgress: true,
-                  countdownProgressA: countdownTickId() % 2 === 0,
-                  countdownProgressB: countdownTickId() % 2 === 1,
+                  countdownShutter: true,
+                  shutterA: countdownTickId() % 2 === 0,
+                  shutterB: countdownTickId() % 2 === 1,
                 }}
-                cx="50"
-                cy="50"
-                r="44"
+                aria-hidden="true"
               />
-            </svg>
-          </Show>
 
-          {phase() === "countdown" ? (
-            <span class="countdownDigit">{displayText()}</span>
-          ) : (
-            <span class="signedNumber">
-              <span class="magnitude">
-                {displayText().startsWith("-") ? displayText().slice(1) : displayText()}
-              </span>
-              {allowNegativeNumbers() ? (
-                <span
-                  class="signOverlay"
-                  aria-hidden={!displayText().startsWith("-")}
-                  style={{ opacity: displayText().startsWith("-") ? 1 : 0 }}
-                >
-                  -
+              <svg class="countdownRing" viewBox="0 0 100 100" aria-hidden="true">
+                <circle class="countdownTrack" cx="50" cy="50" r="44" />
+                <circle
+                  classList={{
+                    countdownProgress: true,
+                    countdownProgressA: countdownTickId() % 2 === 0,
+                    countdownProgressB: countdownTickId() % 2 === 1,
+                  }}
+                  cx="50"
+                  cy="50"
+                  r="44"
+                />
+              </svg>
+            </Show>
+
+            {phase() === "countdown" ? (
+              <span class="countdownDigit">{displayText()}</span>
+            ) : (
+              <span class="signedNumber">
+                <span class="magnitude">
+                  {displayText().startsWith("-") ? displayText().slice(1) : displayText()}
                 </span>
-              ) : null}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
+                {allowNegativeNumbers() ? (
+                  <span
+                    class="signOverlay"
+                    aria-hidden={!displayText().startsWith("-")}
+                    style={{ opacity: displayText().startsWith("-") ? 1 : 0 }}
+                  >
+                    -
+                  </span>
+                ) : null}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
       {/* Bottom-left lodged logo */}
       <img src="/Ascent_Logo.png" alt="Ascent logo" class="topLogo" />
 
@@ -1186,6 +1198,6 @@ export default function App() {
           <span class="iso">ISO 14001</span>
         </div>
       </div>
-      </>
-    );
+    </>
+  );
 }

@@ -505,6 +505,8 @@ fn run_session_loop(
                     .expect("running_sum should fit into i64 with current constraints"),
             },
         );
+        // Play beep for each number flash (non-blocking)
+        let _ = crate::audio::play_kind("beep");
 
         let shown_at = Instant::now();
         sleep_until_interruptible(shown_at + number_duration, &stop);
