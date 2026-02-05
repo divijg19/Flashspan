@@ -13,6 +13,16 @@
   justify-content: center;
 }
 
+/*
+  The home screen uses a resize-driven --ui-scale to keep the layout feeling
+  responsive. During countdown/flashing, however, fullscreen transitions can
+  trigger resizes that would otherwise reflow the number mid-flash.
+  Keep the session display stable by freezing scale outside the home screen.
+*/
+.app:not(.home) {
+  --ui-scale: 1;
+}
+
 :root {
   /* Preview colors for the color panel (dark / light) */
   --preview-midnight-dark: #000000;
@@ -715,6 +725,42 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* In the Additional settings panel, labels must be fully readable.
+   Override the global single-line/ellipsis label behavior. */
+.advancedPanel .label {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.25;
+  opacity: 0.92;
+}
+
+.advancedPanel .settingRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  align-items: center;
+}
+
+.advancedPanel .settingRow .label {
+  min-width: 0;
+}
+
+/* The advanced panel is narrow; avoid the large global column gap. */
+.advancedPanel .fieldRow {
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 160px);
+  column-gap: 12px;
+  align-items: center;
+}
+
+.advancedPanel .segmented {
+  justify-self: end;
+}
+
+.advancedPanel .segmentedLabel {
+  min-width: calc(54px * var(--ui-scale));
 }
 
 .input {

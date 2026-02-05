@@ -94,6 +94,42 @@ jobs:
       - name: Build Tauri app
         run: bunx @tauri-apps/cli@2.9.5 build
 
+      # --------------------
+      # Stage / Rename bundles (for consistent release filenames)
+      # --------------------
+      - name: Stage bundles (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          RPM_PATH=$(ls -1 src-tauri/target/release/bundle/rpm/*.rpm | head -n 1)
+          DEB_PATH=$(ls -1 src-tauri/target/release/bundle/deb/*.deb | head -n 1)
+          cp "$RPM_PATH" "release/Ascent.Flash-Linux-x86_64.rpm"
+          cp "$DEB_PATH" "release/Ascent.Flash-Linux_x86_64.deb"
+
+      - name: Stage bundles (macOS)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          DMG_PATH=$(ls -1 src-tauri/target/release/bundle/dmg/*.dmg | head -n 1)
+          cp "$DMG_PATH" "release/Ascent.Flash-macOS.dmg"
+
+      - name: Stage bundles (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          $exe = Get-ChildItem -Path "src-tauri\target\release\bundle" -Recurse -Filter "*.exe" |
+            Where-Object { $_.FullName -match "bundle\\nsis|bundle\\" } |
+            Select-Object -First 1
+          if (-not $exe) {
+            throw "Could not find Windows .exe bundle under src-tauri\\target\\release\\bundle"
+          }
+          Copy-Item $exe.FullName "release\Ascent.Flash-Windows_setup.exe" -Force
+
 
       # --------------------
       # Artifacts
@@ -103,10 +139,10 @@ jobs:
         with:
           name: bundles-${{ matrix.os }}
           path: |
-            src-tauri/target/release/bundle/**/*.deb
-            src-tauri/target/release/bundle/**/*.rpm
-            src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.dmg
+            release/Ascent.Flash-*.deb
+            release/Ascent.Flash-*.rpm
+            release/Ascent.Flash-*.exe
+            release/Ascent.Flash-*.dmg
 
   publish:
     name: Create Release and Attach Artifacts
@@ -124,7 +160,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           files: |
-            **/*.deb
-            **/*.rpm
-            **/*.exe
-            **/*.dmg
+            **/Ascent.Flash-Linux-x86_64.rpm
+            **/Ascent.Flash-Linux_x86_64.deb
+            **/Ascent.Flash-macOS.dmg
+            **/Ascent.Flash-Windows_setup.exe

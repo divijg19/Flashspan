@@ -126,6 +126,9 @@ export default function App() {
   });
 
   const [displayText, setDisplayText] = createSignal<string>("");
+  const [currentShown, setCurrentShown] = createSignal<
+    { session_id: number; index: number; emitted_at_ms: number } | null
+  >(null);
   const [phase, setPhase] = createSignal<Phase>("idle");
   const [errorText, setErrorText] = createSignal<string>("");
 
@@ -225,6 +228,7 @@ export default function App() {
   const goHome = () => {
     setPhase("idle");
     setDisplayText("");
+    setCurrentShown(null);
     setShowAnswer(false);
     setAnswerText("");
     setAnswerSum(0);
@@ -291,6 +295,8 @@ export default function App() {
   };
 
   onMount(async () => {
+    let lastFirstFlashSessionId: number | null = null;
+
     try {
       const settings = await getAppSettings();
       setColorScheme(settings.color_scheme);
@@ -309,8 +315,11 @@ export default function App() {
       resetForIncomingSessionIfComplete();
       setPhase("countdown");
       setDisplayText(value);
+      setCurrentShown(null);
       setCountdownTickId((n) => n + 1);
-      void setFullscreen(true);
+      // Enter fullscreen early (start of countdown) to avoid the
+      // fullscreen transition stealing time from the first flash paint.
+      if (value === "3") void setFullscreen(true);
     });
 
     const unlistenFlash = await onShowNumber((payload) => {
@@ -318,12 +327,43 @@ export default function App() {
       setSessionId(payload.session_id);
       setPhase("flashing");
       setDisplayText(String(payload.value));
+      setCurrentShown({
+        session_id: payload.session_id,
+        index: payload.index,
+        emitted_at_ms: payload.emitted_at_ms,
+      });
       void playSound('beep');
-      void setFullscreen(true);
+
+      // Debug-only: measure backend->UI delivery latency for first flash.
+      if (
+        import.meta.env.DEV &&
+        payload.index === 1 &&
+        lastFirstFlashSessionId !== payload.session_id
+      ) {
+        lastFirstFlashSessionId = payload.session_id;
+        const deltaMs = Date.now() - payload.emitted_at_ms;
+        console.debug(`[flashspan] first flash latency: ${deltaMs}ms`);
+      }
     });
 
-    const unlistenClear = await onClearScreen(() => {
-      setDisplayText("");
+    const unlistenClear = await onClearScreen((payload) => {
+      const activeSessionId = sessionId();
+      if (activeSessionId == null) return;
+      if (payload.session_id !== activeSessionId) return;
+
+      const cur = currentShown();
+      if (cur && payload.emitted_at_ms < cur.emitted_at_ms) return;
+
+      if (payload.index == null) {
+        setDisplayText("");
+        setCurrentShown(null);
+        return;
+      }
+
+      if (cur && cur.index === payload.index) {
+        setDisplayText("");
+        setCurrentShown(null);
+      }
     });
 
     const unlistenAutoRepeatWaiting = await onAutoRepeatWaiting((payload) => {
@@ -347,6 +387,7 @@ export default function App() {
     const unlistenComplete = await onSessionComplete((payload) => {
       setPhase("complete");
       setDisplayText("");
+      setCurrentShown(null);
       setShowAnswer(false);
       setNumbers(payload.numbers);
       setAnswerText(payload.numbers.join("\n"));
@@ -450,6 +491,7 @@ export default function App() {
     } finally {
       setPhase("idle");
       setDisplayText("");
+      setCurrentShown(null);
       setShowAnswer(false);
       setAnswerText("");
       setAnswerSum(0);

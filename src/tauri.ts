@@ -77,6 +77,13 @@ export interface ShowNumber {
   total: number;
   value: number;
   running_sum: number;
+  emitted_at_ms: number;
+}
+
+export interface ClearScreen {
+  session_id: number;
+  index: number | null;
+  emitted_at_ms: number;
 }
 
 export interface SessionComplete {
@@ -194,8 +201,8 @@ export function onShowNumber(handler: (payload: ShowNumber) => void): Promise<Un
   return listen<ShowNumber>("show_number", (event) => handler(event.payload));
 }
 
-export function onClearScreen(handler: () => void): Promise<UnlistenFn> {
-  return listen("clear_screen", () => handler());
+export function onClearScreen(handler: (payload: ClearScreen) => void): Promise<UnlistenFn> {
+  return listen<ClearScreen>("clear_screen", (event) => handler(event.payload));
 }
 
 export function onAutoRepeatWaiting(

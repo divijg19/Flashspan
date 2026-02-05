@@ -1,5 +1,6 @@
 use rand::Rng;
 use serde::Deserialize;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     collections::VecDeque,
     sync::{
@@ -11,6 +12,71 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter};
+
+fn now_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SessionTimingOptions {
+    /// When set, runs a countdown with 3 ticks (3,2,1) spaced by this step.
+    /// When None, skips the countdown entirely.
+    countdown_step: Option<Duration>,
+
+    /// Small settle delay after the countdown finishes (cold-start paint/fullscreen
+    /// transitions can cause the first flash to appear to "jump").
+    post_countdown_settle: Duration,
+}
+
+impl Default for SessionTimingOptions {
+    fn default() -> Self {
+        Self {
+            countdown_step: Some(Duration::from_secs(1)),
+            post_countdown_settle: Duration::from_millis(0),
+        }
+    }
+}
+
+trait SessionEmitter {
+    fn clear_screen(&self, payload: ClearScreen);
+    fn countdown_tick(&self, value: String);
+    fn show_number(&self, payload: ShowNumber);
+    fn session_complete(&self, payload: SessionComplete);
+}
+
+struct TauriEmitter {
+    app: AppHandle,
+}
+
+impl SessionEmitter for TauriEmitter {
+    fn clear_screen(&self, payload: ClearScreen) {
+        let _ = self.app.emit("clear_screen", payload);
+    }
+
+    fn countdown_tick(&self, value: String) {
+        let _ = self.app.emit("countdown_tick", value);
+    }
+
+    fn show_number(&self, payload: ShowNumber) {
+        let _ = self.app.emit("show_number", payload);
+    }
+
+    fn session_complete(&self, payload: SessionComplete) {
+        let _ = self.app.emit("session_complete", payload);
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ClearScreen {
+    pub session_id: u64,
+    /// When set, indicates which flashed number index is being cleared.
+    /// When None, represents a global clear (e.g. session start/stop/complete).
+    pub index: Option<u32>,
+    pub emitted_at_ms: u64,
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionComplete {
@@ -26,6 +92,7 @@ pub struct ShowNumber {
     pub total: u32,
     pub value: i64,
     pub running_sum: i64,
+    pub emitted_at_ms: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -348,39 +415,110 @@ fn run_session_loop(
     recent_results: Arc<Mutex<VecDeque<SessionComplete>>>,
     auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
 ) {
-    let _ = app.emit("clear_screen", ());
+    let emitter = TauriEmitter { app };
+    run_session_loop_inner(
+        &emitter,
+        config,
+        state,
+        stop,
+        session_id,
+        recent_results,
+        auto_repeat_plan,
+        SessionTimingOptions::default(),
+        || {
+            // Play beep for each number flash (non-blocking)
+            let _ = crate::audio::play_kind("beep");
+        },
+    );
+}
 
-    // Phase 4: 3-second countdown before first number.
-    let countdown_start = Instant::now();
-    for (idx, value) in [3u32, 2u32, 1u32].into_iter().enumerate() {
+fn run_session_loop_inner<E: SessionEmitter>(
+    emitter: &E,
+    config: SessionConfig,
+    state: Arc<Mutex<SessionState>>,
+    stop: Arc<AtomicBool>,
+    session_id: u64,
+    recent_results: Arc<Mutex<VecDeque<SessionComplete>>>,
+    auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
+    timing: SessionTimingOptions,
+    beep: impl Fn(),
+) {
+    // Cold-start/fullscreen transitions can delay the first paint. If we clear
+    // strictly at `number_duration`, the first flash can *appear* shorter than
+    // subsequent flashes even though the backend timing is correct.
+    // A small grace on the first flash helps equalize perceived duration.
+    const FIRST_FLASH_GRACE: Duration = Duration::from_millis(100);
+
+    emitter.clear_screen(ClearScreen {
+        session_id,
+        index: None,
+        emitted_at_ms: now_epoch_ms(),
+    });
+
+    if let Some(step) = timing.countdown_step {
+        // Phase 4: countdown before first number.
+        let countdown_start = Instant::now();
+        for (idx, value) in [3u32, 2u32, 1u32].into_iter().enumerate() {
+            if stop.load(Ordering::SeqCst) {
+                emitter.clear_screen(ClearScreen {
+                    session_id,
+                    index: None,
+                    emitted_at_ms: now_epoch_ms(),
+                });
+                let mut st = state.lock().expect("state lock poisoned");
+                *st = SessionState::Idle;
+                return;
+            }
+
+            let show_at = countdown_start + step.mul_f64(idx as f64);
+            sleep_until_interruptible(show_at, &stop);
+            if stop.load(Ordering::SeqCst) {
+                emitter.clear_screen(ClearScreen {
+                    session_id,
+                    index: None,
+                    emitted_at_ms: now_epoch_ms(),
+                });
+                let mut st = state.lock().expect("state lock poisoned");
+                *st = SessionState::Idle;
+                return;
+            }
+
+            emitter.countdown_tick(value.to_string());
+        }
+
+        let begin_at = countdown_start + step.mul_f64(3.0);
+        sleep_until_interruptible(begin_at, &stop);
         if stop.load(Ordering::SeqCst) {
-            let _ = app.emit("clear_screen", ());
+            emitter.clear_screen(ClearScreen {
+                session_id,
+                index: None,
+                emitted_at_ms: now_epoch_ms(),
+            });
             let mut st = state.lock().expect("state lock poisoned");
             *st = SessionState::Idle;
             return;
         }
+        // Intentionally do not emit an extra clear_screen here.
+        // The first show_number event will overwrite the countdown text, and an
+        // additional clear_screen right before the first number can arrive late
+        // on cold-start and visually "wipe" the first number.
 
-        let show_at = countdown_start + Duration::from_secs(idx as u64);
-        sleep_until_interruptible(show_at, &stop);
-        if stop.load(Ordering::SeqCst) {
-            let _ = app.emit("clear_screen", ());
-            let mut st = state.lock().expect("state lock poisoned");
-            *st = SessionState::Idle;
-            return;
+        // Give the UI a brief moment to settle (e.g. fullscreen transition, first paint)
+        // before the first flash begins.
+        if timing.post_countdown_settle > Duration::from_millis(0) {
+            sleep_until_interruptible(Instant::now() + timing.post_countdown_settle, &stop);
+            if stop.load(Ordering::SeqCst) {
+                emitter.clear_screen(ClearScreen {
+                    session_id,
+                    index: None,
+                    emitted_at_ms: now_epoch_ms(),
+                });
+                let mut st = state.lock().expect("state lock poisoned");
+                *st = SessionState::Idle;
+                return;
+            }
         }
-
-        let _ = app.emit("countdown_tick", value.to_string());
     }
-
-    let begin_at = countdown_start + Duration::from_secs(3);
-    sleep_until_interruptible(begin_at, &stop);
-    if stop.load(Ordering::SeqCst) {
-        let _ = app.emit("clear_screen", ());
-        let mut st = state.lock().expect("state lock poisoned");
-        *st = SessionState::Idle;
-        return;
-    }
-    let _ = app.emit("clear_screen", ());
 
     let number_duration = Duration::from_millis(config.number_duration_ms);
     let gap_duration = Duration::from_millis(config.delay_between_numbers_ms);
@@ -397,7 +535,11 @@ fn run_session_loop(
 
     for i in 0..config.total_numbers {
         if stop.load(Ordering::SeqCst) {
-            let _ = app.emit("clear_screen", ());
+            emitter.clear_screen(ClearScreen {
+                session_id,
+                index: None,
+                emitted_at_ms: now_epoch_ms(),
+            });
             let mut st = state.lock().expect("state lock poisoned");
             *st = SessionState::Idle;
             return;
@@ -405,7 +547,11 @@ fn run_session_loop(
 
         sleep_until_interruptible(next_on_at, &stop);
         if stop.load(Ordering::SeqCst) {
-            let _ = app.emit("clear_screen", ());
+            emitter.clear_screen(ClearScreen {
+                session_id,
+                index: None,
+                emitted_at_ms: now_epoch_ms(),
+            });
             let mut st = state.lock().expect("state lock poisoned");
             *st = SessionState::Idle;
             return;
@@ -493,24 +639,30 @@ fn run_session_loop(
             .expect("payload_value should fit into i64 with current constraints");
         numbers.push(value_i64);
 
-        let _ = app.emit(
-            "show_number",
-            ShowNumber {
-                session_id,
-                index: i + 1,
-                total: config.total_numbers,
-                value: value_i64,
-                running_sum: running_sum
-                    .try_into()
-                    .expect("running_sum should fit into i64 with current constraints"),
-            },
-        );
-        // Play beep for each number flash (non-blocking)
-        let _ = crate::audio::play_kind("beep");
+        emitter.show_number(ShowNumber {
+            session_id,
+            index: i + 1,
+            total: config.total_numbers,
+            value: value_i64,
+            running_sum: running_sum
+                .try_into()
+                .expect("running_sum should fit into i64 with current constraints"),
+            emitted_at_ms: now_epoch_ms(),
+        });
+        beep();
 
         let shown_at = Instant::now();
-        sleep_until_interruptible(shown_at + number_duration, &stop);
-        let _ = app.emit("clear_screen", ());
+        let grace = if i == 0 {
+            FIRST_FLASH_GRACE
+        } else {
+            Duration::from_millis(0)
+        };
+        sleep_until_interruptible(shown_at + number_duration + grace, &stop);
+        emitter.clear_screen(ClearScreen {
+            session_id,
+            index: Some(i + 1),
+            emitted_at_ms: now_epoch_ms(),
+        });
 
         if stop.load(Ordering::SeqCst) {
             let mut st = state.lock().expect("state lock poisoned");
@@ -522,7 +674,11 @@ fn run_session_loop(
         next_on_at = cleared_at + gap_duration;
     }
 
-    let _ = app.emit("clear_screen", ());
+    emitter.clear_screen(ClearScreen {
+        session_id,
+        index: None,
+        emitted_at_ms: now_epoch_ms(),
+    });
 
     let sum_i64: i64 = sum_i128
         .try_into()
@@ -540,7 +696,7 @@ fn run_session_loop(
             guard.pop_front();
         }
     }
-    let _ = app.emit("session_complete", result.clone());
+    emitter.session_complete(result.clone());
 
     // If auto-repeat is configured and there are repeats remaining, arm it to wait for validation.
     {
@@ -657,6 +813,81 @@ fn sleep_until_interruptible(deadline: Instant, stop: &AtomicBool) {
 mod tests {
     use super::*;
     use rand::thread_rng;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Clone)]
+    enum CapturedEvent {
+        ClearScreen(ClearScreen),
+        CountdownTick(()),
+        ShowNumber(ShowNumber),
+        SessionComplete(()),
+    }
+
+    #[derive(Clone, Default)]
+    struct TestEmitter {
+        events: Arc<Mutex<Vec<(Instant, CapturedEvent)>>>,
+    }
+
+    impl TestEmitter {
+        fn push(&self, ev: CapturedEvent) {
+            self.events
+                .lock()
+                .expect("events lock poisoned")
+                .push((Instant::now(), ev));
+        }
+
+        fn snapshot(&self) -> Vec<(Instant, CapturedEvent)> {
+            self.events.lock().expect("events lock poisoned").clone()
+        }
+    }
+
+    impl SessionEmitter for TestEmitter {
+        fn clear_screen(&self, payload: ClearScreen) {
+            self.push(CapturedEvent::ClearScreen(payload))
+        }
+
+        fn countdown_tick(&self, value: String) {
+            let _ = value;
+            self.push(CapturedEvent::CountdownTick(()))
+        }
+
+        fn show_number(&self, payload: ShowNumber) {
+            self.push(CapturedEvent::ShowNumber(payload))
+        }
+
+        fn session_complete(&self, payload: SessionComplete) {
+            let _ = payload;
+            self.push(CapturedEvent::SessionComplete(()))
+        }
+    }
+
+    fn run_quick_flashing_session(
+        config: SessionConfig,
+    ) -> (TestEmitter, Vec<(Instant, CapturedEvent)>) {
+        let emitter = TestEmitter::default();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(false));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+        let auto_repeat_plan = Arc::new(Mutex::new(None));
+
+        run_session_loop_inner(
+            &emitter,
+            config,
+            state,
+            stop,
+            1,
+            recent_results,
+            auto_repeat_plan,
+            SessionTimingOptions {
+                countdown_step: None,
+                post_countdown_settle: Duration::from_millis(0),
+            },
+            || {},
+        );
+
+        let snapshot = emitter.snapshot();
+        (emitter, snapshot)
+    }
 
     #[test]
     fn generator_respects_invariants() {
@@ -1083,5 +1314,129 @@ mod tests {
         sleep_until_interruptible(deadline, &stop);
         let elapsed = Instant::now() - start;
         assert!(elapsed >= Duration::from_millis(25));
+    }
+
+    #[test]
+    fn flashing_emits_numbers_in_order_without_countdown() {
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 2,
+            number_duration_s: 0.06,
+            delay_between_numbers_s: 0.03,
+            total_numbers: 3,
+            allow_negative_numbers: false,
+        });
+
+        let (_emitter, events) = run_quick_flashing_session(config);
+
+        let show_events: Vec<ShowNumber> = events
+            .iter()
+            .filter_map(|(_, ev)| match ev {
+                CapturedEvent::ShowNumber(p) => Some(p.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(show_events.len(), 3);
+        for (idx, p) in show_events.iter().enumerate() {
+            assert_eq!(p.index as usize, idx + 1);
+            assert_eq!(p.total, 3);
+        }
+
+        let complete_count = events
+            .iter()
+            .filter(|(_, ev)| matches!(ev, CapturedEvent::SessionComplete(_)))
+            .count();
+        assert_eq!(complete_count, 1);
+    }
+
+    #[test]
+    fn flashing_respects_duration_and_gap_with_tolerance() {
+        let number_duration = Duration::from_millis(60);
+        let gap_duration = Duration::from_millis(30);
+
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 2,
+            number_duration_s: number_duration.as_secs_f64(),
+            delay_between_numbers_s: gap_duration.as_secs_f64(),
+            total_numbers: 3,
+            allow_negative_numbers: false,
+        });
+
+        let (_emitter, events) = run_quick_flashing_session(config);
+
+        // Extract ordered show events (index + time) and clear events (index + time).
+        let mut show_events: Vec<(u32, Instant)> = Vec::new();
+        let mut clear_events: Vec<(Option<u32>, Instant)> = Vec::new();
+
+        for (t, ev) in events.iter() {
+            match ev {
+                CapturedEvent::ShowNumber(p) => show_events.push((p.index, *t)),
+                CapturedEvent::ClearScreen(p) => clear_events.push((p.index, *t)),
+                _ => {}
+            }
+        }
+
+        // There is an initial clear_screen before flashing starts.
+        assert!(
+            clear_events.iter().any(|(idx, _)| idx.is_none()),
+            "expected an initial session-wide clear_screen"
+        );
+
+        // Pair each show with the first clear that targets that same index.
+        let mut paired_clears: Vec<Instant> = Vec::new();
+        for (show_index, show_t) in &show_events {
+            let clear_t = events
+                .iter()
+                .find_map(|(t, ev)| match ev {
+                    CapturedEvent::ClearScreen(p)
+                        if p.index == Some(*show_index) && *t >= *show_t =>
+                    {
+                        Some(*t)
+                    }
+                    _ => None,
+                })
+                .expect("missing clear_screen after show_number for index");
+            paired_clears.push(clear_t);
+        }
+
+        // Duration should be close to configured (allowing for scheduler jitter).
+        let lower_slack = Duration::from_millis(10);
+        let upper_slack = Duration::from_millis(200);
+        for (i, ((_show_index, show_t), clear_t)) in
+            show_events.iter().zip(paired_clears.iter()).enumerate()
+        {
+            let visible = clear_t.saturating_duration_since(*show_t);
+            assert!(
+                visible + lower_slack >= number_duration,
+                "flash {} too short: {:?}",
+                i + 1,
+                visible
+            );
+            assert!(
+                visible <= number_duration + upper_slack,
+                "flash {} too long: {:?}",
+                i + 1,
+                visible
+            );
+        }
+
+        // Gap between clears and the next show should also be close to configured.
+        for i in 0..(show_events.len().saturating_sub(1)) {
+            let gap = show_events[i + 1]
+                .1
+                .saturating_duration_since(paired_clears[i]);
+            assert!(
+                gap + lower_slack >= gap_duration,
+                "gap {} too short: {:?}",
+                i + 1,
+                gap
+            );
+            assert!(
+                gap <= gap_duration + upper_slack,
+                "gap {} too long: {:?}",
+                i + 1,
+                gap
+            );
+        }
     }
 }
