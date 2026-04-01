@@ -17,7 +17,6 @@ import {
   onCountdownTick,
   onSessionComplete,
   onShowNumber,
-  playSound,
   ping,
   SessionConfigInput,
   startSession,
@@ -270,14 +269,16 @@ export default function App() {
 
     setValidationSummary(lines.join("\n"));
 
-    void playSound(ok ? 'applause' : 'buzzer');
-
     if (resp.auto_repeat_waiting) {
       applyAutoRepeatWaiting(resp.auto_repeat_waiting);
     }
   };
 
   const validateTypedAnswer = async () => {
+    if (hasValidated()) {
+      return;
+    }
+
     const sid = sessionId();
     if (sid == null) {
       setValidationSummary("No active session id to validate.");
@@ -332,7 +333,6 @@ export default function App() {
         index: payload.index,
         emitted_at_ms: payload.emitted_at_ms,
       });
-      void playSound('beep');
 
       // Debug-only: measure backend->UI delivery latency for first flash.
       if (
@@ -1118,9 +1118,14 @@ export default function App() {
                     inputmode="numeric"
                     autocomplete="off"
                     placeholder="Enter the answer"
+                    disabled={hasValidated()}
                     value={typedAnswer()}
-                    onInput={(e) => setTypedAnswer(e.currentTarget.value)}
+                    onInput={(e) => {
+                      if (hasValidated()) return;
+                      setTypedAnswer(e.currentTarget.value);
+                    }}
                     onKeyDown={(e) => {
+                      if (hasValidated()) return;
                       if (e.key === "Enter") void validateTypedAnswer();
                     }}
                     spellcheck={false}
@@ -1144,7 +1149,12 @@ export default function App() {
                   <div class="endFooterInner">
                     <div class="actionField">
                       <div class="centerActions">
-                        <button class="button" type="button" onClick={() => void validateTypedAnswer()}>
+                        <button
+                          class="button"
+                          type="button"
+                          disabled={hasValidated()}
+                          onClick={() => void validateTypedAnswer()}
+                        >
                           Validate
                         </button>
                         {hasValidated() && validationSummary() ? (

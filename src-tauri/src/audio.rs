@@ -1,9 +1,9 @@
 use log::{error, info, warn};
 use once_cell::sync::OnceCell;
-use rodio::{Decoder, OutputStream, Sink};
+use rodio::{Decoder, DeviceSinkBuilder, Player};
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{Sender, channel};
 
 static AUDIO_SENDER: OnceCell<Sender<&'static [u8]>> = OnceCell::new();
 
@@ -13,26 +13,23 @@ fn get_audio_sender() -> Result<&'static Sender<&'static [u8]>, String> {
 
         std::thread::Builder::new()
             .name("audio-worker".into())
-            .spawn(move || match OutputStream::try_default() {
-                Ok((_stream, handle)) => {
-                    info!("audio worker initialized OutputStream");
+            .spawn(move || match DeviceSinkBuilder::open_default_sink() {
+                Ok(stream) => {
+                    info!("audio worker initialized output sink");
+                    let player = Player::connect_new(stream.mixer());
                     while let Ok(data) = rx.recv() {
                         let cursor = Cursor::new(data);
-                        match Sink::try_new(&handle) {
-                            Ok(sink) => match Decoder::new(cursor) {
-                                Ok(src) => {
-                                    sink.append(src);
-                                    sink.detach();
-                                }
-                                Err(e) => error!("audio decode error: {}", e),
-                            },
-                            Err(e) => error!("audio Sink create error in worker: {}", e),
+                        match Decoder::try_from(cursor) {
+                            Ok(src) => {
+                                player.append(src);
+                            }
+                            Err(e) => error!("audio decode error: {}", e),
                         }
                     }
                     info!("audio worker receiver loop ended");
                 }
                 Err(e) => {
-                    error!("audio worker failed to init OutputStream: {}", e);
+                    error!("audio worker failed to init output sink: {}", e);
                 }
             })
             .map_err(|e| e.to_string())?;
@@ -100,7 +97,7 @@ mod tests {
     fn decode_beep_asset() {
         let data: &'static [u8] = include_bytes!("../../src/assets/beep.wav");
         let cur = Cursor::new(data);
-        let dec = Decoder::new(cur);
+        let dec = Decoder::try_from(cur);
         assert!(dec.is_ok(), "beep.wav should decode as audio");
     }
 
@@ -108,7 +105,7 @@ mod tests {
     fn decode_applause_asset() {
         let data: &'static [u8] = include_bytes!("../../src/assets/applause.wav");
         let cur = Cursor::new(data);
-        let dec = Decoder::new(cur);
+        let dec = Decoder::try_from(cur);
         assert!(dec.is_ok(), "applause.wav should decode as audio");
     }
 
@@ -116,7 +113,7 @@ mod tests {
     fn decode_buzzer_asset() {
         let data: &'static [u8] = include_bytes!("../../src/assets/buzzer.wav");
         let cur = Cursor::new(data);
-        let dec = Decoder::new(cur);
+        let dec = Decoder::try_from(cur);
         assert!(dec.is_ok(), "buzzer.wav should decode as audio");
     }
 }

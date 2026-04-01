@@ -1,11 +1,11 @@
-use rand::Rng;
+use rand::{Rng, RngExt};
 use serde::Deserialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     collections::VecDeque,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     thread::JoinHandle,
@@ -527,7 +527,7 @@ fn run_session_loop_inner<E: SessionEmitter>(
     // "catch up" by skipping visibility when the process is delayed.
     let mut next_on_at = Instant::now();
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut last_payload: Option<String> = None;
     let mut running_sum: i128 = 0;
     let mut numbers: Vec<i64> = Vec::with_capacity(config.total_numbers as usize);
@@ -717,12 +717,12 @@ fn run_session_loop_inner<E: SessionEmitter>(
 fn random_fixed_digits_no_leading_zero(rng: &mut impl Rng, digits: u32) -> String {
     if digits <= 1 {
         // No leading zero => 0 is excluded.
-        return rng.gen_range(1u32..=9u32).to_string();
+        return rng.random_range(1u32..=9u32).to_string();
     }
 
     let min = 10u64.pow(digits - 1);
     let max_exclusive = 10u64.pow(digits);
-    rng.gen_range(min..max_exclusive).to_string()
+    rng.random_range(min..max_exclusive).to_string()
 }
 
 fn random_fixed_digits_no_leading_zero_capped(
@@ -735,7 +735,7 @@ fn random_fixed_digits_no_leading_zero_capped(
             return None;
         }
         let max = max_inclusive.min(9);
-        return Some(rng.gen_range(1u64..=max).to_string());
+        return Some(rng.random_range(1u64..=max).to_string());
     }
 
     let min = 10u64.pow(digits - 1);
@@ -745,7 +745,7 @@ fn random_fixed_digits_no_leading_zero_capped(
 
     let max_exclusive = 10u64.pow(digits);
     let cap_exclusive = (max_inclusive.saturating_add(1)).min(max_exclusive);
-    Some(rng.gen_range(min..cap_exclusive).to_string())
+    Some(rng.random_range(min..cap_exclusive).to_string())
 }
 
 fn random_number_with_constraints(
@@ -773,7 +773,7 @@ fn random_number_with_constraints(
     };
 
     let can_choose_negative = allow_negative_here && sum_cap_u64 > 0;
-    let try_negative = can_choose_negative && rng.gen_bool(0.5);
+    let try_negative = can_choose_negative && rng.random_bool(0.5);
 
     if try_negative {
         if let Some(magnitude) =
@@ -812,7 +812,7 @@ fn sleep_until_interruptible(deadline: Instant, stop: &AtomicBool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::thread_rng;
+    use rand::rng;
     use std::sync::{Arc, Mutex};
 
     #[derive(Debug, Clone)]
@@ -891,7 +891,7 @@ mod tests {
 
     #[test]
     fn generator_respects_invariants() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let digits = 3;
         let allow_neg = true;
         let mut last: Option<String> = None;
@@ -976,7 +976,7 @@ mod tests {
 
     #[test]
     fn random_fixed_digits_no_leading_zero_basic() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         // digits=1 should produce 1..=9
         for _ in 0..50 {
             let s = random_fixed_digits_no_leading_zero(&mut rng, 1);
@@ -994,7 +994,7 @@ mod tests {
 
     #[test]
     fn random_fixed_digits_no_leading_zero_capped_behaviour() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
 
         // When max_inclusive < min for digits > 1, expect None
         let none = random_fixed_digits_no_leading_zero_capped(&mut rng, 3, 50);
@@ -1012,7 +1012,7 @@ mod tests {
 
     #[test]
     fn random_number_with_constraints_first_non_negative_and_respects_running_sum() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let digits = 2;
         let allow_neg = true;
         let mut running_sum: i128 = 0;
@@ -1061,11 +1061,11 @@ mod tests {
         // mark_validated should return scheduling info for session_id 42
         let res = manager.mark_validated_and_schedule_info(42).unwrap();
         assert!(res.is_some());
-        let (delay_ms, remaining_after, cfg, gen) = res.unwrap();
+        let (delay_ms, remaining_after, cfg, generation) = res.unwrap();
         assert_eq!(delay_ms, 1500);
         assert_eq!(remaining_after, 2);
         assert_eq!(cfg.digits_per_number, config.digits_per_number);
-        assert_eq!(gen, manager.auto_repeat_generation());
+        assert_eq!(generation, manager.auto_repeat_generation());
 
         // subsequent call for same id should return None (awaiting_validation_session_id cleared)
         let res2 = manager.mark_validated_and_schedule_info(42).unwrap();
@@ -1195,7 +1195,7 @@ mod tests {
 
     #[test]
     fn random_fixed_digits_edge_cases() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
 
         // digits = 1, max_inclusive = 1 => must be "1"
         let s = random_fixed_digits_no_leading_zero_capped(&mut rng, 1, 1).unwrap();
@@ -1207,7 +1207,7 @@ mod tests {
 
     #[test]
     fn random_number_with_constraints_no_negative() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let mut running_sum: i128 = 0;
         for i in 0..100u32 {
             let (s, val) = random_number_with_constraints(&mut rng, 2, false, i, running_sum);
@@ -1219,8 +1219,8 @@ mod tests {
 
     #[test]
     fn sleep_until_interruptible_returns_on_stop() {
-        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
         let stop = Arc::new(AtomicBool::new(true));
         let deadline = Instant::now() + Duration::from_millis(500);
         let start = Instant::now();
@@ -1288,7 +1288,7 @@ mod tests {
 
     #[test]
     fn random_fixed_digits_capped_exact_min() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         // digits=2, min = 10, max_inclusive = 10 -> should always produce "10"
         let res = random_fixed_digits_no_leading_zero_capped(&mut rng, 2, 10).unwrap();
         // must parse and equal 10
@@ -1298,7 +1298,7 @@ mod tests {
 
     #[test]
     fn random_fixed_digits_max_digits_length() {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         // digits = 18 should produce string length 18
         let s = random_fixed_digits_no_leading_zero(&mut rng, 18);
         assert_eq!(s.len(), 18);
@@ -1306,8 +1306,8 @@ mod tests {
 
     #[test]
     fn sleep_until_interruptible_waits_when_not_stopped() {
-        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
         let stop = Arc::new(AtomicBool::new(false));
         let deadline = Instant::now() + Duration::from_millis(30);
         let start = Instant::now();
