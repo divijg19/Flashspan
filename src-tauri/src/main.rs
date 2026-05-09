@@ -5,8 +5,8 @@ mod session;
 
 use serde::Deserialize;
 use session::{
-    normalize_session_config, AutoRepeatPlan, SessionConfigEffective, SessionConfigInput,
-    SessionManager,
+    AutoRepeatPlan, SessionConfigEffective, SessionConfigInput, SessionManager,
+    normalize_session_config,
 };
 use std::sync::{Arc, Mutex};
 use std::thread;
