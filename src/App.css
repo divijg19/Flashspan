@@ -26,7 +26,7 @@
 :root {
   /* Preview colors for the color panel (dark / light) */
   --preview-midnight-dark: #000000;
-  --preview-midnight-light: #9FDCE6;
+  --preview-midnight-light: #9fdce6;
 
   --preview-crimson-dark: #5c0f0f;
   --preview-crimson-light: #ffe6e8;
@@ -55,17 +55,20 @@
   --button-size: calc(clamp(13px, 1.6vw, 16px) * var(--ui-scale));
   /* Responsive spacing unit (scaled) */
   --space: calc(clamp(8px, 1.6vw, 28px) * var(--ui-scale));
-      /* Inline gap used between label and input and other small inline controls.
+  /* Inline gap used between label and input and other small inline controls.
         Increase viewport-driven growth so wide screens receive more spacing. */
-      --inline-gap: calc(clamp(12px, 6vw, 160px) * var(--ui-scale));
+  --inline-gap: calc(clamp(12px, 6vw, 160px) * var(--ui-scale));
 }
 
 /* Bottom-corner branding and info */
 .topLogo {
   position: fixed;
-  left: calc(var(--space) - 6px); /* moved 2px further left */
-  top: calc(var(--space) + 2px); /* lowered by 2px */
-  width: clamp(40px, 12vw, 120px); /* larger prominent logo */
+  left: calc(var(--space) - 6px);
+  /* moved 2px further left */
+  top: calc(var(--space) + 2px);
+  /* lowered by 2px */
+  width: clamp(40px, 12vw, 120px);
+  /* larger prominent logo */
   height: auto;
   z-index: 40;
   opacity: 0.98;
@@ -74,8 +77,10 @@
 
 .bottomInfo {
   position: fixed;
-  right: calc(var(--space) - 8px); /* moved 2px further right */
-  bottom: calc(var(--space) + 2px); /* raised by 2px */
+  right: calc(var(--space) - 8px);
+  /* moved 2px further right */
+  bottom: calc(var(--space) + 2px);
+  /* raised by 2px */
   z-index: 30;
   text-align: right;
   display: flex;
@@ -90,7 +95,8 @@
   color: var(--accent);
   text-decoration: none;
   font-weight: 600;
-  font-size: calc(clamp(14px, 1.4vw, 18px) * var(--ui-scale)); /* +2px larger */
+  font-size: calc(clamp(14px, 1.4vw, 18px) * var(--ui-scale));
+  /* +2px larger */
 }
 
 .isoRow {
@@ -100,7 +106,7 @@
 }
 
 .bottomInfo .iso {
-  font-size: calc(clamp(11px, 1.0vw, 13px) * var(--ui-scale));
+  font-size: calc(clamp(11px, 1vw, 13px) * var(--ui-scale));
   opacity: 0.9;
 }
 
@@ -136,7 +142,8 @@
 
 /* Ivory dark-mode variant: a tasteful dark shell while keeping Ivory previews light */
 .app.theme-ivory.theme-dark {
-  --app-bg: #1f2937; /* Obsidian (lighter, greyer) */
+  --app-bg: #1f2937;
+  /* Obsidian (lighter, greyer) */
   --app-fg: #f8fafc;
   --app-bg-rgb: 31, 41, 55;
   --app-fg-rgb: 248, 250, 252;
@@ -212,13 +219,14 @@
 
 /* Light-mode variants for each color theme (keeps accent but swaps background/foreground) */
 .app.theme-midnight.theme-light {
-  --app-bg: #9FDCE6; /* Dawn - lighter cerulean */
+  --app-bg: #9fdce6;
+  /* Dawn - lighter cerulean */
   --app-fg: #062331;
   --app-bg-rgb: 159, 220, 230;
   --app-fg-rgb: 6, 35, 49;
   --accent: #0284c7;
-  --accent-contrast: #9FDCE6;
-  --sw-midnight: #9FDCE6;
+  --accent-contrast: #9fdce6;
+  --sw-midnight: #9fdce6;
   --sw-crimson: #ffdede;
   --sw-aqua: #dafaf8;
   --sw-violet: #f2e9ff;
@@ -227,7 +235,8 @@
 }
 
 .app.theme-ivory.theme-light {
-  --app-bg: #ffffff; /* keep Ivory as pure white theme */
+  --app-bg: #ffffff;
+  /* keep Ivory as pure white theme */
   --app-fg: #071020;
   --app-bg-rgb: 255, 255, 255;
   --app-fg-rgb: 7, 16, 32;
@@ -242,7 +251,8 @@
 }
 
 .app.theme-crimson.theme-light {
-  --app-bg: #ffe6e8; /* lighter Blush */
+  --app-bg: #ffe6e8;
+  /* lighter Blush */
   --app-fg: #3a0b0f;
   --app-bg-rgb: 255, 230, 232;
   --app-fg-rgb: 58, 11, 15;
@@ -257,7 +267,8 @@
 }
 
 .app.theme-aqua.theme-light {
-  --app-bg: #c7fff4; /* lighter teal-sea glass */
+  --app-bg: #c7fff4;
+  /* lighter teal-sea glass */
   --app-fg: #013733;
   --app-bg-rgb: 199, 255, 244;
   --app-fg-rgb: 1, 55, 51;
@@ -272,7 +283,8 @@
 }
 
 .app.theme-violet.theme-light {
-  --app-bg: #f0e0ff; /* stronger Lilac */
+  --app-bg: #f0e0ff;
+  /* stronger Lilac */
   --app-fg: #2b0f32;
   --app-bg-rgb: 240, 224, 255;
   --app-fg-rgb: 43, 15, 50;
@@ -287,7 +299,8 @@
 }
 
 .app.theme-amber.theme-light {
-  --app-bg: #ffdf9c; /* stronger Saffron */
+  --app-bg: #ffdf9c;
+  /* stronger Saffron */
   --app-fg: #2a1500;
   --app-bg-rgb: 255, 223, 156;
   --app-fg-rgb: 42, 21, 0;
@@ -326,8 +339,9 @@
 }
 
 .endTitle {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 18px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -335,8 +349,9 @@
 
 .endSub {
   margin-top: 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 13px;
   opacity: 0.8;
 }
@@ -381,8 +396,9 @@
 }
 
 .autoRepeatStatus {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 12px;
   opacity: 0.75;
   letter-spacing: 0.04em;
@@ -411,8 +427,9 @@
   border-radius: 12px;
   border: 1px solid rgba(var(--app-fg-rgb), 0.16);
   background: rgba(var(--app-bg-rgb), 0.55);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 20px;
   line-height: 1.4;
   white-space: pre-wrap;
@@ -430,15 +447,16 @@
   border: 1px solid rgba(var(--app-fg-rgb), 0.12);
   box-sizing: border-box;
   gap: 6px;
-  max-height: 280px; /* confine height so only this list scrolls */
+  max-height: 280px;
+  /* confine height so only this list scrolls */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 
-
 .answerRow {
   display: grid;
-  grid-template-columns: calc(48px * var(--ui-scale)) 1fr; /* fixed index column, flexible value column */
+  grid-template-columns: calc(48px * var(--ui-scale)) 1fr;
+  /* fixed index column, flexible value column */
   align-items: center;
   gap: calc(8px * var(--ui-scale));
   padding: calc(4px * var(--ui-scale)) calc(6px * var(--ui-scale));
@@ -446,16 +464,18 @@
 }
 
 .answerIndex {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   color: rgba(var(--app-fg-rgb), 0.7);
   text-align: right;
   padding-right: 8px;
 }
 
 .answerValue {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 20px;
   line-height: 1;
   padding: 6px 8px;
@@ -499,8 +519,9 @@
   border: 1px solid rgba(var(--app-fg-rgb), 0.16);
   background: rgba(var(--app-bg-rgb), 0.55);
   color: var(--app-fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: calc(22px * var(--ui-scale));
   text-align: center;
   outline: none;
@@ -536,8 +557,9 @@
 }
 
 .sumValue {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: calc(40px * var(--ui-scale));
   line-height: 1;
   color: rgba(var(--app-fg-rgb), 0.96);
@@ -553,8 +575,9 @@
   border: 1px solid rgba(var(--app-fg-rgb), 0.16);
   background: rgba(var(--app-bg-rgb), 0.55);
   color: var(--app-fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 18px;
   line-height: 1.35;
   text-align: center;
@@ -575,8 +598,9 @@
   border-radius: 12px;
   border: 1px solid rgba(var(--app-fg-rgb), 0.16);
   background: rgba(var(--app-fg-rgb), 0.06);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -620,12 +644,25 @@
   overflow-x: hidden;
 }
 
+.advancedOverlayDismiss {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: default;
+}
+
 .advancedPanel {
   position: fixed;
   top: calc(66px * var(--ui-scale));
   right: calc(18px * var(--ui-scale));
+  z-index: 1;
   /* Never exceed viewport width minus margins */
-  width: min(calc(360px * var(--ui-scale)), calc(100vw - (36px * var(--ui-scale))));
+  width: min(calc(360px * var(--ui-scale)),
+      calc(100vw - (36px * var(--ui-scale))));
   box-sizing: border-box;
   max-height: calc(100vh - calc(84px * var(--ui-scale)));
   overflow-y: auto;
@@ -640,8 +677,9 @@
 }
 
 .advancedTitle {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 13px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -654,16 +692,23 @@
   background: rgba(var(--app-fg-rgb), 0.14);
 }
 
+.advancedSetting {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* Make separators between consecutive settings more visible and consistent */
-.advancedSetting + .advancedSetting {
+.advancedSetting+.advancedSetting {
   border-top: 1px solid rgba(var(--app-fg-rgb), 0.12);
   padding-top: 12px;
   margin-top: 8px;
 }
 
 .advancedSectionTitle {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: var(--label-size);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -671,16 +716,18 @@
 }
 
 .hint {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: var(--label-size);
   opacity: 0.65;
   margin-top: -4px;
 }
 
 .title {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: var(--panel-title);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -718,8 +765,9 @@
 }
 
 .label {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: var(--label-size);
   opacity: 0.85;
   white-space: nowrap;
@@ -735,6 +783,53 @@
   text-overflow: clip;
   line-height: 1.25;
   opacity: 0.92;
+}
+
+.input {
+  height: calc(40px * var(--ui-scale));
+  background: transparent;
+  color: var(--app-fg);
+  border: 1px solid rgba(var(--app-fg-rgb), 0.18);
+  border-radius: calc(8px * var(--ui-scale));
+  padding: 0 calc(12px * var(--ui-scale));
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: var(--input-size);
+  outline: none;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.input:disabled {
+  opacity: 0.45;
+}
+
+.range {
+  width: 100%;
+  height: 24px;
+  background: transparent;
+}
+
+.range:disabled {
+  opacity: 0.45;
+}
+
+.settingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--app-fg-rgb), 0.18);
+  background: rgba(var(--app-fg-rgb), 0.04);
 }
 
 .advancedPanel .settingRow {
@@ -759,62 +854,6 @@
   justify-self: end;
 }
 
-.advancedPanel .segmentedLabel {
-  min-width: calc(54px * var(--ui-scale));
-}
-
-.input {
-  height: calc(40px * var(--ui-scale));
-  background: transparent;
-  color: var(--app-fg);
-  border: 1px solid rgba(var(--app-fg-rgb), 0.18);
-  border-radius: calc(8px * var(--ui-scale));
-  padding: 0 calc(12px * var(--ui-scale));
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
-  font-size: var(--input-size);
-  outline: none;
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-}
-
-.input:disabled {
-  opacity: 0.45;
-}
-
-.range {
-  width: 100%;
-  height: 24px;
-  background: transparent;
-}
-
-.range:disabled {
-  opacity: 0.45;
-}
-
-.advancedSetting {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.settingRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.segmented {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 999px;
-  border: 1px solid rgba(var(--app-fg-rgb), 0.18);
-  background: rgba(var(--app-fg-rgb), 0.04);
-}
-
 /* Color grid: 3 columns of selectable boxes */
 .colorGrid {
   display: grid;
@@ -834,12 +873,6 @@
   user-select: none;
 }
 
-.colorOption .segmentedInput {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
 .modeControl {
   display: inline-flex;
   gap: 6px;
@@ -855,12 +888,6 @@
   align-items: flex-start;
 }
 
-.modeVertical .segmentedLabel {
-  min-width: 44px;
-  padding: 6px 8px;
-  font-size: 12px;
-}
-
 .smallOption {
   display: inline-flex;
   align-items: center;
@@ -872,17 +899,17 @@
   color: rgba(var(--app-fg-rgb), 0.85);
 }
 
-.colorOption .colorSwatch {
-  width: calc(64px * var(--ui-scale));
-  height: calc(40px * var(--ui-scale));
-}
-
 .colorSwatch {
   width: calc(52px * var(--ui-scale));
   height: calc(36px * var(--ui-scale));
   border-radius: calc(8px * var(--ui-scale));
   border: 2px solid rgba(var(--app-fg-rgb), 0.12);
-  box-shadow: 0 4px 10px rgba(0,0,0,0.18);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+}
+
+.colorOption .colorSwatch {
+  width: calc(64px * var(--ui-scale));
+  height: calc(40px * var(--ui-scale));
 }
 
 .colorLabel {
@@ -893,27 +920,59 @@
 /* Explicit preview swatch colors per mode so clicking a swatch (selecting theme)
    doesn't change the other swatches' appearance. Scoped under .app to avoid
    matching unrelated elements. */
-.app.theme-dark .sw-preview-midnight { background: var(--preview-midnight-dark); }
-.app.theme-light .sw-preview-midnight { background: var(--preview-midnight-light); }
+.app.theme-dark .sw-preview-midnight {
+  background: var(--preview-midnight-dark);
+}
 
-.app.theme-dark .sw-preview-crimson { background: var(--preview-crimson-dark); }
-.app.theme-light .sw-preview-crimson { background: var(--preview-crimson-light); }
+.app.theme-light .sw-preview-midnight {
+  background: var(--preview-midnight-light);
+}
 
-.app.theme-dark .sw-preview-aqua { background: var(--preview-aqua-dark); }
-.app.theme-light .sw-preview-aqua { background: var(--preview-aqua-light); }
+.app.theme-dark .sw-preview-crimson {
+  background: var(--preview-crimson-dark);
+}
 
-.app.theme-dark .sw-preview-violet { background: var(--preview-violet-dark); }
-.app.theme-light .sw-preview-violet { background: var(--preview-violet-light); }
+.app.theme-light .sw-preview-crimson {
+  background: var(--preview-crimson-light);
+}
 
-.app.theme-dark .sw-preview-amber { background: var(--preview-amber-dark); }
-.app.theme-light .sw-preview-amber { background: var(--preview-amber-light); }
+.app.theme-dark .sw-preview-aqua {
+  background: var(--preview-aqua-dark);
+}
 
-.app.theme-dark .sw-preview-ivory { background: var(--preview-ivory-dark); border: 2px solid rgba(0,0,0,0.06); }
-.app.theme-light .sw-preview-ivory { background: var(--preview-ivory-light); border: 2px solid rgba(0,0,0,0.06); }
+.app.theme-light .sw-preview-aqua {
+  background: var(--preview-aqua-light);
+}
+
+.app.theme-dark .sw-preview-violet {
+  background: var(--preview-violet-dark);
+}
+
+.app.theme-light .sw-preview-violet {
+  background: var(--preview-violet-light);
+}
+
+.app.theme-dark .sw-preview-amber {
+  background: var(--preview-amber-dark);
+}
+
+.app.theme-light .sw-preview-amber {
+  background: var(--preview-amber-light);
+}
+
+.app.theme-dark .sw-preview-ivory {
+  background: var(--preview-ivory-dark);
+  border: 2px solid rgba(0, 0, 0, 0.06);
+}
+
+.app.theme-light .sw-preview-ivory {
+  background: var(--preview-ivory-light);
+  border: 2px solid rgba(0, 0, 0, 0.06);
+}
 
 /* Selected state */
-.colorOption input:checked + .colorSwatch,
-.colorOption input:checked ~ .colorSwatch {
+.colorOption input:checked+.colorSwatch,
+.colorOption input:checked~.colorSwatch {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
@@ -939,8 +998,9 @@
   text-align: center;
   padding: calc(8px * var(--ui-scale)) calc(12px * var(--ui-scale));
   border-radius: 999px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: var(--button-size);
   letter-spacing: 0.02em;
   color: rgba(var(--app-fg-rgb), 0.92);
@@ -948,17 +1008,27 @@
   user-select: none;
 }
 
-.segmentedOption input:checked + .segmentedLabel {
+.advancedPanel .segmentedLabel {
+  min-width: calc(54px * var(--ui-scale));
+}
+
+.modeVertical .segmentedLabel {
+  min-width: 44px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.segmentedOption input:checked+.segmentedLabel {
   background: var(--app-fg);
   color: var(--app-bg);
 }
 
-.segmentedOption input:disabled + .segmentedLabel {
+.segmentedOption input:disabled+.segmentedLabel {
   opacity: 0.45;
   cursor: default;
 }
 
-.segmentedOption input:focus-visible + .segmentedLabel {
+.segmentedOption input:focus-visible+.segmentedLabel {
   outline: 2px solid rgba(var(--app-fg-rgb), 0.28);
   outline-offset: 2px;
 }
@@ -977,8 +1047,9 @@
   background: var(--app-fg);
   color: var(--app-bg);
   border: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: var(--button-size);
   letter-spacing: 0.04em;
   cursor: pointer;
@@ -1003,12 +1074,12 @@
 }
 
 .error {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 13px;
   opacity: 0.85;
 }
-
 
 /* Label displayed just left of the segmented sound control */
 .soundLabel {
@@ -1017,12 +1088,15 @@
   display: inline-flex;
   align-items: center;
   padding-right: calc(var(--space) * 0.12);
-  margin-left: 2px; /* tiny nudge to avoid crammed edges */
+  margin-left: 2px;
+  /* tiny nudge to avoid crammed edges */
 }
+
 .number {
   --len: 1;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   /* Fit long digit strings without overflow (approx monospace glyph width ~0.62em). */
   font-size: min(70vh, calc(92vw / (var(--len) * 0.62)));
   line-height: 1;
@@ -1071,16 +1145,18 @@
 }
 
 .splashTitle {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: var(--home-title);
   letter-spacing: 0.06em;
   margin-bottom: calc(var(--space) * 0.25);
 }
 
 .splashSubtitle {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: var(--home-subtitle);
   opacity: 0.85;
 }
@@ -1102,22 +1178,19 @@
   z-index: 0;
 
   /* Blade-like shutter look (6 segments), kept away from center so digits stay readable. */
-  background:
-    conic-gradient(
-      from -90deg,
-      rgba(var(--app-fg-rgb), 0.20) 0deg 18deg,
+  background: conic-gradient(from -90deg,
+      rgba(var(--app-fg-rgb), 0.2) 0deg 18deg,
       rgba(var(--app-fg-rgb), 0.02) 18deg 60deg,
-      rgba(var(--app-fg-rgb), 0.20) 60deg 78deg,
+      rgba(var(--app-fg-rgb), 0.2) 60deg 78deg,
       rgba(var(--app-fg-rgb), 0.02) 78deg 120deg,
-      rgba(var(--app-fg-rgb), 0.20) 120deg 138deg,
+      rgba(var(--app-fg-rgb), 0.2) 120deg 138deg,
       rgba(var(--app-fg-rgb), 0.02) 138deg 180deg,
-      rgba(var(--app-fg-rgb), 0.20) 180deg 198deg,
+      rgba(var(--app-fg-rgb), 0.2) 180deg 198deg,
       rgba(var(--app-fg-rgb), 0.02) 198deg 240deg,
-      rgba(var(--app-fg-rgb), 0.20) 240deg 258deg,
+      rgba(var(--app-fg-rgb), 0.2) 240deg 258deg,
       rgba(var(--app-fg-rgb), 0.02) 258deg 300deg,
-      rgba(var(--app-fg-rgb), 0.20) 300deg 318deg,
-      rgba(var(--app-fg-rgb), 0.02) 318deg 360deg
-    );
+      rgba(var(--app-fg-rgb), 0.2) 300deg 318deg,
+      rgba(var(--app-fg-rgb), 0.02) 318deg 360deg);
 
   -webkit-mask-image: radial-gradient(circle, transparent 0 33%, #000 34% 100%);
   mask-image: radial-gradient(circle, transparent 0 33%, #000 34% 100%);
@@ -1140,14 +1213,17 @@
     transform: translate(-50%, -50%) rotate(0deg) scale(1);
     opacity: 0.45;
   }
+
   18% {
     transform: translate(-50%, -50%) rotate(90deg) scale(0.94);
     opacity: 0.78;
   }
+
   34% {
     transform: translate(-50%, -50%) rotate(140deg) scale(1);
-    opacity: 0.50;
+    opacity: 0.5;
   }
+
   100% {
     transform: translate(-50%, -50%) rotate(360deg) scale(1);
     opacity: 0.45;
@@ -1159,14 +1235,17 @@
     transform: translate(-50%, -50%) rotate(0deg) scale(1);
     opacity: 0.45;
   }
+
   18% {
     transform: translate(-50%, -50%) rotate(90deg) scale(0.94);
     opacity: 0.78;
   }
+
   34% {
     transform: translate(-50%, -50%) rotate(140deg) scale(1);
-    opacity: 0.50;
+    opacity: 0.5;
   }
+
   100% {
     transform: translate(-50%, -50%) rotate(360deg) scale(1);
     opacity: 0.45;
@@ -1214,6 +1293,7 @@
   from {
     stroke-dashoffset: 0;
   }
+
   to {
     stroke-dashoffset: 276.46;
   }
@@ -1223,11 +1303,11 @@
   from {
     stroke-dashoffset: 0;
   }
+
   to {
     stroke-dashoffset: 276.46;
   }
 }
-
 
 .signedNumber {
   position: relative;
