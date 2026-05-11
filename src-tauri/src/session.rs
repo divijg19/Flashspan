@@ -855,7 +855,7 @@ mod tests {
                             Ok(mag) => {
                                 let max_exclusive =
                                     if digits <= 1 { 10 } else { 10u64.pow(digits) };
-                                let next = ((mag % (max_exclusive - 1)) + 1) as u64;
+                                let next = (mag % (max_exclusive - 1)) + 1;
                                 next.to_string()
                             }
                             Err(_) => "1".to_string(),
@@ -909,7 +909,7 @@ mod tests {
             (cfg.number_duration_ms as f64 / 1000.0 * 10.0).round() / 10.0
         );
         assert_eq!(cfg.total_numbers, 1);
-        assert_eq!(eff.allow_negative_numbers, true);
+        assert!(eff.allow_negative_numbers);
     }
 
     #[test]
@@ -919,14 +919,14 @@ mod tests {
         for _ in 0..50 {
             let s = random_fixed_digits_no_leading_zero(&mut rng, 1);
             let v: u32 = s.parse().unwrap();
-            assert!(v >= 1 && v <= 9);
+            assert!((1..=9).contains(&v));
         }
 
         // digits=3 should be in [100,999]
         for _ in 0..50 {
             let s = random_fixed_digits_no_leading_zero(&mut rng, 3);
             let v: u64 = s.parse().unwrap();
-            assert!(v >= 100 && v <= 999);
+            assert!((100..=999).contains(&v));
         }
     }
 
@@ -945,7 +945,7 @@ mod tests {
         // For digits=1 with max_inclusive >=1 -> Some within range
         let some = random_fixed_digits_no_leading_zero_capped(&mut rng, 1, 5).unwrap();
         let v: u64 = some.parse().unwrap();
-        assert!(v >= 1 && v <= 5);
+        assert!((1..=5).contains(&v));
     }
 
     #[test]
@@ -1128,7 +1128,7 @@ mod tests {
             let (s, val) = random_number_with_constraints(&mut rng, 2, false, i, running_sum);
             assert!(!s.starts_with('-'));
             assert!(val >= 0);
-            running_sum = running_sum + val;
+            running_sum += val;
         }
     }
 

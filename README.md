@@ -53,6 +53,18 @@ openSUSE:
 sudo zypper install ./Ascent.Flash-Linux-x86_64.rpm
 ```
 
+### Web Bundle (WASM)
+
+A browser-compatible build is also available in releases as `Ascent.Flash-web.tar.gz`. Extract and serve it with any HTTP server:
+
+```bash
+tar -xzf Ascent.Flash-web.tar.gz
+cd Ascent.Flash-web
+python3 -m http.server 8000  # or any web server
+```
+
+Then visit `http://localhost:8000` in your browser.
+
 ## Development
 
 ```bash
@@ -70,3 +82,27 @@ Runs the app in development mode.
 ### `bun run build`
 
 Builds the frontend for production to the `dist` folder.
+
+### `bun run build:wasm`
+
+Builds only the WASM bridge (Rust backend compiled to WebAssembly).
+
+### `bun run build:web`
+
+Builds WASM bridge and the complete web bundle for browser deployment.
+
+### Testing
+
+Run backend tests:
+
+```bash
+cd src-tauri
+cargo test --locked -p Flashspan
+```
+
+Run linter:
+
+```bash
+cd src-tauri
+cargo clippy --locked --all-targets -- -D warnings
+```
