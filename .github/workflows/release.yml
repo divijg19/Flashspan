@@ -80,7 +80,7 @@ jobs:
             curl \
             xz-utils \
             file
-            
+
       # --------------------
       # Windows dependencies
       # --------------------
@@ -144,10 +144,73 @@ jobs:
             release/Ascent.Flash-*.exe
             release/Ascent.Flash-*.dmg
 
+  build-web:
+    name: Build Web Bundle (WASM + frontend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Bun (frontend runtime)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+
+      - name: Cache Bun runtime
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.bun
+            .bun
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install frontend deps
+        run: bun install --frozen-lockfile
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Build web (WASM + Vite)
+        run: bun run build:web
+
+      - name: Package web bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          tar -C dist -czf release/Ascent.Flash-web.tar.gz .
+
+      - name: Upload web bundle artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: web-bundle
+          path: |
+            release/Ascent.Flash-web.tar.gz
+
   publish:
     name: Create Release and Attach Artifacts
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, build-web]
     if: startsWith(github.ref, 'refs/tags/')
 
     steps:
@@ -164,3 +227,5 @@ jobs:
             **/Ascent.Flash-Linux_x86_64.deb
             **/Ascent.Flash-macOS.dmg
             **/Ascent.Flash-Windows_setup.exe
+            **/Ascent.Flash-web.tar.gz
+
