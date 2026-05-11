@@ -1,5 +1,10 @@
-use rand::{Rng, RngExt};
-use serde::Deserialize;
+use crate::core::types::{
+    AutoRepeatPlan, ClearScreen, SessionComplete, SessionConfig, SessionConfigEffective,
+    SessionPlan, SessionStep, ShowNumber,
+};
+use crate::core::{
+    engine::build_session_plan, generate::random_number_with_constraints, validate::validate_config,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     collections::VecDeque,
@@ -21,6 +26,7 @@ fn now_epoch_ms() -> u64 {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 struct SessionTimingOptions {
     /// When set, runs a countdown with 3 ticks (3,2,1) spaced by this step.
     /// When None, skips the countdown entirely.
@@ -69,128 +75,6 @@ impl SessionEmitter for TauriEmitter {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ClearScreen {
-    pub session_id: u64,
-    /// When set, indicates which flashed number index is being cleared.
-    /// When None, represents a global clear (e.g. session start/stop/complete).
-    pub index: Option<u32>,
-    pub emitted_at_ms: u64,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SessionComplete {
-    pub session_id: u64,
-    pub numbers: Vec<i64>,
-    pub sum: i64,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ShowNumber {
-    pub session_id: u64,
-    pub index: u32,
-    pub total: u32,
-    pub value: i64,
-    pub running_sum: i64,
-    pub emitted_at_ms: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct AutoRepeatPlan {
-    pub remaining: u32,
-    pub delay_ms: u64,
-    pub config: SessionConfig,
-    pub awaiting_validation_session_id: Option<u64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SessionConfigInput {
-    pub digits_per_number: i64,
-    pub number_duration_s: f64,
-    pub delay_between_numbers_s: f64,
-    pub total_numbers: i64,
-
-    #[serde(default)]
-    pub allow_negative_numbers: bool,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SessionConfigEffective {
-    pub digits_per_number: u32,
-    pub number_duration_s: f64,
-    pub delay_between_numbers_s: f64,
-    pub total_numbers: u32,
-    pub allow_negative_numbers: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionConfig {
-    pub digits_per_number: u32,
-    pub number_duration_ms: u64,
-    pub delay_between_numbers_ms: u64,
-    pub total_numbers: u32,
-    pub allow_negative_numbers: bool,
-}
-
-fn round_1_decimal(v: f64) -> f64 {
-    (v * 10.0).round() / 10.0
-}
-
-fn clamp_f64(v: f64, min: f64, max: f64) -> f64 {
-    if v.is_nan() {
-        return min;
-    }
-    if v.is_infinite() {
-        return if v.is_sign_positive() { max } else { min };
-    }
-    v.max(min).min(max)
-}
-
-fn clamp_i64(v: i64, min: i64, max: i64) -> i64 {
-    v.max(min).min(max)
-}
-
-fn seconds_to_ms_clamped(seconds: f64, min_ms: u64, max_ms: u64) -> u64 {
-    let ms = (seconds * 1000.0).round();
-    if !ms.is_finite() {
-        return min_ms;
-    }
-    let ms_u64 = if ms <= 0.0 { 0 } else { ms as u64 };
-    ms_u64.max(min_ms).min(max_ms)
-}
-
-pub fn normalize_session_config(
-    input: SessionConfigInput,
-) -> (SessionConfig, SessionConfigEffective) {
-    let digits = clamp_i64(input.digits_per_number, 1, 18) as u32;
-    let total_numbers = clamp_i64(input.total_numbers, 1, 10_000) as u32;
-
-    // UI typically uses 0.1–5s, but we allow up to 60s defensively.
-    let duration_s = clamp_f64(input.number_duration_s, 0.1, 60.0);
-    let delay_s = clamp_f64(input.delay_between_numbers_s, 0.0, 60.0);
-
-    let number_duration_ms = seconds_to_ms_clamped(duration_s, 1, 60_000);
-    let delay_between_numbers_ms = seconds_to_ms_clamped(delay_s, 0, 60_000);
-
-    let config = SessionConfig {
-        digits_per_number: digits,
-        number_duration_ms,
-        delay_between_numbers_ms,
-        total_numbers,
-        allow_negative_numbers: input.allow_negative_numbers,
-    };
-
-    let effective = SessionConfigEffective {
-        digits_per_number: config.digits_per_number,
-        number_duration_s: round_1_decimal(config.number_duration_ms as f64 / 1000.0),
-        delay_between_numbers_s: round_1_decimal(config.delay_between_numbers_ms as f64 / 1000.0),
-        total_numbers: config.total_numbers,
-        allow_negative_numbers: config.allow_negative_numbers,
-    };
-
-    (config, effective)
-}
-
 #[derive(Debug, Clone)]
 pub enum SessionState {
     Idle,
@@ -231,12 +115,12 @@ impl SessionManager {
 
     fn cleanup_finished_worker(&self) {
         let mut worker = self.worker.lock().expect("worker lock poisoned");
-        if let Some(handle) = worker.as_ref() {
-            if handle.is_finished() {
-                let handle = worker.take().expect("just checked Some");
-                let _ = handle.join();
-                *self.stop.lock().expect("stop lock poisoned") = None;
-            }
+        if let Some(handle) = worker.as_ref()
+            && handle.is_finished()
+        {
+            let handle = worker.take().expect("just checked Some");
+            let _ = handle.join();
+            *self.stop.lock().expect("stop lock poisoned") = None;
         }
     }
 
@@ -247,10 +131,10 @@ impl SessionManager {
 
         {
             let worker = self.worker.lock().expect("worker lock poisoned");
-            if let Some(handle) = worker.as_ref() {
-                if !handle.is_finished() {
-                    return Err("session already running".to_string());
-                }
+            if let Some(handle) = worker.as_ref()
+                && !handle.is_finished()
+            {
+                return Err("session already running".to_string());
             }
         }
 
@@ -376,36 +260,6 @@ impl SessionManager {
     }
 }
 
-fn validate_config(config: &SessionConfig) -> Result<(), String> {
-    if config.digits_per_number == 0 || config.number_duration_ms == 0 || config.total_numbers == 0
-    {
-        return Err(
-            "digits_per_number, number_duration_ms, and total_numbers must be > 0".to_string(),
-        );
-    }
-
-    // Keep generation simple and safe: 10^digits must fit in u64.
-    if config.digits_per_number > 18 {
-        return Err("digits_per_number must be <= 18".to_string());
-    }
-
-    // Defensive caps: UI enforces ranges, but IPC inputs must be treated as untrusted.
-    // These limits are generous enough for real use while preventing accidental runaway sessions.
-    if config.total_numbers > 10_000 {
-        return Err("total_numbers must be <= 10000".to_string());
-    }
-
-    if config.number_duration_ms > 60_000 {
-        return Err("number_duration_ms must be <= 60000".to_string());
-    }
-
-    if config.delay_between_numbers_ms > 60_000 {
-        return Err("delay_between_numbers_ms must be <= 60000".to_string());
-    }
-
-    Ok(())
-}
-
 fn run_session_loop(
     app: AppHandle,
     config: SessionConfig,
@@ -416,15 +270,27 @@ fn run_session_loop(
     auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
 ) {
     let emitter = TauriEmitter { app };
-    run_session_loop_inner(
+
+    // Convert SessionConfig to SessionConfigEffective for plan generation.
+    let config_effective = SessionConfigEffective {
+        digits_per_number: config.digits_per_number,
+        number_duration_s: config.number_duration_ms as f64 / 1000.0,
+        delay_between_numbers_s: config.delay_between_numbers_ms as f64 / 1000.0,
+        total_numbers: config.total_numbers,
+        allow_negative_numbers: config.allow_negative_numbers,
+    };
+
+    // Generate deterministic session plan.
+    let plan = build_session_plan(session_id, config, config_effective, None);
+
+    // Execute plan using the new plan-based executor.
+    run_session_plan(
         &emitter,
-        config,
+        plan,
         state,
         stop,
-        session_id,
         recent_results,
         auto_repeat_plan,
-        SessionTimingOptions::default(),
         || {
             // Play beep for each number flash (non-blocking)
             let _ = crate::audio::play_kind("beep");
@@ -432,6 +298,12 @@ fn run_session_loop(
     );
 }
 
+#[allow(dead_code)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::collapsible_if,
+    clippy::unnecessary_cast
+)]
 fn run_session_loop_inner<E: SessionEmitter>(
     emitter: &E,
     config: SessionConfig,
@@ -714,88 +586,6 @@ fn run_session_loop_inner<E: SessionEmitter>(
     *st = SessionState::Complete;
 }
 
-fn random_fixed_digits_no_leading_zero(rng: &mut impl Rng, digits: u32) -> String {
-    if digits <= 1 {
-        // No leading zero => 0 is excluded.
-        return rng.random_range(1u32..=9u32).to_string();
-    }
-
-    let min = 10u64.pow(digits - 1);
-    let max_exclusive = 10u64.pow(digits);
-    rng.random_range(min..max_exclusive).to_string()
-}
-
-fn random_fixed_digits_no_leading_zero_capped(
-    rng: &mut impl Rng,
-    digits: u32,
-    max_inclusive: u64,
-) -> Option<String> {
-    if digits <= 1 {
-        if max_inclusive < 1 {
-            return None;
-        }
-        let max = max_inclusive.min(9);
-        return Some(rng.random_range(1u64..=max).to_string());
-    }
-
-    let min = 10u64.pow(digits - 1);
-    if max_inclusive < min {
-        return None;
-    }
-
-    let max_exclusive = 10u64.pow(digits);
-    let cap_exclusive = (max_inclusive.saturating_add(1)).min(max_exclusive);
-    Some(rng.random_range(min..cap_exclusive).to_string())
-}
-
-fn random_number_with_constraints(
-    rng: &mut impl Rng,
-    digits: u32,
-    allow_negative_numbers: bool,
-    index: u32,
-    running_sum: i128,
-) -> (String, i128) {
-    // Requirement: first number is never negative.
-    let allow_negative_here = allow_negative_numbers && index > 0;
-
-    // Cap for negative magnitudes: cannot exceed current running sum, and cannot exceed
-    // the maximum representable magnitude for the requested digit count.
-    let max_for_digits = if digits <= 1 {
-        9u64
-    } else {
-        10u64.pow(digits).saturating_sub(1)
-    };
-
-    let sum_cap_u64 = if running_sum <= 0 {
-        0u64
-    } else {
-        (running_sum.min(max_for_digits as i128)) as u64
-    };
-
-    let can_choose_negative = allow_negative_here && sum_cap_u64 > 0;
-    let try_negative = can_choose_negative && rng.random_bool(0.5);
-
-    if try_negative {
-        if let Some(magnitude) =
-            random_fixed_digits_no_leading_zero_capped(rng, digits, sum_cap_u64)
-        {
-            let magnitude_value: i128 = magnitude
-                .parse::<i128>()
-                .expect("generated magnitude should parse as integer");
-            // Enforce non-negative running sum after applying this value.
-            if running_sum - magnitude_value >= 0 {
-                return (format!("-{magnitude}"), -magnitude_value);
-            }
-        }
-    }
-
-    let magnitude = random_fixed_digits_no_leading_zero(rng, digits);
-    let magnitude_value: i128 = magnitude
-        .parse::<i128>()
-        .expect("generated magnitude should parse as integer");
-    (magnitude, magnitude_value)
-}
-
 fn sleep_until_interruptible(deadline: Instant, stop: &AtomicBool) {
     while Instant::now() < deadline {
         if stop.load(Ordering::SeqCst) {
@@ -809,9 +599,157 @@ fn sleep_until_interruptible(deadline: Instant, stop: &AtomicBool) {
     }
 }
 
+/// Execute a deterministic session plan produced by the core.
+/// This function converts the immutable plan steps into runtime events and handles scheduling.
+fn run_session_plan<E: SessionEmitter>(
+    emitter: &E,
+    plan: SessionPlan,
+    state: Arc<Mutex<SessionState>>,
+    stop: Arc<AtomicBool>,
+    recent_results: Arc<Mutex<VecDeque<SessionComplete>>>,
+    auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
+    beep: impl Fn(),
+) {
+    const FIRST_FLASH_GRACE: Duration = Duration::from_millis(100);
+
+    // Iterate through steps and execute them with relative delays
+    for (step_idx, step) in plan.steps.iter().enumerate() {
+        // Check stop signal before processing each step
+        if stop.load(Ordering::SeqCst) {
+            emitter.clear_screen(ClearScreen {
+                session_id: plan.session_id,
+                index: None,
+                emitted_at_ms: now_epoch_ms(),
+            });
+            let mut st = state.lock().expect("state lock poisoned");
+            *st = SessionState::Idle;
+            return;
+        }
+
+        match step {
+            SessionStep::CountdownTick {
+                value,
+                delay_ms_before_next,
+            } => {
+                emitter.countdown_tick(value.clone());
+                let delay = Duration::from_millis(*delay_ms_before_next);
+                sleep_until_interruptible(Instant::now() + delay, &stop);
+            }
+
+            SessionStep::ShowNumber {
+                session_id,
+                index,
+                total,
+                value,
+                running_sum,
+                delay_ms_before_next,
+            } => {
+                // Determine if this is the first flash to apply grace period.
+                // First flash comes after initial clear + 3 countdown ticks (step indices 0-3)
+                let is_first_flash = step_idx > 3;
+                let grace = if is_first_flash {
+                    FIRST_FLASH_GRACE
+                } else {
+                    Duration::from_millis(0)
+                };
+
+                emitter.show_number(ShowNumber {
+                    session_id: *session_id,
+                    index: *index,
+                    total: *total,
+                    value: *value,
+                    running_sum: *running_sum,
+                    emitted_at_ms: now_epoch_ms(),
+                });
+                beep();
+
+                let delay = Duration::from_millis(*delay_ms_before_next) + grace;
+                sleep_until_interruptible(Instant::now() + delay, &stop);
+
+                // Update state to reflect which number is showing
+                let mut st = state.lock().expect("state lock poisoned");
+                *st = SessionState::ShowingNumbers {
+                    current: *index,
+                    total: *total,
+                };
+            }
+
+            SessionStep::ClearScreen {
+                session_id,
+                index,
+                delay_ms_before_next,
+            } => {
+                emitter.clear_screen(ClearScreen {
+                    session_id: *session_id,
+                    index: *index,
+                    emitted_at_ms: now_epoch_ms(),
+                });
+
+                let delay = Duration::from_millis(*delay_ms_before_next);
+                if delay > Duration::from_millis(0) {
+                    sleep_until_interruptible(Instant::now() + delay, &stop);
+                }
+            }
+
+            SessionStep::Complete {
+                session_id,
+                numbers,
+                sum,
+            } => {
+                let result = SessionComplete {
+                    session_id: *session_id,
+                    numbers: numbers.clone(),
+                    sum: *sum,
+                };
+
+                {
+                    let mut guard = recent_results.lock().expect("recent_results lock poisoned");
+                    guard.push_back(result.clone());
+                    while guard.len() > SessionManager::MAX_RECENT_RESULTS {
+                        guard.pop_front();
+                    }
+                }
+                emitter.session_complete(result);
+
+                // Arm auto-repeat if configured
+                {
+                    let mut plan_guard = auto_repeat_plan
+                        .lock()
+                        .expect("auto_repeat_plan lock poisoned");
+                    if let Some(ar_plan) = plan_guard.as_mut()
+                        && ar_plan.remaining > 0
+                    {
+                        ar_plan.awaiting_validation_session_id = Some(*session_id);
+                    }
+                }
+            }
+        }
+
+        // Check for stop signal after each step
+        if stop.load(Ordering::SeqCst) {
+            emitter.clear_screen(ClearScreen {
+                session_id: plan.session_id,
+                index: None,
+                emitted_at_ms: now_epoch_ms(),
+            });
+            let mut st = state.lock().expect("state lock poisoned");
+            *st = SessionState::Idle;
+            return;
+        }
+    }
+
+    // Final state transition
+    let mut st = state.lock().expect("state lock poisoned");
+    *st = SessionState::Complete;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::generate::{
+        random_fixed_digits_no_leading_zero, random_fixed_digits_no_leading_zero_capped,
+    };
+    use crate::core::{types::SessionConfigInput, validate::normalize_session_config};
     use rand::rng;
     use std::sync::{Arc, Mutex};
 
@@ -1168,29 +1106,6 @@ mod tests {
             SessionState::Idle => {}
             _ => panic!("expected Idle state"),
         }
-    }
-
-    #[test]
-    fn clamp_and_round_helpers() {
-        assert_eq!(clamp_f64(f64::NAN, 1.0, 10.0), 1.0);
-        assert_eq!(clamp_f64(f64::INFINITY, 1.0, 10.0), 10.0);
-        assert_eq!(clamp_f64(-5.0, 1.0, 10.0), 1.0);
-        assert_eq!(clamp_f64(5.5, 1.0, 10.0), 5.5);
-
-        assert_eq!(clamp_i64(-5, 0, 10), 0);
-        assert_eq!(clamp_i64(15, 0, 10), 10);
-        assert_eq!(clamp_i64(5, 0, 10), 5);
-
-        assert_eq!(round_1_decimal(1.24), 1.2);
-        assert_eq!(round_1_decimal(1.25), 1.3);
-    }
-
-    #[test]
-    fn seconds_to_ms_clamped_behavior() {
-        assert_eq!(seconds_to_ms_clamped(f64::NAN, 10, 60000), 10);
-        assert_eq!(seconds_to_ms_clamped(-1.0, 10, 60000), 10);
-        assert_eq!(seconds_to_ms_clamped(0.005, 1, 60000), 5);
-        assert_eq!(seconds_to_ms_clamped(61.0, 1, 60000), 60000);
     }
 
     #[test]

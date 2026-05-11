@@ -1,4 +1,3 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
 	createEffect,
 	createSignal,
@@ -10,69 +9,50 @@ import {
 import "./App.css";
 import {
 	type AutoRepeatWaitingPayload,
-	acknowledgeComplete,
 	type ColorScheme,
-	cancelAutoRepeat,
-	getAppSettings,
-	getSoundEnabled as getSoundEnabledCmd,
-	onAppSettingsChanged,
-	onAutoRepeatTick,
-	onAutoRepeatWaiting,
-	onClearScreen,
-	onCountdownTick,
-	onSessionComplete,
-	onShowNumber,
 	type Phase,
-	ping,
+	runtime,
 	type SessionConfigInput,
 	type StartSessionResponse,
 	type SubmitAnswerResponse,
-	setColorScheme as setColorSchemeCmd,
-	setSoundEnabled as setSoundEnabledCmd,
-	setThemeMode as setThemeModeCmd,
-	startSession,
-	stopSession,
-	submitAnswerText,
 	type ThemeMode,
-} from "./tauri";
-
-if (import.meta.env.DEV) {
-	ping()
-		.then(console.log)
-		.catch(() => {});
-}
+} from "./runtime";
 
 function isEscapeKey(event: KeyboardEvent): boolean {
 	return event.key === "Escape";
 }
 
 async function setFullscreen(enabled: boolean): Promise<void> {
-	const win = getCurrentWindow();
+	if (typeof document === "undefined") {
+		return;
+	}
+
 	try {
-		const isFullscreen = await win.isFullscreen();
-		if (isFullscreen !== enabled) {
-			await win.setFullscreen(enabled);
+		if (enabled) {
+			if (!document.fullscreenElement) {
+				await document.documentElement.requestFullscreen();
+			}
+		} else if (document.fullscreenElement) {
+			await document.exitFullscreen();
 		}
 	} catch {
-		// Ignore: some platforms/window managers may refuse fullscreen.
+		// Ignore: some platforms or browser policies may refuse fullscreen.
 	}
 }
 
 async function forceFullscreenBeforeStart(): Promise<void> {
-	const win = getCurrentWindow();
+	if (typeof document === "undefined") {
+		return;
+	}
 
 	try {
-		await win.setFullscreen(true);
+		await setFullscreen(true);
 	} catch {
 		// Fall through and verify below.
 	}
 
 	for (let i = 0; i < 30; i += 1) {
-		try {
-			if (await win.isFullscreen()) return;
-		} catch {
-			break;
-		}
+		if (document.fullscreenElement) return;
 		await new Promise((r) => setTimeout(r, 25));
 	}
 
@@ -293,7 +273,7 @@ export default function App() {
 		}
 
 		try {
-			const resp = await submitAnswerText(sid, typedAnswer());
+			const resp = await runtime.submitAnswerText(sid, typedAnswer());
 			setHasValidated(true);
 			applySubmitAnswerResponse(resp);
 		} catch (e) {
@@ -305,12 +285,19 @@ export default function App() {
 	onMount(async () => {
 		let lastFirstFlashSessionId: number | null = null;
 
+		if (import.meta.env.DEV) {
+			void runtime
+				.ping()
+				.then(console.log)
+				.catch(() => {});
+		}
+
 		try {
-			const settings = await getAppSettings();
+			const settings = await runtime.getAppSettings();
 			setColorScheme(settings.color_scheme);
 			setThemeMode(settings.theme_mode ?? "dark");
 			try {
-				const s = await getSoundEnabledCmd();
+				const s = await runtime.getSoundEnabled();
 				setSoundEnabled(s);
 			} catch {
 				// ignore: best-effort to sync backend sound flag
@@ -319,7 +306,7 @@ export default function App() {
 			// Best-effort.
 		}
 
-		const unlistenCountdown = await onCountdownTick((value) => {
+		const unlistenCountdown = await runtime.onCountdownTick((value) => {
 			resetForIncomingSessionIfComplete();
 			setPhase("countdown");
 			setDisplayText(value);
@@ -330,7 +317,7 @@ export default function App() {
 			if (value === "3") void setFullscreen(true);
 		});
 
-		const unlistenFlash = await onShowNumber((payload) => {
+		const unlistenFlash = await runtime.onShowNumber((payload) => {
 			resetForIncomingSessionIfComplete();
 			setSessionId(payload.session_id);
 			setPhase("flashing");
@@ -353,7 +340,7 @@ export default function App() {
 			}
 		});
 
-		const unlistenClear = await onClearScreen((payload) => {
+		const unlistenClear = await runtime.onClearScreen((payload) => {
 			const activeSessionId = sessionId();
 			if (activeSessionId == null) return;
 			if (payload.session_id !== activeSessionId) return;
@@ -373,25 +360,27 @@ export default function App() {
 			}
 		});
 
-		const unlistenAutoRepeatWaiting = await onAutoRepeatWaiting((payload) => {
-			if (!autoRepeatEnabled()) return;
-			applyAutoRepeatWaiting(payload);
-		});
+		const unlistenAutoRepeatWaiting = await runtime.onAutoRepeatWaiting(
+			(payload) => {
+				if (!autoRepeatEnabled()) return;
+				applyAutoRepeatWaiting(payload);
+			},
+		);
 
-		const unlistenAutoRepeatTick = await onAutoRepeatTick((payload) => {
+		const unlistenAutoRepeatTick = await runtime.onAutoRepeatTick((payload) => {
 			if (!autoRepeatEnabled()) return;
 			setAutoRepeatRemaining(payload.remaining);
 			setAutoRepeatSecondsLeft(payload.seconds_left);
 		});
 
-		const unlistenSettings = await onAppSettingsChanged((payload) => {
+		const unlistenSettings = await runtime.onAppSettingsChanged((payload) => {
 			setColorScheme(payload.color_scheme);
 			// payload.theme_mode may be 'dark' | 'light'
 			// ensure UI reflects server-side change
 			setThemeMode(payload.theme_mode === "light" ? "light" : "dark");
 		});
 
-		const unlistenComplete = await onSessionComplete((payload) => {
+		const unlistenComplete = await runtime.onSessionComplete((payload) => {
 			setPhase("complete");
 			setDisplayText("");
 			setCurrentShown(null);
@@ -483,7 +472,7 @@ export default function App() {
 			);
 
 			await forceFullscreenBeforeStart();
-			const resp = await startSession(
+			const resp = await runtime.startSession(
 				config,
 				autoRepeatEnabled()
 					? {
@@ -503,7 +492,7 @@ export default function App() {
 
 	const stop = async () => {
 		try {
-			await stopSession();
+			await runtime.stopSession();
 		} finally {
 			setPhase("idle");
 			setDisplayText("");
@@ -593,7 +582,7 @@ export default function App() {
 															setAutoRepeatEnabled(false);
 															setAutoRepeatRemaining(0);
 															setAutoRepeatSecondsLeft(null);
-															void cancelAutoRepeat();
+															void runtime.cancelAutoRepeat();
 														}}
 													/>
 													<span class="segmentedLabel">Off</span>
@@ -736,7 +725,7 @@ export default function App() {
 															checked={themeMode() === "dark"}
 															onInput={() => {
 																setThemeMode("dark");
-																void setThemeModeCmd("dark");
+																void runtime.setThemeMode("dark");
 															}}
 														/>
 														<span class="segmentedLabel">Dark</span>
@@ -751,7 +740,7 @@ export default function App() {
 															checked={themeMode() === "light"}
 															onInput={() => {
 																setThemeMode("light");
-																void setThemeModeCmd("light");
+																void runtime.setThemeMode("light");
 															}}
 														/>
 														<span class="segmentedLabel">Light</span>
@@ -805,7 +794,7 @@ export default function App() {
 																	checked={colorScheme() === value}
 																	onInput={() => {
 																		setColorScheme(value);
-																		void setColorSchemeCmd(value);
+																		void runtime.setColorScheme(value);
 																	}}
 																/>
 																<span
@@ -1043,7 +1032,7 @@ export default function App() {
 											checked={soundEnabled()}
 											onInput={async () => {
 												setSoundEnabled(true);
-												await setSoundEnabledCmd(true);
+												await runtime.setSoundEnabled(true);
 											}}
 										/>
 										<span class="segmentedLabel">🔊 On</span>
@@ -1057,7 +1046,7 @@ export default function App() {
 											checked={!soundEnabled()}
 											onInput={async () => {
 												setSoundEnabled(false);
-												await setSoundEnabledCmd(false);
+												await runtime.setSoundEnabled(false);
 											}}
 										/>
 										<span class="segmentedLabel">Off</span>
@@ -1098,7 +1087,8 @@ export default function App() {
 													const sid = sessionId();
 													if (sid != null) {
 														try {
-															const waiting = await acknowledgeComplete(sid);
+															const waiting =
+																await runtime.acknowledgeComplete(sid);
 															if (waiting) applyAutoRepeatWaiting(waiting);
 														} catch {
 															// Best-effort.

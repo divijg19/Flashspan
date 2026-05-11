@@ -4,18 +4,21 @@ version = 4
 
 [[package]]
 name = "Flashspan"
-version = "1.1.0"
+version = "1.3.0"
 dependencies = [
+ "getrandom 0.4.2",
  "image",
  "log",
  "once_cell",
  "rand 0.10.1",
  "rodio",
  "serde",
+ "serde-wasm-bindgen",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-log",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1279,11 +1282,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de51e6874e94e7bf76d726fc5d13ba782deca734ff60d5bb2fb2607c7406555"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.1",
  "wasip2",
  "wasip3",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3168,6 +3173,17 @@ dependencies = [
  "serde",
  "serde_core",
  "typeid",
+]
+
+[[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
 ]
 
 [[package]]

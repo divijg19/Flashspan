@@ -16,6 +16,11 @@ fn write_rgba_png(src_path: &Path, dest_path: &Path, size: u32) {
 }
 
 fn main() {
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    if target_arch == "wasm32" {
+        return;
+    }
+
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
 
     // Prefer the favicon (best fit for app icons), fall back to the project assets and src-tauri icons.

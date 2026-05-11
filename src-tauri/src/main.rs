@@ -1,12 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod core;
 mod audio;
 mod session;
 
 use serde::Deserialize;
+use crate::core::{
+    types::{AutoRepeatPlan, SessionConfigEffective, SessionConfigInput},
+    validate::normalize_session_config,
+};
 use session::{
-    AutoRepeatPlan, SessionConfigEffective, SessionConfigInput, SessionManager,
-    normalize_session_config,
+    SessionManager,
 };
 use std::sync::{Arc, Mutex};
 use std::thread;
