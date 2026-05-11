@@ -34,7 +34,7 @@ pub struct AutoRepeatPlan {
     pub awaiting_validation_session_id: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionConfigInput {
     pub digits_per_number: i64,
     pub number_duration_s: f64,

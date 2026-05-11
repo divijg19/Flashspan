@@ -14,7 +14,7 @@ Object.values(fallback).forEach((a) => {
 export async function playSound(kind: "beep" | "applause" | "buzzer") {
 	try {
 		await invoke("play_sound_kind", { kind });
-	} catch (e) {
+	} catch (_e) {
 		// native playback failed or not available — fallback to HTML Audio
 		const a = fallback[kind];
 		try {

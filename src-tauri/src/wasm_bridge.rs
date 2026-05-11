@@ -42,3 +42,38 @@ pub fn build_session_plan_wasm(
     serde_wasm_bindgen::to_value(&plan)
         .map_err(|err| js_error(format!("failed to encode SessionPlan: {err}")))
 }
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod tests {
+    use super::*;
+    use crate::core::types::{SessionConfigInput, SessionPlan};
+    use wasm_bindgen_test::*;
+
+    #[wasm_bindgen_test]
+    fn ping_reports_wasm_bridge() {
+        assert_eq!(ping(), "pong (wasm)");
+    }
+
+    #[wasm_bindgen_test]
+    fn build_session_plan_wasm_round_trips() {
+        let input = SessionConfigInput {
+            digits_per_number: 2,
+            number_duration_s: 0.5,
+            delay_between_numbers_s: 0.2,
+            total_numbers: 4,
+            allow_negative_numbers: true,
+        };
+
+        let input_value = serde_wasm_bindgen::to_value(&input).expect("encode input");
+        let plan_value =
+            build_session_plan_wasm(42, input_value, Some(1234)).expect("plan should serialize");
+        let plan: SessionPlan = serde_wasm_bindgen::from_value(plan_value).expect("decode plan");
+
+        assert_eq!(plan.session_id, 42);
+        assert_eq!(plan.numbers_generated.len(), 4);
+        assert_eq!(
+            plan.expected_sum,
+            plan.numbers_generated.iter().sum::<i64>()
+        );
+    }
+}
