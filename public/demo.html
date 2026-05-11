@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Flashspan Browser Demo</title>
+		<style>
+			:root {
+				font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+				color: #101622;
+				background: radial-gradient(circle at top, #f6f3ea, #dfe6f4 65%);
+			}
+			body {
+				margin: 0;
+				min-height: 100vh;
+				display: grid;
+				place-items: center;
+				padding: 24px;
+			}
+			.card {
+				max-width: 720px;
+				background: rgba(255, 255, 255, 0.85);
+				backdrop-filter: blur(4px);
+				border: 1px solid #c8d1e5;
+				border-radius: 16px;
+				padding: 24px;
+				box-shadow: 0 12px 40px rgba(29, 44, 76, 0.14);
+			}
+			h1 {
+				margin-top: 0;
+				font-size: 1.6rem;
+			}
+			p {
+				line-height: 1.5;
+			}
+			code {
+				background: #e9eef8;
+				padding: 2px 6px;
+				border-radius: 6px;
+			}
+			a.button {
+				display: inline-block;
+				margin-top: 12px;
+				text-decoration: none;
+				background: #0e4ecf;
+				color: white;
+				padding: 10px 14px;
+				border-radius: 10px;
+				font-weight: 600;
+			}
+		</style>
+	</head>
+	<body>
+		<main class="card">
+			<h1>Flashspan Browser Demo</h1>
+			<p>
+				Build the Rust WASM bridge first with <code>bun run build:wasm</code>, then run
+				<code>bun run dev</code> and open this page.
+			</p>
+			<p>
+				The main app runs at the root path. If WASM artifacts are unavailable, Flashspan
+				automatically falls back to the browser planner.
+			</p>
+			<a class="button" href="/">Open Flashspan App</a>
+		</main>
+	</body>
+</html>

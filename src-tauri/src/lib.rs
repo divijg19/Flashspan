@@ -1,3 +1,6 @@
+pub mod core;
+
+#[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -14,3 +17,9 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(target_arch = "wasm32")]
+mod wasm_bridge;
+
+#[cfg(target_arch = "wasm32")]
+pub use wasm_bridge::*;
