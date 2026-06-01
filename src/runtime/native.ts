@@ -27,11 +27,15 @@ import type {
 	ThemeMode,
 } from "./types";
 
+import applauseUrl from "../assets/applause.wav?url";
+import beepUrl from "../assets/beep.wav?url";
+import buzzerUrl from "../assets/buzzer.wav?url";
+
 // Audio fallback (in case Tauri audio fails or is not available)
 const audioFallback = {
-	beep: new Audio("/src/assets/beep.wav"),
-	applause: new Audio("/src/assets/applause.wav"),
-	buzzer: new Audio("/src/assets/buzzer.wav"),
+	beep: new Audio(beepUrl),
+	applause: new Audio(applauseUrl),
+	buzzer: new Audio(buzzerUrl),
 };
 Object.values(audioFallback).forEach((a) => {
 	a.preload = "auto";

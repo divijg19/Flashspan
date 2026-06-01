@@ -1,7 +1,7 @@
 use crate::core::generate::random_number_with_constraints;
 use crate::core::types::{SessionConfig, SessionConfigEffective, SessionPlan, SessionStep};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 
 /// Build a deterministic session plan from configuration and an optional seed.
 ///
@@ -17,19 +17,9 @@ pub fn build_session_plan(
     config_effective: SessionConfigEffective,
     seed_opt: Option<u64>,
 ) -> SessionPlan {
-    let mut rng: Box<dyn Rng> = match seed_opt {
-        Some(seed) => Box::new(StdRng::seed_from_u64(seed)),
-        None => {
-            #[cfg(target_arch = "wasm32")]
-            {
-                Box::new(StdRng::seed_from_u64(0xC0FFEE_F00DBABE))
-            }
-
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                Box::new(rand::rng())
-            }
-        }
+    let mut rng: StdRng = match seed_opt {
+        Some(seed) => StdRng::seed_from_u64(seed),
+        None => StdRng::from_rng(&mut rand::rng()),
     };
 
     let mut steps: Vec<SessionStep> = Vec::new();
