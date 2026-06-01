@@ -201,7 +201,7 @@ jobs:
           tar -C dist -czf release/Ascent.Flash-web.tar.gz .
 
       - name: Upload web bundle artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: web-bundle
           path: |
@@ -215,10 +215,10 @@ jobs:
 
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
 
       - name: Create GitHub Release and upload bundles
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}

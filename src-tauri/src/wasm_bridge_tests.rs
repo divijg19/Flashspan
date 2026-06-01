@@ -2,7 +2,7 @@
 mod wasm_tests {
     use crate::core::types::SessionConfigInput;
     use crate::{build_session_plan_wasm, normalize_session_config_wasm, ping, wasm_version};
-    use serde_wasm_bindgen::{from_value, to_value};
+    use serde_wasm_bindgen::to_value;
     use wasm_bindgen_test::*;
 
     wasm_bindgen_test_configure!(run_in_browser);

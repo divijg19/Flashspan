@@ -6,5 +6,5 @@ pub mod validate;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod prop_tests;
