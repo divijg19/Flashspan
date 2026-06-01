@@ -36,6 +36,7 @@ describe("App accessibility tests", () => {
 					correct: true,
 					delta: 0,
 				},
+				auto_repeat_waiting: null,
 			};
 		};
 
@@ -56,6 +57,7 @@ describe("App accessibility tests", () => {
 					correct: false,
 					delta: -25,
 				},
+				auto_repeat_waiting: null,
 			};
 		};
 
