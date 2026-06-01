@@ -645,6 +645,36 @@ function validateAnswer(
 	};
 }
 
+// Testing helpers (internal). Exported to enable deterministic unit tests.
+export function __test_setCompletedSession(
+	sessionId: number,
+	numbers: number[],
+) {
+	const sum = numbers.reduce((s, n) => s + n, 0);
+	currentSession = {
+		sessionId,
+		config: {
+			digits_per_number: 1,
+			number_duration_s: 0.1,
+			delay_between_numbers_s: 0,
+			total_numbers: numbers.length,
+			allow_negative_numbers: false,
+		},
+		autoRepeat: null,
+		plannedNumbers: numbers,
+		plannedSum: sum,
+		numbers: numbers.slice(),
+		sum,
+		runningSum: sum,
+		lastPayload: null,
+		completed: true,
+		timers: [],
+	};
+}
+
+// Export internal helpers for unit testing
+export { parseProvidedAnswerText, validateAnswer };
+
 export const browserRuntime: Runtime = {
 	async ping(): Promise<string> {
 		return "pong (browser)";

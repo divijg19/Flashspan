@@ -23,3 +23,6 @@ mod wasm_bridge;
 
 #[cfg(target_arch = "wasm32")]
 pub use wasm_bridge::*;
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod wasm_bridge_tests;
