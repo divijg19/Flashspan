@@ -1,7 +1,7 @@
 use crate::core::generate::random_number_with_constraints;
 use crate::core::types::{SessionConfig, SessionConfigEffective, SessionPlan, SessionStep};
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 
 /// Build a deterministic session plan from configuration and an optional seed.
 ///

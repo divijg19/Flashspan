@@ -57,7 +57,7 @@
 	--space: calc(clamp(8px, 1.6vw, 28px) * var(--ui-scale));
 	/* Inline gap used between label and input and other small inline controls.
         Increase viewport-driven growth so wide screens receive more spacing. */
-	--inline-gap: calc(clamp(12px, 6vw, 160px) * var(--ui-scale));
+	--inline-gap: clamp(12px, 6vw, 160px);
 }
 
 /* Bottom-corner branding and info */
@@ -323,19 +323,59 @@
 	padding: 24px;
 }
 
-.endCard {
-	width: min(560px, 92vw);
-	border-radius: 16px;
-	padding: 22px;
-	border: 1px solid rgba(var(--app-fg-rgb), 0.22);
-	background: rgba(var(--app-bg-rgb), 0.65);
-	cursor: pointer;
-	user-select: none;
+.answerNumbers {
+	display: grid;
+	width: 100%;
+	max-width: 720px;
+	margin: 0;
+	padding: 8px 12px;
+	background: rgba(var(--app-bg-rgb), 0.55);
+	border-radius: 12px;
+	border: 1px solid rgba(var(--app-fg-rgb), 0.12);
+	box-sizing: border-box;
+	gap: 6px;
+	max-height: 280px;
+	/* confine height so only this list scrolls */
+	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
 }
 
-.endCard:focus-visible {
-	outline: 2px solid rgba(var(--app-fg-rgb), 0.28);
-	outline-offset: 3px;
+.answerRow {
+	display: grid;
+	grid-template-columns: calc(48px * var(--ui-scale)) 1fr;
+	/* fixed index column, flexible value column */
+	align-items: center;
+	gap: calc(8px * var(--ui-scale));
+	padding: calc(4px * var(--ui-scale)) calc(6px * var(--ui-scale));
+	border-radius: calc(8px * var(--ui-scale));
+}
+
+.answerIndex {
+	font-family:
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+		"Courier New", monospace;
+	color: rgba(var(--app-fg-rgb), 0.7);
+	text-align: right;
+	padding-right: 8px;
+}
+
+.answerValue {
+	font-family:
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+		"Courier New", monospace;
+	font-size: 20px;
+	line-height: 1;
+	padding: 6px 8px;
+	border-radius: 8px;
+	background: rgba(var(--app-fg-rgb), 0.04);
+	border: 1px solid rgba(var(--app-fg-rgb), 0.06);
+	color: var(--app-fg);
+}
+
+.endHeaderCenter {
+	text-align: center;
+	width: 100%;
+	max-width: min(560px, 92vw);
 }
 
 .endTitle {
@@ -402,93 +442,6 @@
 	font-size: 12px;
 	opacity: 0.75;
 	letter-spacing: 0.04em;
-}
-
-.answerHeader {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
-}
-
-.answerActions {
-	display: flex;
-	gap: 10px;
-}
-
-.answerText {
-	flex: 1;
-	overflow: auto;
-	width: 100%;
-	max-width: 720px;
-	text-align: left;
-	margin: 0;
-	padding: 14px;
-	border-radius: 12px;
-	border: 1px solid rgba(var(--app-fg-rgb), 0.16);
-	background: rgba(var(--app-bg-rgb), 0.55);
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
-	font-size: 20px;
-	line-height: 1.4;
-	white-space: pre-wrap;
-	word-break: break-word;
-}
-
-.answerNumbers {
-	display: grid;
-	width: 100%;
-	max-width: 720px;
-	margin: 0;
-	padding: 8px 12px;
-	background: rgba(var(--app-bg-rgb), 0.55);
-	border-radius: 12px;
-	border: 1px solid rgba(var(--app-fg-rgb), 0.12);
-	box-sizing: border-box;
-	gap: 6px;
-	max-height: 280px;
-	/* confine height so only this list scrolls */
-	overflow-y: auto;
-	-webkit-overflow-scrolling: touch;
-}
-
-.answerRow {
-	display: grid;
-	grid-template-columns: calc(48px * var(--ui-scale)) 1fr;
-	/* fixed index column, flexible value column */
-	align-items: center;
-	gap: calc(8px * var(--ui-scale));
-	padding: calc(4px * var(--ui-scale)) calc(6px * var(--ui-scale));
-	border-radius: calc(8px * var(--ui-scale));
-}
-
-.answerIndex {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
-	color: rgba(var(--app-fg-rgb), 0.7);
-	text-align: right;
-	padding-right: 8px;
-}
-
-.answerValue {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
-	font-size: 20px;
-	line-height: 1;
-	padding: 6px 8px;
-	border-radius: 8px;
-	background: rgba(var(--app-fg-rgb), 0.04);
-	border: 1px solid rgba(var(--app-fg-rgb), 0.06);
-	color: var(--app-fg);
-}
-
-.endHeaderCenter {
-	text-align: center;
-	width: 100%;
-	max-width: min(560px, 92vw);
 }
 
 .actionField {
@@ -563,30 +516,6 @@
 	font-size: calc(40px * var(--ui-scale));
 	line-height: 1;
 	color: rgba(var(--app-fg-rgb), 0.96);
-}
-
-.answerInput {
-	flex: 1;
-	resize: none;
-	width: 100%;
-	margin: 0;
-	padding: 14px;
-	border-radius: 12px;
-	border: 1px solid rgba(var(--app-fg-rgb), 0.16);
-	background: rgba(var(--app-bg-rgb), 0.55);
-	color: var(--app-fg);
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
-	font-size: 18px;
-	line-height: 1.35;
-	text-align: center;
-	outline: none;
-}
-
-.answerInput:focus-visible {
-	outline: 2px solid rgba(var(--app-fg-rgb), 0.22);
-	outline-offset: 2px;
 }
 
 .validationText {
@@ -678,17 +607,6 @@
 	gap: calc(16px * var(--ui-scale));
 }
 
-.advancedTitle {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
-	font-size: 13px;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
-	opacity: 0.85;
-	margin: 0;
-}
-
 .advancedDivider {
 	height: 1px;
 	background: rgba(var(--app-fg-rgb), 0.14);
@@ -734,14 +652,6 @@
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
 	opacity: 0.9;
-}
-
-.headerLogo {
-	width: calc(20px * var(--ui-scale));
-	height: calc(20px * var(--ui-scale));
-	object-fit: contain;
-	vertical-align: middle;
-	margin-right: calc(var(--space) * 0.25);
 }
 
 .grid {
@@ -875,32 +785,6 @@
 	user-select: none;
 }
 
-.modeControl {
-	display: inline-flex;
-	gap: 6px;
-	margin-left: 10px;
-	align-items: center;
-}
-
-.modeVertical {
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-	margin-top: 8px;
-	align-items: flex-start;
-}
-
-.smallOption {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-}
-
-.smallLabel {
-	font-size: 11px;
-	color: rgba(var(--app-fg-rgb), 0.85);
-}
-
 .colorSwatch {
 	width: calc(52px * var(--ui-scale));
 	height: calc(36px * var(--ui-scale));
@@ -980,9 +864,6 @@
 }
 
 /* Light-mode adjustments: swap bg/fg for lighter palettes */
-.theme-light {
-	--app-bg-opacity-panel: 0.98;
-}
 
 .segmentedOption {
 	position: relative;
@@ -1012,6 +893,14 @@
 
 .advancedPanel .segmentedLabel {
 	min-width: calc(54px * var(--ui-scale));
+}
+
+.modeVertical {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 8px;
+	align-items: flex-start;
 }
 
 .modeVertical .segmentedLabel {
@@ -1060,19 +949,6 @@
 .button:disabled {
 	opacity: 0.5;
 	cursor: default;
-}
-
-/* Sound toggle styling */
-.soundToggle {
-	background: transparent;
-	color: var(--app-fg);
-	border: 1px solid rgba(var(--app-fg-rgb), 0.18);
-	padding: 6px 12px;
-}
-
-.soundToggle.enabled {
-	background: var(--app-fg);
-	color: var(--app-bg);
 }
 
 .error {

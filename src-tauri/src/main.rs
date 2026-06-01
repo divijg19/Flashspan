@@ -12,7 +12,8 @@ mod native_app {
         types::{AutoRepeatPlan, SessionConfigEffective, SessionConfigInput},
         validate::normalize_session_config,
     };
-    use crate::session::SessionManager;
+    use crate::session::{recover_lock, SessionManager};
+    use log::warn;
     use serde::Deserialize;
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -108,7 +109,7 @@ mod native_app {
 
     #[tauri::command]
     fn get_app_settings(settings: tauri::State<'_, SettingsState>) -> AppSettings {
-        settings.0.lock().expect("settings lock poisoned").clone()
+        recover_lock(&settings.0, "settings").clone()
     }
 
     #[tauri::command]
@@ -128,7 +129,7 @@ mod native_app {
         color_scheme: ColorScheme,
     ) -> Result<AppSettings, String> {
         let updated = {
-            let mut guard = settings.0.lock().expect("settings lock poisoned");
+            let mut guard = recover_lock(&settings.0, "settings");
             guard.color_scheme = color_scheme;
             guard.clone()
         };
@@ -143,7 +144,7 @@ mod native_app {
         theme_mode: ThemeMode,
     ) -> Result<AppSettings, String> {
         let updated = {
-            let mut guard = settings.0.lock().expect("settings lock poisoned");
+            let mut guard = recover_lock(&settings.0, "settings");
             guard.theme_mode = theme_mode;
             guard.clone()
         };
@@ -233,54 +234,65 @@ mod native_app {
         let manager_arc = Arc::clone(&manager);
         let app_for_thread = app.clone();
         let remaining_repeats = remaining;
-        thread::spawn(move || {
-            let end_at = Instant::now() + std::time::Duration::from_millis(delay_ms);
-            let mut last_sent: Option<u64> = None;
+        if let Err(e) = std::thread::Builder::new()
+            .name("auto-repeat".into())
+            .spawn(move || {
+                let end_at = Instant::now() + std::time::Duration::from_millis(delay_ms);
+                let mut last_sent: Option<u64> = None;
 
-            loop {
+                loop {
+                    if manager_arc.auto_repeat_generation() != generation {
+                        return;
+                    }
+
+                    let now = Instant::now();
+                    if now >= end_at {
+                        break;
+                    }
+
+                    let remaining_duration = end_at.saturating_duration_since(now);
+                    let seconds_left = (remaining_duration.as_millis() as u64).div_ceil(1000);
+
+                    if last_sent != Some(seconds_left) {
+                        last_sent = Some(seconds_left);
+                        let _ = app_for_thread.emit(
+                            "auto_repeat_tick",
+                            AutoRepeatTickPayload {
+                                session_id,
+                                seconds_left,
+                                remaining: remaining_repeats,
+                            },
+                        );
+                    }
+
+                    let step = remaining_duration.min(std::time::Duration::from_millis(120));
+                    thread::sleep(step);
+                }
+
                 if manager_arc.auto_repeat_generation() != generation {
                     return;
                 }
 
-                let now = Instant::now();
-                if now >= end_at {
-                    break;
+                let _ = app_for_thread.emit(
+                    "auto_repeat_tick",
+                    AutoRepeatTickPayload {
+                        session_id,
+                        seconds_left: 0,
+                        remaining: remaining_repeats,
+                    },
+                );
+
+                // TOCTOU guard: re-check generation right before start()
+                if manager_arc.auto_repeat_generation() != generation {
+                    return;
                 }
-
-                let remaining_duration = end_at.saturating_duration_since(now);
-                let seconds_left = (remaining_duration.as_millis() as u64).div_ceil(1000);
-
-                if last_sent != Some(seconds_left) {
-                    last_sent = Some(seconds_left);
-                    let _ = app_for_thread.emit(
-                        "auto_repeat_tick",
-                        AutoRepeatTickPayload {
-                            session_id,
-                            seconds_left,
-                            remaining: remaining_repeats,
-                        },
-                    );
+                if let Err(e) = manager_arc.start(app_for_thread, config) {
+                    warn!("auto-repeat start failed: {}", e);
                 }
-
-                let step = remaining_duration.min(std::time::Duration::from_millis(120));
-                thread::sleep(step);
-            }
-
-            if manager_arc.auto_repeat_generation() != generation {
-                return;
-            }
-
-            let _ = app_for_thread.emit(
-                "auto_repeat_tick",
-                AutoRepeatTickPayload {
-                    session_id,
-                    seconds_left: 0,
-                    remaining: remaining_repeats,
-                },
-            );
-
-            let _ = manager_arc.start(app_for_thread, config);
-        });
+            })
+        {
+            warn!("auto-repeat thread spawn failed: {}", e);
+        }
 
         Ok(Some(payload))
     }
