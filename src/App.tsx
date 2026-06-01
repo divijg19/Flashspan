@@ -274,6 +274,15 @@ export default function App() {
 
 		try {
 			const resp = await runtime.submitAnswerText(sid, typedAnswer());
+
+			// Ensure session hasn't changed while awaiting validation result.
+			if (sessionId() !== sid) {
+				setValidationSummary(
+					"Session changed before validation completed; result ignored.",
+				);
+				return;
+			}
+
 			setHasValidated(true);
 			applySubmitAnswerResponse(resp);
 		} catch (e) {
@@ -1187,7 +1196,9 @@ export default function App() {
 									/>
 
 									{validationSummary() ? (
-										<pre class="validationText">{validationSummary()}</pre>
+										<pre class="validationText" role="alert" aria-live="polite">
+											{validationSummary()}
+										</pre>
 									) : null}
 
 									{hasValidated() && showNumbersList() ? (

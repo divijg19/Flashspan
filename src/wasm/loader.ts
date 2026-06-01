@@ -8,6 +8,7 @@ import {
 
 let wasmBridgeLoaded = false;
 let wasmBridgeLoadAttempted = false;
+let wasmVersionFn: (() => string) | null = null;
 
 function asFunction<TArgs extends unknown[], TResult>(
 	value: unknown,
@@ -45,6 +46,7 @@ export async function loadWasmCoreBridge(): Promise<boolean> {
 			[number, SessionConfigInput, number | null | undefined],
 			WasmSessionPlan
 		>(wasmModule.build_session_plan_wasm);
+		const wasmVersion = asFunction<[], string>(wasmModule.wasm_version);
 
 		if (!init || !normalizeSessionConfigWasm || !buildSessionPlanWasm) {
 			console.info(
@@ -54,6 +56,8 @@ export async function loadWasmCoreBridge(): Promise<boolean> {
 		}
 
 		await init(wasmUrl);
+
+		wasmVersionFn = wasmVersion;
 
 		const bridge: WasmCoreBridge = {
 			async normalizeSessionConfig(input: SessionConfigInput) {
@@ -77,5 +81,17 @@ export async function loadWasmCoreBridge(): Promise<boolean> {
 			"[wasm] Rust core bridge not available; browser runtime will use JS planner",
 		);
 		return false;
+	}
+}
+
+export function getWasmVersion(): string | null {
+	if (!wasmVersionFn) {
+		return null;
+	}
+	try {
+		return wasmVersionFn();
+	} catch (err) {
+		console.error("[wasm] Failed to call wasm_version():", err);
+		return null;
 	}
 }

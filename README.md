@@ -1,4 +1,5 @@
-# Ascent Flash (Flashspan)
+# Ascent Flash
+> Internally named Flashspan
 
 Ascent Flash is a desktop flash-mental-math trainer. It shows a sequence of numbers at a configurable speed; you add/subtract them mentally and then enter the final sum.
 

@@ -1,12 +1,12 @@
 [package]
 name = "Flashspan"
-version = "2.1.0"
+version = "2.1.1"
 description = "Mental Maths training simulator"
 authors = ["you"]
 license = ""
 repository = ""
 edition = "2024"
-rust-version = "1.95.0"
+rust-version = "1.96.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -37,3 +37,6 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+[dev-dependencies]
+proptest = "1.4"

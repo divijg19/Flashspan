@@ -20,6 +20,11 @@ pub fn ping() -> String {
 }
 
 #[wasm_bindgen]
+pub fn wasm_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[wasm_bindgen]
 pub fn normalize_session_config_wasm(input: JsValue) -> Result<JsValue, JsValue> {
     let input: SessionConfigInput = serde_wasm_bindgen::from_value(input)
         .map_err(|err| js_error(format!("failed to decode SessionConfigInput: {err}")))?;
