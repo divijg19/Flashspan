@@ -1,17 +1,17 @@
 use log::{error, info, warn};
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 use rodio::{Decoder, DeviceSinkBuilder, Player};
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 
-static AUDIO_SENDER: OnceCell<Sender<&'static [u8]>> = OnceCell::new();
+static AUDIO_SENDER: OnceLock<Result<Sender<&'static [u8]>, String>> = OnceLock::new();
 
 fn get_audio_sender() -> Result<&'static Sender<&'static [u8]>, String> {
-    AUDIO_SENDER.get_or_try_init(|| {
+    let value = AUDIO_SENDER.get_or_init(|| {
         let (tx, rx) = channel::<&'static [u8]>();
 
-        std::thread::Builder::new()
+        match std::thread::Builder::new()
             .name("audio-worker".into())
             .spawn(move || match DeviceSinkBuilder::open_default_sink() {
                 Ok(stream) => {
@@ -32,10 +32,13 @@ fn get_audio_sender() -> Result<&'static Sender<&'static [u8]>, String> {
                     error!("audio worker failed to init output sink: {}", e);
                 }
             })
-            .map_err(|e| e.to_string())?;
-
-        Ok(tx)
-    })
+            .map_err(|e| e.to_string())
+        {
+            Ok(_) => Ok(tx),
+            Err(e) => Err(e),
+        }
+    });
+    value.as_ref().map_err(|e| e.clone())
 }
 
 fn play_bytes(data: &'static [u8]) -> Result<(), String> {

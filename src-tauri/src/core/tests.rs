@@ -1,5 +1,6 @@
 // Tests for core validation and engine modules
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::core::types::{SessionConfig, SessionConfigInput};
     use crate::core::validate::{normalize_session_config, validate_config};

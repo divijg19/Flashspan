@@ -7,5 +7,16 @@ export default defineConfig({
 		environment: "jsdom",
 		globals: true,
 		setupFiles: [],
+		coverage: {
+			provider: "v8",
+			enabled: true,
+			reporter: ["text", "json"],
+			include: ["src/**"],
+			exclude: [
+				"src/wasm/pkg/**",
+				"src/__tests__/**",
+				"src/tauri.ts",
+			],
+		},
 	},
-});
+});	
