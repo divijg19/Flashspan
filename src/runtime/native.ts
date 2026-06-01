@@ -11,6 +11,9 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import applauseUrl from "../assets/applause.wav?url";
+import beepUrl from "../assets/beep.wav?url";
+import buzzerUrl from "../assets/buzzer.wav?url";
 import type { Runtime, UnlistenFn } from "./index";
 import type {
 	AppSettings,
@@ -26,10 +29,6 @@ import type {
 	SubmitAnswerResponse,
 	ThemeMode,
 } from "./types";
-
-import applauseUrl from "../assets/applause.wav?url";
-import beepUrl from "../assets/beep.wav?url";
-import buzzerUrl from "../assets/buzzer.wav?url";
 
 // Audio fallback (in case Tauri audio fails or is not available)
 const audioFallback = {

@@ -15,7 +15,9 @@ describe("App performance tests", () => {
 
 		// Initial render should be fast (< 500ms)
 		if (renderTime >= 500) {
-			console.warn(`Render time ${renderTime.toFixed(1)}ms exceeded 500ms threshold`);
+			console.warn(
+				`Render time ${renderTime.toFixed(1)}ms exceeded 500ms threshold`,
+			);
 		}
 	});
 
@@ -28,7 +30,9 @@ describe("App performance tests", () => {
 
 		// Runtime init should be instant (< 50ms)
 		if (initTime >= 50) {
-			console.warn(`Init time ${initTime.toFixed(1)}ms exceeded 50ms threshold`);
+			console.warn(
+				`Init time ${initTime.toFixed(1)}ms exceeded 50ms threshold`,
+			);
 		}
 	});
 
@@ -53,7 +57,9 @@ describe("App performance tests", () => {
 
 		// All 7 listeners should register in < 10ms
 		if (registerTime >= 10) {
-			console.warn(`Listener registration time ${registerTime.toFixed(2)}ms exceeded 10ms threshold`);
+			console.warn(
+				`Listener registration time ${registerTime.toFixed(2)}ms exceeded 10ms threshold`,
+			);
 		}
 		expect(unlisteners.length).toBe(7);
 
@@ -79,7 +85,9 @@ describe("App performance tests", () => {
 
 		// 100 emissions should complete in < 100ms
 		if (emitTime >= 100) {
-			console.warn(`Emission time ${emitTime.toFixed(1)}ms exceeded 100ms threshold for 100 events`);
+			console.warn(
+				`Emission time ${emitTime.toFixed(1)}ms exceeded 100ms threshold for 100 events`,
+			);
 		}
 		expect(emissions.length).toBe(100);
 	});
@@ -125,14 +133,9 @@ describe("App performance tests", () => {
 
 		// Queries should complete in < 100ms total
 		if (queryTime >= 100) {
-			console.warn(`Query time ${queryTime.toFixed(1)}ms exceeded 100ms threshold for 10 queries`);
+			console.warn(
+				`Query time ${queryTime.toFixed(1)}ms exceeded 100ms threshold for 10 queries`,
+			);
 		}
-	});
-
-	it("note: for large numbers list (500+), consider virtualization if render time > 2000ms", () => {
-		// This is a reminder test - not an actual test
-		// Real app should monitor performance with actual data
-		// If rendering 500+ numbers takes > 2 seconds, implement virtualization
-		expect(true).toBe(true);
 	});
 });

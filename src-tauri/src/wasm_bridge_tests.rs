@@ -1,9 +1,9 @@
 #[cfg(all(test, target_arch = "wasm32"))]
 mod wasm_tests {
-    use wasm_bindgen_test::*;
-    use crate::{ping, wasm_version, normalize_session_config_wasm, build_session_plan_wasm};
     use crate::core::types::SessionConfigInput;
-    use serde_wasm_bindgen::{to_value, from_value};
+    use crate::{build_session_plan_wasm, normalize_session_config_wasm, ping, wasm_version};
+    use serde_wasm_bindgen::{from_value, to_value};
+    use wasm_bindgen_test::*;
 
     wasm_bindgen_test_configure!(run_in_browser);
 
@@ -18,7 +18,10 @@ mod wasm_tests {
         let version = wasm_version();
         // Version should be in format "major.minor.patch"
         let parts: Vec<&str> = version.split('.').collect();
-        assert!(parts.len() >= 2, "Version should have at least major.minor format");
+        assert!(
+            parts.len() >= 2,
+            "Version should have at least major.minor format"
+        );
 
         // All parts should be numeric or pre-release identifiers
         assert!(!version.is_empty(), "Version should not be empty");
@@ -113,7 +116,10 @@ mod wasm_tests {
 
         let plan1_str = format!("{:?}", result1.unwrap());
         let plan2_str = format!("{:?}", result2.unwrap());
-        assert_eq!(plan1_str, plan2_str, "Same seed should produce identical plans");
+        assert_eq!(
+            plan1_str, plan2_str,
+            "Same seed should produce identical plans"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -137,15 +143,19 @@ mod wasm_tests {
         assert!(result2.is_ok());
         assert!(result3.is_ok());
 
+        let plan1 = result1.unwrap();
+        let plan2 = result2.unwrap();
+        let plan3 = result3.unwrap();
+
         // All three should produce identical results
         assert_eq!(
-            format!("{:?}", result1.unwrap()),
-            format!("{:?}", result2.unwrap()),
+            format!("{:?}", plan1),
+            format!("{:?}", plan2),
             "Determinism check 1"
         );
         assert_eq!(
-            format!("{:?}", result2.unwrap()),
-            format!("{:?}", result3.unwrap()),
+            format!("{:?}", plan2),
+            format!("{:?}", plan3),
             "Determinism check 2"
         );
     }
@@ -171,7 +181,10 @@ mod wasm_tests {
 
         let plan1_str = format!("{:?}", result_seed1.unwrap());
         let plan2_str = format!("{:?}", result_seed2.unwrap());
-        assert_ne!(plan1_str, plan2_str, "Different seeds should produce different plans");
+        assert_ne!(
+            plan1_str, plan2_str,
+            "Different seeds should produce different plans"
+        );
     }
 
     #[wasm_bindgen_test]

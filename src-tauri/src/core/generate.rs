@@ -6,6 +6,7 @@ pub(crate) fn random_fixed_digits_no_leading_zero(rng: &mut impl Rng, digits: u3
         return rng.random_range(1u32..=9u32).to_string();
     }
 
+    debug_assert!(digits <= 18, "digits {} exceeds u64 range", digits);
     let min = 10u64.pow(digits - 1);
     let max_exclusive = 10u64.pow(digits);
     rng.random_range(min..max_exclusive).to_string()

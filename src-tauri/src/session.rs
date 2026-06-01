@@ -2,9 +2,8 @@ use crate::core::types::{
     AutoRepeatPlan, ClearScreen, SessionComplete, SessionConfig, SessionConfigEffective,
     SessionPlan, SessionStep, ShowNumber,
 };
-use crate::core::{
-    engine::build_session_plan, validate::validate_config,
-};
+use crate::core::{engine::build_session_plan, validate::validate_config};
+use log::warn;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     collections::VecDeque,
@@ -90,17 +89,24 @@ impl Default for SessionManager {
     }
 }
 
+pub(crate) fn recover_lock<'a, T>(mutex: &'a Mutex<T>, name: &str) -> std::sync::MutexGuard<'a, T> {
+    mutex.lock().unwrap_or_else(|e| {
+        warn!("mutex {} poisoned, recovering", name);
+        e.into_inner()
+    })
+}
+
 impl SessionManager {
     const MAX_RECENT_RESULTS: usize = 8;
 
     fn cleanup_finished_worker(&self) {
-        let mut worker = self.worker.lock().expect("worker lock poisoned");
+        let mut worker = recover_lock(&self.worker, "worker");
         if let Some(handle) = worker.as_ref()
             && handle.is_finished()
         {
             let handle = worker.take().expect("just checked Some");
             let _ = handle.join();
-            *self.stop.lock().expect("stop lock poisoned") = None;
+            *recover_lock(&self.stop, "stop") = None;
         }
     }
 
@@ -110,7 +116,7 @@ impl SessionManager {
         validate_config(&config)?;
 
         {
-            let worker = self.worker.lock().expect("worker lock poisoned");
+            let worker = recover_lock(&self.worker, "worker");
             if let Some(handle) = worker.as_ref()
                 && !handle.is_finished()
             {
@@ -119,44 +125,42 @@ impl SessionManager {
         }
 
         let stop_flag = Arc::new(AtomicBool::new(false));
-        *self.stop.lock().expect("stop lock poisoned") = Some(stop_flag.clone());
+        *recover_lock(&self.stop, "stop") = Some(stop_flag.clone());
 
         {
-            let mut state = self.state.lock().expect("state lock poisoned");
+            let mut state = recover_lock(&self.state, "state");
             *state = SessionState::ShowingNumbers {
                 current: 0,
                 total: config.total_numbers,
             };
         }
 
-        // New session id for this run.
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
 
         let state_arc = Arc::clone(&self.state);
         let recent_results_arc = Arc::clone(&self.recent_results);
         let plan_arc = Arc::clone(&self.auto_repeat_plan);
-        let handle = thread::spawn(move || {
-            run_session_loop(
-                app,
-                config,
-                state_arc,
-                stop_flag,
-                session_id,
-                recent_results_arc,
-                plan_arc,
-            );
-        });
+        let handle = std::thread::Builder::new()
+            .name("session-worker".into())
+            .spawn(move || {
+                run_session_loop(
+                    app,
+                    config,
+                    state_arc,
+                    stop_flag,
+                    session_id,
+                    recent_results_arc,
+                    plan_arc,
+                );
+            })
+            .map_err(|e| format!("failed to spawn session worker: {}", e))?;
 
-        *self.worker.lock().expect("worker lock poisoned") = Some(handle);
+        *recover_lock(&self.worker, "worker") = Some(handle);
         Ok(session_id)
     }
 
     pub fn configure_auto_repeat(&self, plan: Option<AutoRepeatPlan>) {
-        *self
-            .auto_repeat_plan
-            .lock()
-            .expect("auto_repeat_plan lock poisoned") = plan;
-        // Bump generation so any previously scheduled starts become no-ops.
+        *recover_lock(&self.auto_repeat_plan, "auto_repeat_plan") = plan;
         self.auto_repeat_generation.fetch_add(1, Ordering::SeqCst);
     }
 
@@ -165,10 +169,7 @@ impl SessionManager {
     }
 
     pub fn result_for(&self, session_id: u64) -> Result<SessionComplete, String> {
-        let guard = self
-            .recent_results
-            .lock()
-            .expect("recent_results lock poisoned");
+        let guard = recover_lock(&self.recent_results, "recent_results");
 
         for result in guard.iter().rev() {
             if result.session_id == session_id {
@@ -186,10 +187,7 @@ impl SessionManager {
         let generation = self.auto_repeat_generation.load(Ordering::SeqCst);
 
         let (delay_ms, config, remaining_after_decrement) = {
-            let mut plan_guard = self
-                .auto_repeat_plan
-                .lock()
-                .expect("auto_repeat_plan lock poisoned");
+            let mut plan_guard = recover_lock(&self.auto_repeat_plan, "auto_repeat_plan");
             let Some(plan) = plan_guard.as_mut() else {
                 return Ok(None);
             };
@@ -219,23 +217,19 @@ impl SessionManager {
     pub fn stop(&self) {
         self.cleanup_finished_worker();
 
-        // Cancel any pending auto-repeat and forget last result.
         self.configure_auto_repeat(None);
-        self.recent_results
-            .lock()
-            .expect("recent_results lock poisoned")
-            .clear();
+        recover_lock(&self.recent_results, "recent_results").clear();
 
-        let stop_flag = self.stop.lock().expect("stop lock poisoned").take();
+        let stop_flag = recover_lock(&self.stop, "stop").take();
         if let Some(flag) = stop_flag {
             flag.store(true, Ordering::SeqCst);
         }
 
-        if let Some(handle) = self.worker.lock().expect("worker lock poisoned").take() {
+        if let Some(handle) = recover_lock(&self.worker, "worker").take() {
             let _ = handle.join();
         }
 
-        let mut state = self.state.lock().expect("state lock poisoned");
+        let mut state = recover_lock(&self.state, "state");
         *state = SessionState::Idle;
     }
 }
@@ -278,8 +272,6 @@ fn run_session_loop(
     );
 }
 
-
-
 fn sleep_until_interruptible(deadline: Instant, stop: &AtomicBool) {
     while Instant::now() < deadline {
         if stop.load(Ordering::SeqCst) {
@@ -315,7 +307,7 @@ fn run_session_plan<E: SessionEmitter>(
                 index: None,
                 emitted_at_ms: now_epoch_ms(),
             });
-            let mut st = state.lock().expect("state lock poisoned");
+            let mut st = recover_lock(&*state, "state");
             *st = SessionState::Idle;
             return;
         }
@@ -360,8 +352,7 @@ fn run_session_plan<E: SessionEmitter>(
                 let delay = Duration::from_millis(*delay_ms_before_next) + grace;
                 sleep_until_interruptible(Instant::now() + delay, &stop);
 
-                // Update state to reflect which number is showing
-                let mut st = state.lock().expect("state lock poisoned");
+                let mut st = recover_lock(&*state, "state");
                 *st = SessionState::ShowingNumbers {
                     current: *index,
                     total: *total,
@@ -397,7 +388,7 @@ fn run_session_plan<E: SessionEmitter>(
                 };
 
                 {
-                    let mut guard = recent_results.lock().expect("recent_results lock poisoned");
+                    let mut guard = recover_lock(&*recent_results, "recent_results");
                     guard.push_back(result.clone());
                     while guard.len() > SessionManager::MAX_RECENT_RESULTS {
                         guard.pop_front();
@@ -405,11 +396,8 @@ fn run_session_plan<E: SessionEmitter>(
                 }
                 emitter.session_complete(result);
 
-                // Arm auto-repeat if configured
                 {
-                    let mut plan_guard = auto_repeat_plan
-                        .lock()
-                        .expect("auto_repeat_plan lock poisoned");
+                    let mut plan_guard = recover_lock(&*auto_repeat_plan, "auto_repeat_plan");
                     if let Some(ar_plan) = plan_guard.as_mut()
                         && ar_plan.remaining > 0
                     {
@@ -426,14 +414,13 @@ fn run_session_plan<E: SessionEmitter>(
                 index: None,
                 emitted_at_ms: now_epoch_ms(),
             });
-            let mut st = state.lock().expect("state lock poisoned");
+            let mut st = recover_lock(&*state, "state");
             *st = SessionState::Idle;
             return;
         }
     }
 
-    // Final state transition
-    let mut st = state.lock().expect("state lock poisoned");
+    let mut st = recover_lock(&*state, "state");
     *st = SessionState::Complete;
 }
 
@@ -447,7 +434,6 @@ mod tests {
     use crate::core::{types::SessionConfigInput, validate::normalize_session_config};
     use rand::rng;
     use std::sync::Arc;
-
 
     #[test]
     fn generator_respects_invariants() {
@@ -852,6 +838,4 @@ mod tests {
         let elapsed = Instant::now() - start;
         assert!(elapsed >= Duration::from_millis(25));
     }
-
-
 }

@@ -129,7 +129,6 @@ export default function App() {
 	const [errorText, setErrorText] = createSignal<string>("");
 
 	const [showAnswer, setShowAnswer] = createSignal<boolean>(false);
-	const [, setAnswerText] = createSignal<string>("");
 	const [answerMode, setAnswerMode] = createSignal<"reveal" | "type">("reveal");
 	const [typedAnswer, setTypedAnswer] = createSignal<string>("");
 	const [validationSummary, setValidationSummary] = createSignal<string>("");
@@ -140,10 +139,7 @@ export default function App() {
 	const [sessionId, setSessionId] = createSignal<number | null>(null);
 	const [numbers, setNumbers] = createSignal<number[]>([]);
 
-	// Interactive logo/title transform based on window size while preserving
-	// proportions relative to the initial app startup dimensions. This keeps
-	// the starting layout identical but makes subsequent resizes animate
-	// the logo gently toward the top-left.
+	// Scale UI elements proportionally to window size relative to startup dimensions.
 	onMount(() => {
 		const root = document.documentElement;
 		const baselineW = Math.max(800, window.innerWidth);
@@ -151,25 +147,14 @@ export default function App() {
 		let raf = 0;
 
 		const update = () => {
-			const w = window.innerWidth;
-			const h = window.innerHeight;
-			const ratio = Math.min(w / baselineW, h / baselineH);
-			const clamped = Math.max(0.75, Math.min(ratio, 1.5));
-
-			// Shift amounts are proportional to baseline dims, capped to sensible px.
-			const shiftX = Math.min(220, Math.max(48, baselineW * 0.06));
-			const shiftY = Math.min(120, Math.max(20, baselineH * 0.035));
-
-			const offsetX = (clamped - 1) * -shiftX; // negative -> move left when larger
-			const offsetY = (clamped - 1) * -shiftY; // negative -> move up when larger
-			const logoScale = 1 + (clamped - 1) * 0.22; // modest scale up
-			const titleOffset = (clamped - 1) * -8; // small title lift
-
-			root.style.setProperty("--ui-scale", `${clamped}`);
-			root.style.setProperty("--home-logo-translate-x", `${offsetX}px`);
-			root.style.setProperty("--home-logo-translate-y", `${offsetY}px`);
-			root.style.setProperty("--home-logo-scale", `${logoScale}`);
-			root.style.setProperty("--home-title-translate-y", `${titleOffset}px`);
+			const ratio = Math.min(
+				window.innerWidth / baselineW,
+				window.innerHeight / baselineH,
+			);
+			root.style.setProperty(
+				"--ui-scale",
+				`${Math.max(0.75, Math.min(ratio, 1.5))}`,
+			);
 		};
 
 		const handler = () => {
@@ -177,7 +162,6 @@ export default function App() {
 			raf = requestAnimationFrame(update);
 		};
 
-		// initialize and listen
 		update();
 		window.addEventListener("resize", handler, { passive: true });
 
@@ -212,6 +196,7 @@ export default function App() {
 		createSignal<boolean>(false);
 
 	let sumInputRef: HTMLInputElement | undefined;
+	let overlayRef: HTMLDivElement | undefined;
 
 	const isRunning = (): boolean =>
 		phase() === "starting" || phase() === "flashing";
@@ -219,7 +204,6 @@ export default function App() {
 	const resetForIncomingSessionIfComplete = () => {
 		if (phase() !== "complete") return;
 		setShowAnswer(false);
-		setAnswerText("");
 		setAnswerSum(0);
 		setTypedAnswer("");
 		setValidationSummary("");
@@ -238,6 +222,36 @@ export default function App() {
 		if (phase() !== "complete") return;
 		if (answerMode() !== "type") return;
 		requestAnimationFrame(() => sumInputRef?.focus?.());
+	});
+
+	createEffect(() => {
+		if (!showAdvanced() || !overlayRef) return;
+
+		const panel = overlayRef.querySelector<HTMLElement>(".advancedPanel");
+		if (!panel) return;
+
+		const focusable = panel.querySelectorAll<HTMLElement>(
+			'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+		);
+		if (focusable.length === 0) return;
+
+		const first = focusable[0];
+		const last = focusable[focusable.length - 1];
+		first.focus();
+
+		const handler = (e: KeyboardEvent) => {
+			if (e.key !== "Tab") return;
+			if (e.shiftKey && document.activeElement === first) {
+				e.preventDefault();
+				last.focus();
+			} else if (!e.shiftKey && document.activeElement === last) {
+				e.preventDefault();
+				first.focus();
+			}
+		};
+
+		panel.addEventListener("keydown", handler);
+		onCleanup(() => panel.removeEventListener("keydown", handler));
 	});
 
 	const applySubmitAnswerResponse = (resp: SubmitAnswerResponse) => {
@@ -395,7 +409,6 @@ export default function App() {
 			setCurrentShown(null);
 			setShowAnswer(false);
 			setNumbers(payload.numbers);
-			setAnswerText(payload.numbers.join("\n"));
 			setAnswerSum(payload.sum);
 			setTypedAnswer("");
 			setValidationSummary("");
@@ -452,7 +465,6 @@ export default function App() {
 		setShowAdvanced(false);
 
 		setShowAnswer(false);
-		setAnswerText("");
 		setAnswerSum(0);
 		setTypedAnswer("");
 		setValidationSummary("");
@@ -507,7 +519,6 @@ export default function App() {
 			setDisplayText("");
 			setCurrentShown(null);
 			setShowAnswer(false);
-			setAnswerText("");
 			setAnswerSum(0);
 			setTypedAnswer("");
 			setValidationSummary("");
@@ -553,6 +564,7 @@ export default function App() {
 							class="iconButton"
 							type="button"
 							aria-label="Additional settings"
+							aria-expanded={showAdvanced()}
 							disabled={isRunning()}
 							onClick={() => setShowAdvanced((v) => !v)}
 						>
@@ -560,7 +572,7 @@ export default function App() {
 						</button>
 
 						{showAdvanced() ? (
-							<div class="advancedOverlay">
+							<div class="advancedOverlay" ref={overlayRef}>
 								<button
 									class="advancedOverlayDismiss"
 									type="button"
@@ -1196,7 +1208,7 @@ export default function App() {
 									/>
 
 									{validationSummary() ? (
-										<pre class="validationText" role="alert" aria-live="polite">
+										<pre class="validationText" role="alert">
 											{validationSummary()}
 										</pre>
 									) : null}
@@ -1263,6 +1275,7 @@ export default function App() {
 					</div>
 				) : (
 					<div
+						role="status"
 						classList={{ number: true, countdown: phase() === "countdown" }}
 						style={{
 							"--len": Math.max(

@@ -12,11 +12,7 @@ export default defineConfig({
 			enabled: true,
 			reporter: ["text", "json"],
 			include: ["src/**"],
-			exclude: [
-				"src/wasm/pkg/**",
-				"src/__tests__/**",
-				"src/tauri.ts",
-			],
+			exclude: ["src/wasm/pkg/**", "src/__tests__/**"],
 		},
 	},
-});	
+});
