@@ -56,21 +56,31 @@ export const nativeRuntime: Runtime = {
 	},
 
 	async setColorScheme(scheme: ColorScheme): Promise<AppSettings> {
-		return invoke<AppSettings>("set_color_scheme", { color_scheme: scheme });
+		return invoke<AppSettings>("set_color_scheme", { colorScheme: scheme });
 	},
 
 	async setThemeMode(mode: ThemeMode): Promise<AppSettings> {
-		return invoke<AppSettings>("set_theme_mode", { theme_mode: mode });
+		return invoke<AppSettings>("set_theme_mode", { themeMode: mode });
 	},
 
 	async startSession(
 		config: SessionConfigInput,
 		autoRepeat?: AutoRepeatConfig | null,
 	): Promise<StartSessionResponse> {
-		return invoke<StartSessionResponse>("start_session", {
-			config,
-			auto_repeat: autoRepeat ?? null,
-		});
+		console.log("native startSession with autoRepeat:", autoRepeat);
+		if (autoRepeat) {
+			const debugResult = await invoke<string>("debug_auto_repeat", {
+				autoRepeat: autoRepeat,
+			});
+			console.log("debug_auto_repeat result:", debugResult);
+			return invoke<StartSessionResponse>("start_session", {
+				config,
+				autoRepeat: autoRepeat,
+			});
+		}
+		const debugResult = await invoke<string>("debug_auto_repeat", {});
+		console.log("debug_auto_repeat result:", debugResult);
+		return invoke<StartSessionResponse>("start_session", { config });
 	},
 
 	async stopSession(): Promise<void> {
@@ -85,7 +95,7 @@ export const nativeRuntime: Runtime = {
 		sessionId: number,
 	): Promise<AutoRepeatWaitingPayload | null> {
 		return invoke<AutoRepeatWaitingPayload | null>("mark_validated", {
-			session_id: sessionId,
+			sessionId: sessionId,
 		});
 	},
 
@@ -93,7 +103,7 @@ export const nativeRuntime: Runtime = {
 		sessionId: number,
 	): Promise<AutoRepeatWaitingPayload | null> {
 		return invoke<AutoRepeatWaitingPayload | null>("acknowledge_complete", {
-			session_id: sessionId,
+			sessionId: sessionId,
 		});
 	},
 
@@ -103,8 +113,8 @@ export const nativeRuntime: Runtime = {
 	): Promise<SubmitAnswerResponse> {
 		return invoke<SubmitAnswerResponse>("submit_answer", {
 			args: {
-				session_id: sessionId,
-				provided_sum: providedSum,
+				sessionId: sessionId,
+				providedSum: providedSum,
 			},
 		});
 	},
@@ -115,8 +125,8 @@ export const nativeRuntime: Runtime = {
 	): Promise<SubmitAnswerResponse> {
 		return invoke<SubmitAnswerResponse>("submit_answer_text", {
 			args: {
-				session_id: sessionId,
-				provided_text: providedText,
+				sessionId: sessionId,
+				providedText: providedText,
 			},
 		});
 	},

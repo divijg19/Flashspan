@@ -214,8 +214,11 @@ export default function App() {
 
 	const applyAutoRepeatWaiting = (payload: AutoRepeatWaitingPayload) => {
 		setAutoRepeatRemaining(payload.remaining);
-		// seconds are driven from Rust tick events.
-		setAutoRepeatSecondsLeft(null);
+		const secondsLeft = Math.max(
+			0,
+			Math.ceil((payload.next_start_at_ms - Date.now()) / 1000),
+		);
+		setAutoRepeatSecondsLeft(secondsLeft);
 	};
 
 	createEffect(() => {
@@ -488,14 +491,24 @@ export default function App() {
 			setPhase("starting");
 			setDisplayText("");
 
+			const autoRepeatEffective = autoRepeatEnabled() && autoRepeatCount() >= 1;
+			console.log(
+				"auto-repeat state before startSession:",
+				JSON.stringify({
+					autoRepeatEnabled: autoRepeatEnabled(),
+					autoRepeatCount: autoRepeatCount(),
+					autoRepeatDelaySeconds: autoRepeatDelaySeconds(),
+					autoRepeatEffective,
+				}),
+			);
 			setAutoRepeatRemaining(
-				autoRepeatEnabled() ? Math.trunc(autoRepeatCount()) : 0,
+				autoRepeatEffective ? Math.trunc(autoRepeatCount()) : 0,
 			);
 
 			await forceFullscreenBeforeStart();
 			const resp = await runtime.startSession(
 				config,
-				autoRepeatEnabled()
+				autoRepeatEffective
 					? {
 							enabled: true,
 							repeats: Math.trunc(autoRepeatCount()),
@@ -660,6 +673,11 @@ export default function App() {
 														)
 													}
 												/>
+												{autoRepeatCount() < 1 ? (
+													<div class="validationWarning">
+														Repeats must be at least 1
+													</div>
+												) : null}
 											</div>
 										) : null}
 
@@ -1111,8 +1129,8 @@ export default function App() {
 															const waiting =
 																await runtime.acknowledgeComplete(sid);
 															if (waiting) applyAutoRepeatWaiting(waiting);
-														} catch {
-															// Best-effort.
+														} catch (e) {
+															setErrorText(String(e));
 														}
 													}
 												}}
@@ -1143,6 +1161,39 @@ export default function App() {
 									)}
 								</div>
 
+								{autoRepeatEnabled() &&
+								hasValidated() &&
+								autoRepeatSecondsLeft() != null ? (
+									<div class="autoRepeatBar">
+										<div class="autoRepeatStatus">
+											<div class="autoRepeatStatusText">
+												Next question in {autoRepeatSecondsLeft() ?? 0}s ·{" "}
+												{autoRepeatRemaining() + 1} remaining
+											</div>
+											<div class="autoRepeatProgressBar">
+												<div
+													class="autoRepeatProgressFill"
+													style={{
+														width: `${autoRepeatDelaySeconds() > 0 ? ((autoRepeatDelaySeconds() - (autoRepeatSecondsLeft() ?? 0)) / autoRepeatDelaySeconds()) * 100 : 0}%`,
+													}}
+												/>
+											</div>
+											<button
+												class="autoRepeatCancel"
+												type="button"
+												onClick={() => {
+													setAutoRepeatEnabled(false);
+													setAutoRepeatRemaining(0);
+													setAutoRepeatSecondsLeft(null);
+													void runtime.cancelAutoRepeat();
+												}}
+											>
+												Cancel auto-repeat
+											</button>
+										</div>
+									</div>
+								) : null}
+
 								<div class="endFooter">
 									<div class="endFooterInner">
 										<div class="actionField">
@@ -1167,15 +1218,6 @@ export default function App() {
 												</button>
 											</div>
 										</div>
-
-										{autoRepeatEnabled() &&
-										hasValidated() &&
-										autoRepeatSecondsLeft() != null ? (
-											<div class="autoRepeatStatus">
-												Next question in {autoRepeatSecondsLeft() ?? 0}s ·{" "}
-												{autoRepeatRemaining()} remaining
-											</div>
-										) : null}
 									</div>
 								</div>
 							</div>
@@ -1227,6 +1269,39 @@ export default function App() {
 									) : null}
 								</div>
 
+								{autoRepeatEnabled() &&
+								hasValidated() &&
+								autoRepeatSecondsLeft() != null ? (
+									<div class="autoRepeatBar">
+										<div class="autoRepeatStatus">
+											<div class="autoRepeatStatusText">
+												Next question in {autoRepeatSecondsLeft() ?? 0}s ·{" "}
+												{autoRepeatRemaining() + 1} remaining
+											</div>
+											<div class="autoRepeatProgressBar">
+												<div
+													class="autoRepeatProgressFill"
+													style={{
+														width: `${autoRepeatDelaySeconds() > 0 ? ((autoRepeatDelaySeconds() - (autoRepeatSecondsLeft() ?? 0)) / autoRepeatDelaySeconds()) * 100 : 0}%`,
+													}}
+												/>
+											</div>
+											<button
+												class="autoRepeatCancel"
+												type="button"
+												onClick={() => {
+													setAutoRepeatEnabled(false);
+													setAutoRepeatRemaining(0);
+													setAutoRepeatSecondsLeft(null);
+													void runtime.cancelAutoRepeat();
+												}}
+											>
+												Cancel auto-repeat
+											</button>
+										</div>
+									</div>
+								) : null}
+
 								<div class="endFooter">
 									<div class="endFooterInner">
 										<div class="actionField">
@@ -1259,15 +1334,6 @@ export default function App() {
 												</button>
 											</div>
 										</div>
-
-										{autoRepeatEnabled() &&
-										hasValidated() &&
-										autoRepeatSecondsLeft() != null ? (
-											<div class="autoRepeatStatus">
-												Next question in {autoRepeatSecondsLeft() ?? 0}s ·{" "}
-												{autoRepeatRemaining()} remaining
-											</div>
-										) : null}
 									</div>
 								</div>
 							</div>
