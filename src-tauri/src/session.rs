@@ -15,7 +15,6 @@ use std::{
     thread::JoinHandle,
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter};
 
 fn now_epoch_ms() -> u64 {
     SystemTime::now()
@@ -24,33 +23,11 @@ fn now_epoch_ms() -> u64 {
         .as_millis() as u64
 }
 
-trait SessionEmitter {
+pub trait SessionEmitter {
     fn clear_screen(&self, payload: ClearScreen);
     fn countdown_tick(&self, value: String);
     fn show_number(&self, payload: ShowNumber);
     fn session_complete(&self, payload: SessionComplete);
-}
-
-struct TauriEmitter {
-    app: AppHandle,
-}
-
-impl SessionEmitter for TauriEmitter {
-    fn clear_screen(&self, payload: ClearScreen) {
-        let _ = self.app.emit("clear_screen", payload);
-    }
-
-    fn countdown_tick(&self, value: String) {
-        let _ = self.app.emit("countdown_tick", value);
-    }
-
-    fn show_number(&self, payload: ShowNumber) {
-        let _ = self.app.emit("show_number", payload);
-    }
-
-    fn session_complete(&self, payload: SessionComplete) {
-        let _ = self.app.emit("session_complete", payload);
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -110,7 +87,11 @@ impl SessionManager {
         }
     }
 
-    pub fn start(&self, app: AppHandle, config: SessionConfig) -> Result<u64, String> {
+    pub fn start_with_emitter<E: SessionEmitter + Send + 'static>(
+        &self,
+        emitter: E,
+        config: SessionConfig,
+    ) -> Result<u64, String> {
         self.cleanup_finished_worker();
 
         validate_config(&config)?;
@@ -144,7 +125,7 @@ impl SessionManager {
             .name("session-worker".into())
             .spawn(move || {
                 run_session_loop(
-                    app,
+                    emitter,
                     config,
                     state_arc,
                     stop_flag,
@@ -237,12 +218,12 @@ impl SessionManager {
         self.cleanup_finished_worker();
 
         self.configure_auto_repeat(None);
-        recover_lock(&self.recent_results, "recent_results").clear();
 
         let stop_flag = recover_lock(&self.stop, "stop").take();
         if let Some(flag) = stop_flag {
             flag.store(true, Ordering::SeqCst);
         }
+        recover_lock(&self.recent_results, "recent_results").clear();
 
         if let Some(handle) = recover_lock(&self.worker, "worker").take() {
             let _ = handle.join();
@@ -253,8 +234,8 @@ impl SessionManager {
     }
 }
 
-fn run_session_loop(
-    app: AppHandle,
+fn run_session_loop<E: SessionEmitter + Send + 'static>(
+    emitter: E,
     config: SessionConfig,
     state: Arc<Mutex<SessionState>>,
     stop: Arc<AtomicBool>,
@@ -262,8 +243,6 @@ fn run_session_loop(
     recent_results: Arc<Mutex<VecDeque<SessionComplete>>>,
     auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
 ) {
-    let emitter = TauriEmitter { app };
-
     // Convert SessionConfig to SessionConfigEffective for plan generation.
     let config_effective = SessionConfigEffective {
         digits_per_number: config.digits_per_number,
@@ -351,7 +330,7 @@ fn run_session_plan<E: SessionEmitter>(
             } => {
                 // Determine if this is the first flash to apply grace period.
                 // First flash comes after initial clear + 3 countdown ticks (step indices 0-3)
-                let is_first_flash = step_idx > 3;
+                let is_first_flash = step_idx == 4;
                 let grace = if is_first_flash {
                     FIRST_FLASH_GRACE
                 } else {
@@ -461,7 +440,8 @@ mod tests {
         random_fixed_digits_no_leading_zero, random_fixed_digits_no_leading_zero_capped,
         random_number_with_constraints,
     };
-    use crate::core::{types::SessionConfigInput, validate::normalize_session_config};
+    use crate::core::types::{SessionConfig, SessionConfigInput};
+    use crate::core::validate::normalize_session_config;
     use rand::rng;
     use std::sync::Arc;
 
@@ -867,5 +847,1025 @@ mod tests {
         sleep_until_interruptible(deadline, &stop);
         let elapsed = Instant::now() - start;
         assert!(elapsed >= Duration::from_millis(25));
+    }
+
+    #[test]
+    fn stop_when_idle_is_safe() {
+        let manager = SessionManager::default();
+        // stop() on an idle manager should not panic or leave state inconsistent
+        manager.stop();
+        let state_guard = manager.state.lock().expect("state lock");
+        assert!(matches!(*state_guard, SessionState::Idle));
+    }
+
+    #[test]
+    fn configure_auto_repeat_resets_generation_multiple_times() {
+        let manager = SessionManager::default();
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        });
+
+        let base_gen = manager.auto_repeat_generation();
+
+        for i in 0..5 {
+            let plan = AutoRepeatPlan {
+                remaining: i + 1,
+                delay_ms: 100,
+                config: config.clone(),
+                awaiting_validation_session_id: None,
+            };
+            manager.configure_auto_repeat(Some(plan));
+            assert!(
+                manager.auto_repeat_generation() > base_gen,
+                "Generation should increase after each configure_auto_repeat call (iteration {})",
+                i
+            );
+        }
+
+        manager.configure_auto_repeat(None);
+        let gen_after_clear = manager.auto_repeat_generation();
+        let plan_guard = manager.auto_repeat_plan.lock().expect("lock");
+        assert!(plan_guard.is_none());
+        assert!(gen_after_clear > base_gen);
+    }
+
+    #[test]
+    fn mark_validated_with_wrong_session_id_returns_none() {
+        let manager = SessionManager::default();
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        });
+
+        let plan = AutoRepeatPlan {
+            remaining: 3,
+            delay_ms: 500,
+            config,
+            awaiting_validation_session_id: Some(42),
+        };
+        manager.configure_auto_repeat(Some(plan));
+
+        // Wrong session id should return None
+        let res = manager.mark_validated_and_schedule_info(99).unwrap();
+        assert!(res.is_none());
+
+        // None awaiting_validation_session_id also returns None
+        let plan2 = AutoRepeatPlan {
+            remaining: 1,
+            delay_ms: 500,
+            config: SessionConfig {
+                digits_per_number: 1,
+                number_duration_ms: 100,
+                delay_between_numbers_ms: 0,
+                total_numbers: 1,
+                allow_negative_numbers: false,
+            },
+            awaiting_validation_session_id: None,
+        };
+        manager.configure_auto_repeat(Some(plan2));
+        let res2 = manager.mark_validated_and_schedule_info(42).unwrap();
+        assert!(res2.is_none());
+    }
+
+    struct TestEmitter {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl TestEmitter {
+        fn new() -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl SessionEmitter for TestEmitter {
+        fn clear_screen(&self, _payload: ClearScreen) {
+            self.calls.lock().unwrap().push("clear_screen".into());
+        }
+        fn countdown_tick(&self, value: String) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("countdown({})", value));
+        }
+        fn show_number(&self, payload: ShowNumber) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("show_number({})", payload.value));
+        }
+        fn session_complete(&self, _payload: SessionComplete) {
+            self.calls.lock().unwrap().push("session_complete".into());
+        }
+    }
+
+    fn make_sample_plan(session_id: u64) -> SessionPlan {
+        SessionPlan {
+            session_id,
+            config_snapshot: SessionConfigEffective {
+                digits_per_number: 1,
+                number_duration_s: 0.1,
+                delay_between_numbers_s: 0.0,
+                total_numbers: 2,
+                allow_negative_numbers: false,
+            },
+            steps: vec![
+                SessionStep::ClearScreen {
+                    session_id,
+                    index: None,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "3".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "2".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "1".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ShowNumber {
+                    session_id,
+                    index: 1,
+                    total: 2,
+                    value: 5,
+                    running_sum: 5,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ClearScreen {
+                    session_id,
+                    index: Some(1),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ShowNumber {
+                    session_id,
+                    index: 2,
+                    total: 2,
+                    value: 3,
+                    running_sum: 8,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ClearScreen {
+                    session_id,
+                    index: Some(2),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ClearScreen {
+                    session_id,
+                    index: None,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::Complete {
+                    session_id,
+                    numbers: vec![5, 3],
+                    sum: 8,
+                },
+            ],
+            total_duration_ms: 0,
+            numbers_generated: vec![5, 3],
+            expected_sum: 8,
+        }
+    }
+
+    #[test]
+    fn run_session_plan_emits_events_in_correct_order() {
+        let emitter = TestEmitter::new();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(false));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+        let auto_repeat_plan = Arc::new(Mutex::new(None));
+        let beep_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let beep = {
+            let bc = Arc::clone(&beep_count);
+            move || {
+                bc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        };
+
+        let plan = make_sample_plan(42);
+        run_session_plan(
+            &emitter,
+            plan,
+            state,
+            stop,
+            recent_results,
+            auto_repeat_plan,
+            beep,
+        );
+
+        let calls = emitter.calls.lock().unwrap();
+        assert_eq!(
+            *calls,
+            vec![
+                "clear_screen",
+                "countdown(3)",
+                "countdown(2)",
+                "countdown(1)",
+                "show_number(5)",
+                "clear_screen",
+                "show_number(3)",
+                "clear_screen",
+                "clear_screen",
+                "session_complete",
+            ],
+            "Events should be emitted in plan order"
+        );
+        assert_eq!(beep_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn run_session_plan_stop_before_start() {
+        let emitter = TestEmitter::new();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(true));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+        let auto_repeat_plan = Arc::new(Mutex::new(None));
+
+        let plan = make_sample_plan(99);
+        run_session_plan(
+            &emitter,
+            plan,
+            Arc::clone(&state),
+            stop,
+            recent_results,
+            auto_repeat_plan,
+            || {},
+        );
+
+        let calls = emitter.calls.lock().unwrap();
+        assert_eq!(*calls, vec!["clear_screen"]);
+        let state_guard = state.lock().unwrap();
+        assert!(matches!(*state_guard, SessionState::Idle));
+    }
+
+    #[test]
+    fn run_session_plan_stores_results() {
+        let emitter = TestEmitter::new();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(false));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+        let auto_repeat_plan = Arc::new(Mutex::new(None));
+
+        let plan = make_sample_plan(42);
+        run_session_plan(
+            &emitter,
+            plan,
+            Arc::clone(&state),
+            stop,
+            Arc::clone(&recent_results),
+            auto_repeat_plan,
+            || {},
+        );
+
+        // Check complete state
+        let state_guard = state.lock().unwrap();
+        assert!(matches!(*state_guard, SessionState::Complete));
+
+        // Check results stored
+        let results = recent_results.lock().unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].session_id, 42);
+        assert_eq!(results[0].sum, 8);
+        assert_eq!(results[0].numbers, vec![5, 3]);
+    }
+
+    #[test]
+    fn run_session_plan_sets_awaiting_validation() {
+        let emitter = TestEmitter::new();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(false));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+        let auto_repeat_plan = Arc::new(Mutex::new(Some(AutoRepeatPlan {
+            remaining: 3,
+            delay_ms: 500,
+            config: SessionConfig {
+                digits_per_number: 1,
+                number_duration_ms: 100,
+                delay_between_numbers_ms: 0,
+                total_numbers: 1,
+                allow_negative_numbers: false,
+            },
+            awaiting_validation_session_id: None,
+        })));
+
+        let plan = make_sample_plan(42);
+        run_session_plan(
+            &emitter,
+            plan,
+            state,
+            stop,
+            recent_results,
+            Arc::clone(&auto_repeat_plan),
+            || {},
+        );
+
+        let plan_guard = auto_repeat_plan.lock().unwrap();
+        let ar = plan_guard.as_ref().unwrap();
+        assert_eq!(ar.awaiting_validation_session_id, Some(42));
+        assert_eq!(ar.remaining, 3);
+    }
+
+    #[test]
+    fn run_session_plan_does_not_set_awaiting_when_remaining_zero() {
+        let emitter = TestEmitter::new();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(false));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+        let auto_repeat_plan = Arc::new(Mutex::new(Some(AutoRepeatPlan {
+            remaining: 0,
+            delay_ms: 500,
+            config: SessionConfig {
+                digits_per_number: 1,
+                number_duration_ms: 100,
+                delay_between_numbers_ms: 0,
+                total_numbers: 1,
+                allow_negative_numbers: false,
+            },
+            awaiting_validation_session_id: None,
+        })));
+
+        let plan = make_sample_plan(42);
+        run_session_plan(
+            &emitter,
+            plan,
+            state,
+            stop,
+            recent_results,
+            Arc::clone(&auto_repeat_plan),
+            || {},
+        );
+
+        let plan_guard = auto_repeat_plan.lock().unwrap();
+        assert!(
+            plan_guard
+                .as_ref()
+                .unwrap()
+                .awaiting_validation_session_id
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn random_fixed_digits_no_leading_zero_capped_max_boundary() {
+        let mut rng = rng();
+        // digits=2, max_inclusive=99 (upper bound for 2 digits)
+        for _ in 0..50 {
+            let res = random_fixed_digits_no_leading_zero_capped(&mut rng, 2, 99).unwrap();
+            let v: u64 = res.parse().unwrap();
+            assert!((10..=99).contains(&v), "value {} out of range [10, 99]", v);
+        }
+        // digits=3, max_inclusive=999 (upper bound for 3 digits)
+        for _ in 0..50 {
+            let res = random_fixed_digits_no_leading_zero_capped(&mut rng, 3, 999).unwrap();
+            let v: u64 = res.parse().unwrap();
+            assert!(
+                (100..=999).contains(&v),
+                "value {} out of range [100, 999]",
+                v
+            );
+        }
+    }
+
+    #[test]
+    fn random_number_with_constraints_digits_18() {
+        let mut rng = rng();
+        let mut running_sum: i128 = 0;
+        for i in 0..50u32 {
+            let (s, val) = random_number_with_constraints(&mut rng, 18, true, i, running_sum);
+            // Strip leading '-' for length check (number can be negative)
+            let magnitude_str = s.trim_start_matches('-');
+            assert_eq!(
+                magnitude_str.len(),
+                18,
+                "magnitude string length should be 18 for digits=18, got '{}'",
+                s
+            );
+            let mag: i128 = magnitude_str.parse().unwrap();
+            assert!(mag >= 10i128.pow(17), "magnitude too small for digits=18");
+            assert!(mag < 10i128.pow(18), "magnitude too large for digits=18");
+            let _ = i64::try_from(val).expect("val should fit in i64");
+            if i == 0 {
+                assert!(!s.starts_with('-'), "first number should not be negative");
+            }
+            running_sum = (running_sum + val).max(0);
+            assert!(running_sum >= 0, "running sum went negative");
+        }
+    }
+
+    #[test]
+    fn result_for_not_found() {
+        let manager = SessionManager::default();
+        let err = manager.result_for(999).unwrap_err();
+        assert_eq!(err, "session result not found");
+    }
+
+    #[test]
+    fn run_session_plan_with_negative_numbers() {
+        let emitter = TestEmitter::new();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(false));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+        let auto_repeat_plan = Arc::new(Mutex::new(None));
+        let beep_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let beep = {
+            let bc = Arc::clone(&beep_count);
+            move || {
+                bc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        };
+
+        let plan = SessionPlan {
+            session_id: 77,
+            config_snapshot: SessionConfigEffective {
+                digits_per_number: 1,
+                number_duration_s: 0.1,
+                delay_between_numbers_s: 0.0,
+                total_numbers: 2,
+                allow_negative_numbers: true,
+            },
+            steps: vec![
+                SessionStep::ClearScreen {
+                    session_id: 77,
+                    index: None,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "3".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "2".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "1".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ShowNumber {
+                    session_id: 77,
+                    index: 1,
+                    total: 2,
+                    value: -5,
+                    running_sum: -5,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ClearScreen {
+                    session_id: 77,
+                    index: Some(1),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ShowNumber {
+                    session_id: 77,
+                    index: 2,
+                    total: 2,
+                    value: 3,
+                    running_sum: -2,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ClearScreen {
+                    session_id: 77,
+                    index: Some(2),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ClearScreen {
+                    session_id: 77,
+                    index: None,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::Complete {
+                    session_id: 77,
+                    numbers: vec![-5, 3],
+                    sum: -2,
+                },
+            ],
+            total_duration_ms: 0,
+            numbers_generated: vec![-5, 3],
+            expected_sum: -2,
+        };
+
+        run_session_plan(
+            &emitter,
+            plan,
+            Arc::clone(&state),
+            stop,
+            Arc::clone(&recent_results),
+            auto_repeat_plan,
+            beep,
+        );
+
+        let calls = emitter.calls.lock().unwrap();
+        assert_eq!(
+            *calls,
+            vec![
+                "clear_screen",
+                "countdown(3)",
+                "countdown(2)",
+                "countdown(1)",
+                "show_number(-5)",
+                "clear_screen",
+                "show_number(3)",
+                "clear_screen",
+                "clear_screen",
+                "session_complete",
+            ]
+        );
+        assert_eq!(beep_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        let state_guard = state.lock().unwrap();
+        assert!(matches!(*state_guard, SessionState::Complete));
+
+        let results = recent_results.lock().unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].session_id, 77);
+        assert_eq!(results[0].sum, -2);
+        assert_eq!(results[0].numbers, vec![-5, 3]);
+    }
+
+    #[test]
+    fn run_session_plan_with_zero_numbers() {
+        let emitter = TestEmitter::new();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(false));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+        let auto_repeat_plan = Arc::new(Mutex::new(None));
+
+        let plan = SessionPlan {
+            session_id: 100,
+            config_snapshot: SessionConfigEffective {
+                digits_per_number: 1,
+                number_duration_s: 0.1,
+                delay_between_numbers_s: 0.0,
+                total_numbers: 0,
+                allow_negative_numbers: false,
+            },
+            steps: vec![
+                SessionStep::ClearScreen {
+                    session_id: 100,
+                    index: None,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "3".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "2".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "1".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ClearScreen {
+                    session_id: 100,
+                    index: None,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::Complete {
+                    session_id: 100,
+                    numbers: vec![],
+                    sum: 0,
+                },
+            ],
+            total_duration_ms: 3100,
+            numbers_generated: vec![],
+            expected_sum: 0,
+        };
+
+        run_session_plan(
+            &emitter,
+            plan,
+            Arc::clone(&state),
+            stop,
+            Arc::clone(&recent_results),
+            auto_repeat_plan,
+            || {},
+        );
+
+        let calls = emitter.calls.lock().unwrap();
+        assert_eq!(
+            *calls,
+            vec![
+                "clear_screen",
+                "countdown(3)",
+                "countdown(2)",
+                "countdown(1)",
+                "clear_screen",
+                "session_complete",
+            ]
+        );
+
+        let state_guard = state.lock().unwrap();
+        assert!(matches!(*state_guard, SessionState::Complete));
+
+        let results = recent_results.lock().unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].session_id, 100);
+        assert_eq!(results[0].sum, 0);
+        assert!(results[0].numbers.is_empty());
+    }
+
+    #[test]
+    fn run_session_plan_with_total_numbers_1() {
+        let emitter = TestEmitter::new();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(false));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+        let auto_repeat_plan = Arc::new(Mutex::new(None));
+
+        let plan = SessionPlan {
+            session_id: 50,
+            config_snapshot: SessionConfigEffective {
+                digits_per_number: 1,
+                number_duration_s: 0.1,
+                delay_between_numbers_s: 0.0,
+                total_numbers: 1,
+                allow_negative_numbers: false,
+            },
+            steps: vec![
+                SessionStep::ClearScreen {
+                    session_id: 50,
+                    index: None,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "3".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "2".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::CountdownTick {
+                    value: "1".into(),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ShowNumber {
+                    session_id: 50,
+                    index: 1,
+                    total: 1,
+                    value: 42,
+                    running_sum: 42,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ClearScreen {
+                    session_id: 50,
+                    index: Some(1),
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::ClearScreen {
+                    session_id: 50,
+                    index: None,
+                    delay_ms_before_next: 0,
+                },
+                SessionStep::Complete {
+                    session_id: 50,
+                    numbers: vec![42],
+                    sum: 42,
+                },
+            ],
+            total_duration_ms: 0,
+            numbers_generated: vec![42],
+            expected_sum: 42,
+        };
+
+        run_session_plan(
+            &emitter,
+            plan,
+            Arc::clone(&state),
+            stop,
+            Arc::clone(&recent_results),
+            auto_repeat_plan,
+            || {},
+        );
+
+        let calls = emitter.calls.lock().unwrap();
+        assert_eq!(
+            *calls,
+            vec![
+                "clear_screen",
+                "countdown(3)",
+                "countdown(2)",
+                "countdown(1)",
+                "show_number(42)",
+                "clear_screen",
+                "clear_screen",
+                "session_complete",
+            ]
+        );
+
+        let state_guard = state.lock().unwrap();
+        assert!(matches!(*state_guard, SessionState::Complete));
+
+        let results = recent_results.lock().unwrap();
+        assert_eq!(results[0].session_id, 50);
+        assert_eq!(results[0].sum, 42);
+        assert_eq!(results[0].numbers, vec![42]);
+    }
+
+    #[test]
+    fn run_session_plan_stop_after_first_number() {
+        let emitter = TestEmitter::new();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(false));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+        let auto_repeat_plan = Arc::new(Mutex::new(None));
+        let beep_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+
+        let stop_clone = Arc::clone(&stop);
+        let bc = Arc::clone(&beep_count);
+        let beep = move || {
+            bc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            stop_clone.store(true, Ordering::SeqCst);
+        };
+
+        let plan = make_sample_plan(55);
+        run_session_plan(
+            &emitter,
+            plan,
+            Arc::clone(&state),
+            Arc::clone(&stop),
+            recent_results,
+            auto_repeat_plan,
+            beep,
+        );
+
+        let calls = emitter.calls.lock().unwrap();
+        assert_eq!(
+            *calls,
+            vec![
+                "clear_screen",
+                "countdown(3)",
+                "countdown(2)",
+                "countdown(1)",
+                "show_number(5)",
+                "clear_screen",
+            ]
+        );
+
+        assert_eq!(beep_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let state_guard = state.lock().unwrap();
+        assert!(matches!(*state_guard, SessionState::Idle));
+    }
+
+    #[test]
+    fn run_session_plan_full_auto_repeat_cycle() {
+        let emitter = TestEmitter::new();
+        let state = Arc::new(Mutex::new(SessionState::Idle));
+        let stop = Arc::new(AtomicBool::new(false));
+        let recent_results = Arc::new(Mutex::new(VecDeque::new()));
+
+        let manager = SessionManager::default();
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 2,
+            allow_negative_numbers: false,
+        });
+
+        // Step 1: Configure auto-repeat with remaining=1 via SessionManager
+        manager.configure_auto_repeat(Some(AutoRepeatPlan {
+            remaining: 1,
+            delay_ms: 500,
+            config: config.clone(),
+            awaiting_validation_session_id: None,
+        }));
+
+        // Step 2: Run session plan using the SAME auto_repeat_plan Arc
+        let plan = make_sample_plan(42);
+        run_session_plan(
+            &emitter,
+            plan,
+            Arc::clone(&state),
+            stop,
+            recent_results,
+            Arc::clone(&manager.auto_repeat_plan),
+            || {},
+        );
+
+        // Verify awaiting_validation_session_id was set by run_session_plan
+        {
+            let plan_guard = manager.auto_repeat_plan.lock().unwrap();
+            let ar = plan_guard.as_ref().unwrap();
+            assert_eq!(ar.awaiting_validation_session_id, Some(42));
+            assert_eq!(ar.remaining, 1);
+        }
+
+        // Step 3: Call mark_validated_and_schedule_info to consume it
+        let result = manager.mark_validated_and_schedule_info(42).unwrap();
+        assert!(result.is_some());
+        let (_delay_ms, remaining, _cfg, _gen) = result.unwrap();
+        assert_eq!(remaining, 0, "remaining should be 0 after consuming");
+
+        // Subsequent call should return None (awaiting already cleared)
+        let result2 = manager.mark_validated_and_schedule_info(42).unwrap();
+        assert!(result2.is_none());
+    }
+
+    #[test]
+    fn start_with_emitter_creates_session() {
+        let manager = SessionManager::default();
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        });
+
+        let emitter = TestEmitter::new();
+        let result = manager.start_with_emitter(emitter, config);
+        assert!(result.is_ok());
+        let session_id = result.unwrap();
+        assert_eq!(session_id, 1, "first session should have id 1");
+
+        // State should be ShowingNumbers immediately after start
+        {
+            let state_guard = manager.state.lock().unwrap();
+            assert!(matches!(
+                *state_guard,
+                SessionState::ShowingNumbers {
+                    current: 0,
+                    total: 1
+                }
+            ));
+        }
+
+        // Stop and verify Idle state
+        manager.stop();
+        {
+            let state_guard = manager.state.lock().unwrap();
+            assert!(matches!(*state_guard, SessionState::Idle));
+        }
+    }
+
+    #[test]
+    fn start_with_emitter_rejects_concurrent() {
+        let manager = SessionManager::default();
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        });
+
+        // First start succeeds
+        let result1 = manager.start_with_emitter(TestEmitter::new(), config.clone());
+        assert!(result1.is_ok());
+
+        // Second start should fail while first is running
+        let result2 = manager.start_with_emitter(TestEmitter::new(), config.clone());
+        assert!(result2.is_err());
+        assert_eq!(
+            result2.unwrap_err(),
+            "session already running",
+            "concurrent start should be rejected"
+        );
+
+        // Stop the first session
+        manager.stop();
+
+        // After stop, start should succeed again
+        let result3 = manager.start_with_emitter(TestEmitter::new(), config);
+        assert!(result3.is_ok());
+
+        manager.stop();
+    }
+
+    #[test]
+    fn generator_stress_10000_iterations() {
+        let mut rng = rng();
+        let digits = 3;
+        let allow_neg = true;
+        let mut last: Option<String> = None;
+        let mut running_sum: i128 = 0;
+        let mut fallback_count: u32 = 0;
+
+        for i in 0..10000u32 {
+            let mut attempt = 0u32;
+            let (s, val) = loop {
+                let (candidate, candidate_value) =
+                    random_number_with_constraints(&mut rng, digits, allow_neg, i, running_sum);
+                if last.as_deref() != Some(candidate.as_str()) {
+                    break (candidate, candidate_value);
+                }
+                attempt += 1;
+                if attempt >= 256 {
+                    fallback_count += 1;
+                    let fallback = if candidate.starts_with('-') {
+                        candidate.trim_start_matches('-').to_string()
+                    } else {
+                        match candidate.parse::<u64>() {
+                            Ok(mag) => {
+                                let max_exclusive =
+                                    if digits <= 1 { 10 } else { 10u64.pow(digits) };
+                                let next = (mag % (max_exclusive - 1)) + 1;
+                                next.to_string()
+                            }
+                            Err(_) => "1".to_string(),
+                        }
+                    };
+                    let fb_val: i128 = fallback.parse::<i128>().unwrap_or(0);
+                    let signed = if candidate.starts_with('-') {
+                        if running_sum - fb_val >= 0 {
+                            -fb_val
+                        } else {
+                            fb_val
+                        }
+                    } else {
+                        fb_val
+                    };
+                    break (fallback, signed);
+                }
+            };
+
+            if let Some(prev) = &last {
+                assert_ne!(prev, &s, "consecutive duplicate at {}", i);
+            }
+
+            if i == 0 {
+                assert!(!s.starts_with('-'), "first number negative at {}", i);
+            }
+
+            running_sum = (running_sum + val).max(0);
+            assert!(running_sum >= 0, "running sum went negative at {}", i);
+
+            last = Some(s);
+        }
+
+        // Fallback should rarely trigger; verify it doesn't dominate
+        assert!(
+            fallback_count < 100,
+            "fallback triggered {} times in 10000 iterations (should be rare)",
+            fallback_count
+        );
+    }
+
+    #[test]
+    fn session_manager_stop_after_mark_validated() {
+        let manager = SessionManager::default();
+        let (config, _eff) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        });
+
+        // Configure auto-repeat with awaiting validation
+        manager.configure_auto_repeat(Some(AutoRepeatPlan {
+            remaining: 1,
+            delay_ms: 500,
+            config: config.clone(),
+            awaiting_validation_session_id: Some(42),
+        }));
+
+        // Consume the awaiting via mark_validated_and_schedule_info
+        let result = manager.mark_validated_and_schedule_info(42).unwrap();
+        assert!(result.is_some());
+
+        // Insert a fake result to verify results are preserved until stop
+        {
+            let mut guard = manager.recent_results.lock().unwrap();
+            guard.push_back(SessionComplete {
+                session_id: 42,
+                numbers: vec![1, 2, 3],
+                sum: 6,
+            });
+        }
+
+        // Now stop — should clear everything
+        manager.stop();
+
+        // State becomes Idle
+        {
+            let state_guard = manager.state.lock().unwrap();
+            assert!(matches!(*state_guard, SessionState::Idle));
+        }
+
+        // recent_results are cleared by stop()
+        {
+            let guard = manager.recent_results.lock().unwrap();
+            assert!(guard.is_empty(), "stop() should clear recent_results");
+        }
+
+        // auto_repeat_plan is cleared by stop()
+        {
+            let plan_guard = manager.auto_repeat_plan.lock().unwrap();
+            assert!(plan_guard.is_none(), "stop() should clear auto_repeat_plan");
+        }
     }
 }

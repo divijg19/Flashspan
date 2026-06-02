@@ -67,19 +67,12 @@ export const nativeRuntime: Runtime = {
 		config: SessionConfigInput,
 		autoRepeat?: AutoRepeatConfig | null,
 	): Promise<StartSessionResponse> {
-		console.log("native startSession with autoRepeat:", autoRepeat);
 		if (autoRepeat) {
-			const debugResult = await invoke<string>("debug_auto_repeat", {
-				autoRepeat: autoRepeat,
-			});
-			console.log("debug_auto_repeat result:", debugResult);
 			return invoke<StartSessionResponse>("start_session", {
 				config,
 				autoRepeat: autoRepeat,
 			});
 		}
-		const debugResult = await invoke<string>("debug_auto_repeat", {});
-		console.log("debug_auto_repeat result:", debugResult);
 		return invoke<StartSessionResponse>("start_session", { config });
 	},
 

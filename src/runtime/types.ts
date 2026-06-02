@@ -99,4 +99,5 @@ export interface ValidationResult {
 export interface SubmitAnswerResponse {
 	validation: ValidationResult;
 	auto_repeat_waiting: AutoRepeatWaitingPayload | null;
+	message: string;
 }

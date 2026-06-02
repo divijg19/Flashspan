@@ -9,10 +9,13 @@ mod session;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_app {
     use crate::core::{
-        types::{AutoRepeatPlan, SessionConfigEffective, SessionConfigInput},
+        types::{
+            AutoRepeatPlan, ClearScreen, SessionComplete, SessionConfigEffective,
+            SessionConfigInput, ShowNumber,
+        },
         validate::normalize_session_config,
     };
-    use crate::session::{SessionManager, recover_lock};
+    use crate::session::{SessionEmitter, SessionManager, recover_lock};
     use log::warn;
     use serde::Deserialize;
     use std::sync::{Arc, Mutex};
@@ -20,6 +23,28 @@ mod native_app {
     use std::time::Instant;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tauri::Emitter;
+
+    struct TauriEmitter {
+        app: tauri::AppHandle,
+    }
+
+    impl SessionEmitter for TauriEmitter {
+        fn clear_screen(&self, payload: ClearScreen) {
+            let _ = self.app.emit("clear_screen", payload);
+        }
+
+        fn countdown_tick(&self, value: String) {
+            let _ = self.app.emit("countdown_tick", value);
+        }
+
+        fn show_number(&self, payload: ShowNumber) {
+            let _ = self.app.emit("show_number", payload);
+        }
+
+        fn session_complete(&self, payload: SessionComplete) {
+            let _ = self.app.emit("session_complete", payload);
+        }
+    }
 
     #[tauri::command]
     fn ping() -> String {
@@ -202,6 +227,27 @@ mod native_app {
             let long = "1".repeat(100);
             assert!(parse_answer_text(&long).is_err());
         }
+
+        #[test]
+        fn parse_answer_text_negatives_and_extremes() {
+            // Negative numbers
+            assert_eq!(parse_answer_text("-42").unwrap(), -42);
+            assert_eq!(parse_answer_text("  -17  ").unwrap(), -17);
+            assert_eq!(parse_answer_text("-0").unwrap(), 0);
+
+            // Boundary values
+            assert_eq!(parse_answer_text("9223372036854775807").unwrap(), i64::MAX);
+            assert_eq!(parse_answer_text("-9223372036854775808").unwrap(), i64::MIN);
+
+            // Whitespace and commas
+            assert_eq!(parse_answer_text("  1,234,567  ").unwrap(), 1234567);
+            assert_eq!(parse_answer_text("-9,876").unwrap(), -9876);
+
+            // Rejects non-numeric and empty
+            assert!(parse_answer_text("abc").is_err());
+            assert!(parse_answer_text("12abc34").is_err());
+            assert!(parse_answer_text("   ").is_err());
+        }
     }
 
     fn now_ms() -> u64 {
@@ -293,7 +339,12 @@ mod native_app {
                 if manager_arc.auto_repeat_generation() != generation {
                     return;
                 }
-                if let Err(e) = manager_arc.start(app_for_thread, config) {
+                if let Err(e) = manager_arc.start_with_emitter(
+                    TauriEmitter {
+                        app: app_for_thread,
+                    },
+                    config,
+                ) {
                     warn!("auto-repeat start failed: {}", e);
                 }
             })
@@ -302,11 +353,6 @@ mod native_app {
         }
 
         Ok(Some(payload))
-    }
-
-    #[tauri::command]
-    fn debug_auto_repeat(auto_repeat: Option<AutoRepeatConfigInput>) -> String {
-        format!("debug_auto_repeat received: {:?}", auto_repeat)
     }
 
     #[tauri::command]
@@ -351,7 +397,7 @@ mod native_app {
             None
         };
 
-        let session_id = manager.start(app, config)?;
+        let session_id = manager.start_with_emitter(TauriEmitter { app: app.clone() }, config)?;
         Ok(StartSessionResponse {
             session_id,
             effective_config,
@@ -478,7 +524,6 @@ mod native_app {
                 get_app_settings,
                 set_color_scheme,
                 set_theme_mode,
-                debug_auto_repeat,
                 start_session,
                 stop_session,
                 cancel_auto_repeat,
