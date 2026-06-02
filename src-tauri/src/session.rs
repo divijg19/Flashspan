@@ -160,6 +160,10 @@ impl SessionManager {
     }
 
     pub fn configure_auto_repeat(&self, plan: Option<AutoRepeatPlan>) {
+        warn!(
+            "[auto-repeat] configure_auto_repeat: plan={:?}",
+            plan.as_ref().map(|p| (p.remaining, p.delay_ms))
+        );
         *recover_lock(&self.auto_repeat_plan, "auto_repeat_plan") = plan;
         self.auto_repeat_generation.fetch_add(1, Ordering::SeqCst);
     }
@@ -189,19 +193,34 @@ impl SessionManager {
         let (delay_ms, config, remaining_after_decrement) = {
             let mut plan_guard = recover_lock(&self.auto_repeat_plan, "auto_repeat_plan");
             let Some(plan) = plan_guard.as_mut() else {
+                warn!("[auto-repeat] mark_validated_and_schedule_info: plan is None");
                 return Ok(None);
             };
+            warn!(
+                "[auto-repeat] mark_validated_and_schedule_info: plan exists, awaiting={:?}, session_id={}, remaining={}",
+                plan.awaiting_validation_session_id, session_id, plan.remaining
+            );
 
             if plan.awaiting_validation_session_id != Some(session_id) {
+                warn!(
+                    "[auto-repeat] mark_validated_and_schedule_info: session_id mismatch (expected {:?}, got {})",
+                    plan.awaiting_validation_session_id, session_id
+                );
                 return Ok(None);
             }
 
             if plan.remaining == 0 {
+                warn!("[auto-repeat] mark_validated_and_schedule_info: remaining is 0");
                 return Ok(None);
             }
 
             plan.awaiting_validation_session_id = None;
             plan.remaining = plan.remaining.saturating_sub(1);
+
+            warn!(
+                "[auto-repeat] mark_validated_and_schedule_info: success, remaining_after_decrement={}",
+                plan.remaining
+            );
 
             (plan.delay_ms, plan.config.clone(), plan.remaining)
         };
@@ -401,7 +420,18 @@ fn run_session_plan<E: SessionEmitter>(
                     if let Some(ar_plan) = plan_guard.as_mut()
                         && ar_plan.remaining > 0
                     {
+                        warn!(
+                            "[auto-repeat] run_session_plan Complete: setting awaiting_validation_session_id={}, remaining_before={}",
+                            *session_id, ar_plan.remaining
+                        );
                         ar_plan.awaiting_validation_session_id = Some(*session_id);
+                    } else {
+                        warn!(
+                            "[auto-repeat] run_session_plan Complete: NOT setting — plan={:?}",
+                            plan_guard
+                                .as_ref()
+                                .map(|p| (p.remaining, p.awaiting_validation_session_id))
+                        );
                     }
                 }
             }

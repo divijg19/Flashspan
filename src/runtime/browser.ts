@@ -547,6 +547,8 @@ async function startSessionImpl(
 		timelineMs += 1000;
 	}
 
+	timelineMs += FIRST_FLASH_GRACE_MS;
+
 	const numberDurationMs = toMs(effectiveConfig.number_duration_s);
 	const gapDurationMs = toMs(effectiveConfig.delay_between_numbers_s);
 	let currentAtMs = timelineMs;

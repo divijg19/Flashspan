@@ -12,7 +12,7 @@ mod native_app {
         types::{AutoRepeatPlan, SessionConfigEffective, SessionConfigInput},
         validate::normalize_session_config,
     };
-    use crate::session::{recover_lock, SessionManager};
+    use crate::session::{SessionManager, recover_lock};
     use log::warn;
     use serde::Deserialize;
     use std::sync::{Arc, Mutex};
@@ -216,9 +216,16 @@ mod native_app {
         manager: Arc<SessionManager>,
         session_id: u64,
     ) -> Result<Option<AutoRepeatWaitingPayload>, String> {
-        let Some((delay_ms, remaining, config, generation)) =
-            manager.mark_validated_and_schedule_info(session_id)?
-        else {
+        warn!(
+            "[auto-repeat] schedule_auto_repeat_if_needed: session_id={}",
+            session_id
+        );
+        let result = manager.mark_validated_and_schedule_info(session_id)?;
+        warn!(
+            "[auto-repeat] mark_validated_and_schedule_info returned: {:?}",
+            result
+        );
+        let Some((delay_ms, remaining, config, generation)) = result else {
             return Ok(None);
         };
 
@@ -298,12 +305,18 @@ mod native_app {
     }
 
     #[tauri::command]
+    fn debug_auto_repeat(auto_repeat: Option<AutoRepeatConfigInput>) -> String {
+        format!("debug_auto_repeat received: {:?}", auto_repeat)
+    }
+
+    #[tauri::command]
     fn start_session(
         app: tauri::AppHandle,
         manager: tauri::State<'_, Arc<SessionManager>>,
         config: SessionConfigInput,
         auto_repeat: Option<AutoRepeatConfigInput>,
     ) -> Result<StartSessionResponse, String> {
+        warn!("[auto-repeat] start_session: auto_repeat={:?}", auto_repeat);
         let (config, effective_config) = normalize_session_config(config);
 
         // Configure auto-repeat plan for this run (or clear it).
@@ -448,6 +461,16 @@ mod native_app {
 
     pub fn run() {
         tauri::Builder::default()
+            .setup(|app| {
+                if cfg!(debug_assertions) {
+                    app.handle().plugin(
+                        tauri_plugin_log::Builder::default()
+                            .level(log::LevelFilter::Info)
+                            .build(),
+                    )?;
+                }
+                Ok(())
+            })
             .manage(Arc::new(SessionManager::default()))
             .manage(SettingsState::default())
             .invoke_handler(tauri::generate_handler![
@@ -455,6 +478,7 @@ mod native_app {
                 get_app_settings,
                 set_color_scheme,
                 set_theme_mode,
+                debug_auto_repeat,
                 start_session,
                 stop_session,
                 cancel_auto_repeat,

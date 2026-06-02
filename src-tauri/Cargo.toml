@@ -1,6 +1,6 @@
 [package]
 name = "Flashspan"
-version = "2.3.1"
+version = "2.3.2"
 description = "Mental Maths training simulator"
 authors = ["you"]
 license = ""
