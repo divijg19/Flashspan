@@ -75,6 +75,7 @@ const listeners = {
 let nextSessionId = 1;
 let currentSession: BrowserSession | null = null;
 let pendingAutoRepeat: PendingAutoRepeat | null = null;
+let sessionStarting = false;
 let appSettings = loadAppSettings();
 let soundEnabled = loadSoundEnabled();
 let hasLoggedWasmPlannerReady = false;
@@ -172,7 +173,7 @@ function persistSoundEnabled(): void {
 }
 
 function emit<T>(set: Set<Listener<T>>, payload: T): void {
-	for (const handler of set) {
+	for (const handler of [...set]) {
 		try {
 			handler(payload);
 		} catch {
@@ -322,15 +323,31 @@ function generateNumber(
 		return { payload, value: signedValue };
 	}
 
-	const fallbackMagnitude = Math.max(1, randomMagnitude(digits));
-	const fallbackValue =
-		runningSum - fallbackMagnitude >= 0
-			? -fallbackMagnitude
-			: fallbackMagnitude;
-	return {
-		payload: String(fallbackValue),
-		value: fallbackValue,
-	};
+	return deterministicFallback(lastPayload, digits, runningSum);
+}
+
+export function deterministicFallback(
+	lastPayload: string | null,
+	digits: number,
+	runningSum: number,
+): { payload: string; value: number } {
+	if (lastPayload == null) {
+		return { payload: "1", value: 1 };
+	}
+
+	const lastVal = Number(lastPayload);
+	if (lastVal < 0) {
+		const positive = Math.abs(lastVal);
+		return { payload: String(positive), value: positive };
+	}
+
+	const maxExclusive = digits <= 1 ? 10 : 10 ** digits;
+	const next = (lastVal % (maxExclusive - 1)) + 1;
+
+	if (runningSum - next >= 0) {
+		return { payload: String(-next), value: -next };
+	}
+	return { payload: String(next), value: next };
 }
 
 function buildBridgeSeed(): number {
@@ -490,6 +507,7 @@ function finishSession(session: BrowserSession): void {
 	}
 
 	session.completed = true;
+	clearSessionTimers(session);
 	emitClearScreen(session.sessionId, null);
 	emit(listeners.sessionComplete, {
 		session_id: session.sessionId,
@@ -502,108 +520,120 @@ async function startSessionImpl(
 	config: SessionConfigInput,
 	autoRepeat?: AutoRepeatConfig | null,
 ): Promise<StartSessionResponse> {
-	const effectiveAutoRepeat = normalizeAutoRepeat(autoRepeat);
-	const plannedSession = await resolvePlannedSessionData(nextSessionId, config);
-	const effectiveConfig =
-		plannedSession?.config ?? normalizeSessionConfig(config);
-
-	if (currentSession) {
-		clearSessionTimers(currentSession);
+	if (sessionStarting) {
+		throw new Error("A session is already starting");
 	}
+	sessionStarting = true;
+	try {
+		const effectiveAutoRepeat = normalizeAutoRepeat(autoRepeat);
+		const plannedSession = await resolvePlannedSessionData(
+			nextSessionId,
+			config,
+		);
+		const effectiveConfig =
+			plannedSession?.config ?? normalizeSessionConfig(config);
 
-	if (pendingAutoRepeat) {
-		pendingAutoRepeat.cancelled = true;
-		if (pendingAutoRepeat.tickId != null) {
-			window.clearTimeout(pendingAutoRepeat.tickId);
+		if (currentSession) {
+			clearSessionTimers(currentSession);
 		}
-		pendingAutoRepeat = null;
-	}
 
-	const sessionId = nextSessionId;
-	nextSessionId += 1;
+		if (pendingAutoRepeat) {
+			pendingAutoRepeat.cancelled = true;
+			if (pendingAutoRepeat.tickId != null) {
+				window.clearTimeout(pendingAutoRepeat.tickId);
+			}
+			pendingAutoRepeat = null;
+		}
 
-	const session: BrowserSession = {
-		sessionId,
-		config: effectiveConfig,
-		autoRepeat: effectiveAutoRepeat,
-		plannedNumbers: plannedSession?.numbers ?? null,
-		plannedSum: plannedSession?.sum ?? null,
-		numbers: [],
-		sum: 0,
-		runningSum: 0,
-		lastPayload: null,
-		completed: false,
-		timers: [],
-	};
+		const sessionId = nextSessionId;
+		nextSessionId += 1;
 
-	currentSession = session;
-	emitClearScreen(sessionId, null);
+		const session: BrowserSession = {
+			sessionId,
+			config: effectiveConfig,
+			autoRepeat: effectiveAutoRepeat,
+			plannedNumbers: plannedSession?.numbers ?? null,
+			plannedSum: plannedSession?.sum ?? null,
+			numbers: [],
+			sum: 0,
+			runningSum: 0,
+			lastPayload: null,
+			completed: false,
+			timers: [],
+		};
 
-	let timelineMs = 0;
-	for (const value of COUNTDOWN_TICKS) {
-		queueTimer(session, timelineMs, () => {
-			emit(listeners.countdownTick, String(value));
-		});
-		timelineMs += 1000;
-	}
+		currentSession = session;
+		emitClearScreen(sessionId, null);
 
-	timelineMs += FIRST_FLASH_GRACE_MS;
+		let timelineMs = 0;
+		for (const value of COUNTDOWN_TICKS) {
+			queueTimer(session, timelineMs, () => {
+				emit(listeners.countdownTick, String(value));
+			});
+			timelineMs += 1000;
+		}
 
-	const numberDurationMs = toMs(effectiveConfig.number_duration_s);
-	const gapDurationMs = toMs(effectiveConfig.delay_between_numbers_s);
-	let currentAtMs = timelineMs;
+		timelineMs += FIRST_FLASH_GRACE_MS;
 
-	for (let index = 0; index < effectiveConfig.total_numbers; index += 1) {
-		const plannedValue = session.plannedNumbers?.[index];
-		const generated =
-			plannedValue === undefined
-				? generateNumber(
-						effectiveConfig.digits_per_number,
-						effectiveConfig.allow_negative_numbers,
-						index,
-						session.runningSum,
-						session.lastPayload,
-					)
-				: { payload: String(plannedValue), value: plannedValue };
-		const { payload, value } = generated;
+		const numberDurationMs = toMs(effectiveConfig.number_duration_s);
+		const gapDurationMs = toMs(effectiveConfig.delay_between_numbers_s);
+		let currentAtMs = timelineMs;
 
-		const showAt = currentAtMs;
-		const clearAt =
-			showAt + numberDurationMs + (index === 0 ? FIRST_FLASH_GRACE_MS : 0);
+		for (let index = 0; index < effectiveConfig.total_numbers; index += 1) {
+			const plannedValue = session.plannedNumbers?.[index];
+			const generated =
+				plannedValue === undefined
+					? generateNumber(
+							effectiveConfig.digits_per_number,
+							effectiveConfig.allow_negative_numbers,
+							index,
+							session.runningSum,
+							session.lastPayload,
+						)
+					: { payload: String(plannedValue), value: plannedValue };
+			const { payload, value } = generated;
 
-		queueTimer(session, showAt, () => {
+			const showAt = currentAtMs;
+			const clearAt =
+				showAt + numberDurationMs + (index === 0 ? FIRST_FLASH_GRACE_MS : 0);
+
+			const newRunningSum = Math.max(0, session.runningSum + value);
 			session.lastPayload = payload;
-			session.runningSum = Math.max(0, session.runningSum + value);
+			session.runningSum = newRunningSum;
 			session.numbers.push(value);
 			session.sum += value;
 
-			emit(listeners.showNumber, {
-				session_id: sessionId,
-				index: index + 1,
-				total: effectiveConfig.total_numbers,
-				value,
-				running_sum: session.runningSum,
-				emitted_at_ms: nowMs(),
+			queueTimer(session, showAt, () => {
+				emit(listeners.showNumber, {
+					session_id: sessionId,
+					index: index + 1,
+					total: effectiveConfig.total_numbers,
+					value,
+					running_sum: newRunningSum,
+					emitted_at_ms: nowMs(),
+				});
+				playAudio("beep");
 			});
-			playAudio("beep");
+
+			queueTimer(session, clearAt, () => {
+				emitClearScreen(sessionId, index + 1);
+			});
+
+			currentAtMs = clearAt + gapDurationMs;
+		}
+
+		queueTimer(session, currentAtMs, () => {
+			finishSession(session);
 		});
 
-		queueTimer(session, clearAt, () => {
-			emitClearScreen(sessionId, index + 1);
-		});
-
-		currentAtMs = clearAt + gapDurationMs;
+		return {
+			session_id: sessionId,
+			effective_config: effectiveConfig,
+			effective_auto_repeat: effectiveAutoRepeat,
+		};
+	} finally {
+		sessionStarting = false;
 	}
-
-	queueTimer(session, currentAtMs, () => {
-		finishSession(session);
-	});
-
-	return {
-		session_id: sessionId,
-		effective_config: effectiveConfig,
-		effective_auto_repeat: effectiveAutoRepeat,
-	};
 }
 
 function parseProvidedAnswerText(value: string): number {
@@ -634,20 +664,33 @@ function validateAnswer(
 
 	const expected = currentSession.sum;
 	const delta = provided - expected;
+	const correct = delta === 0;
 	const validation = {
 		expected_sum: expected,
 		provided_sum: provided,
-		correct: delta === 0,
+		correct,
 		delta,
 	};
+
+	let message: string;
+	if (correct) {
+		message = `Correct ✅\nExpected answer: ${expected}`;
+	} else {
+		message = `Incorrect\nExpected answer: ${expected}\nDifference: ${delta > 0 ? "+" : ""}${delta}`;
+	}
 
 	return {
 		validation,
 		auto_repeat_waiting: armAutoRepeatForSession(currentSession.sessionId),
+		message,
 	};
 }
 
 // Testing helpers (internal). Exported to enable deterministic unit tests.
+export function __test_clearSessionTimers(session: { timers: number[] }): void {
+	clearSessionTimers(session as unknown as BrowserSession);
+}
+
 export function __test_setCompletedSession(
 	sessionId: number,
 	numbers: number[],

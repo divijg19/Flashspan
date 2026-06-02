@@ -65,6 +65,7 @@ export function createMockRuntime() {
 					delta: 0,
 				},
 				auto_repeat_waiting: null,
+				message: "",
 			};
 		},
 		async submitAnswerText(_sessionId: number, providedText: string) {
@@ -77,6 +78,7 @@ export function createMockRuntime() {
 					delta: 0,
 				},
 				auto_repeat_waiting: null,
+				message: "",
 			};
 		},
 		async getSoundEnabled() {
@@ -117,16 +119,16 @@ export function createMockRuntime() {
 
 		// helpers to emit events in tests
 		emitCountdown(v: string) {
-			for (const h of listeners.countdownTick) h(v);
+			for (const h of [...listeners.countdownTick]) h(v);
 		},
 		emitShowNumber(payload: ShowNumber) {
-			for (const h of listeners.showNumber) h(payload);
+			for (const h of [...listeners.showNumber]) h(payload);
 		},
 		emitClearScreen(payload: ClearScreen) {
-			for (const h of listeners.clearScreen) h(payload);
+			for (const h of [...listeners.clearScreen]) h(payload);
 		},
 		emitSessionComplete(payload: SessionComplete) {
-			for (const h of listeners.sessionComplete) h(payload);
+			for (const h of [...listeners.sessionComplete]) h(payload);
 		},
 	} as Runtime & {
 		emitCountdown: (v: string) => void;

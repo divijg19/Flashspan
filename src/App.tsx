@@ -492,15 +492,6 @@ export default function App() {
 			setDisplayText("");
 
 			const autoRepeatEffective = autoRepeatEnabled() && autoRepeatCount() >= 1;
-			console.log(
-				"auto-repeat state before startSession:",
-				JSON.stringify({
-					autoRepeatEnabled: autoRepeatEnabled(),
-					autoRepeatCount: autoRepeatCount(),
-					autoRepeatDelaySeconds: autoRepeatDelaySeconds(),
-					autoRepeatEffective,
-				}),
-			);
 			setAutoRepeatRemaining(
 				autoRepeatEffective ? Math.trunc(autoRepeatCount()) : 0,
 			);
@@ -527,6 +518,8 @@ export default function App() {
 	const stop = async () => {
 		try {
 			await runtime.stopSession();
+		} catch {
+			// stopSession failures should not prevent state cleanup.
 		} finally {
 			setPhase("idle");
 			setDisplayText("");
@@ -1071,7 +1064,12 @@ export default function App() {
 											checked={soundEnabled()}
 											onInput={async () => {
 												setSoundEnabled(true);
-												await runtime.setSoundEnabled(true);
+												try {
+													await runtime.setSoundEnabled(true);
+												} catch (e) {
+													setSoundEnabled(false);
+													setErrorText(String(e));
+												}
 											}}
 										/>
 										<span class="segmentedLabel">🔊 On</span>
@@ -1085,7 +1083,12 @@ export default function App() {
 											checked={!soundEnabled()}
 											onInput={async () => {
 												setSoundEnabled(false);
-												await runtime.setSoundEnabled(false);
+												try {
+													await runtime.setSoundEnabled(false);
+												} catch (e) {
+													setSoundEnabled(true);
+													setErrorText(String(e));
+												}
 											}}
 										/>
 										<span class="segmentedLabel">Off</span>
@@ -1103,7 +1106,11 @@ export default function App() {
 							</button>
 						</div>
 
-						{errorText() ? <div class="error">{errorText()}</div> : null}
+						{errorText() ? (
+							<div class="error" role="alert">
+								{errorText()}
+							</div>
+						) : null}
 					</div>
 				) : phase() === "complete" ? (
 					<div class="endScreen">

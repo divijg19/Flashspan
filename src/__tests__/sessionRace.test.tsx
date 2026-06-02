@@ -22,6 +22,7 @@ describe("session race conditions", () => {
 					delta: 0,
 				},
 				auto_repeat_waiting: null,
+				message: "",
 			};
 			return response;
 		};

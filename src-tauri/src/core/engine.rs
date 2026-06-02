@@ -45,7 +45,7 @@ pub fn build_session_plan(
 
     // Post-countdown settle delay (small grace period for fullscreen transition)
     // Add this as a transparent delay in the final countdown tick
-    const POST_COUNTDOWN_SETTLE_MS: u64 = 0; // Can be tuned; currently 0
+    const POST_COUNTDOWN_SETTLE_MS: u64 = 100; // Settle delay after countdown before first flash
     if let Some(SessionStep::CountdownTick {
         delay_ms_before_next,
         ..
@@ -178,7 +178,7 @@ pub fn build_session_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::types::SessionConfigInput;
+    use crate::core::types::{SessionConfig, SessionConfigEffective, SessionConfigInput};
     use crate::core::validate::normalize_session_config;
 
     #[test]
@@ -328,6 +328,178 @@ mod tests {
                 "Running sum went negative at index {}: sum was {}",
                 idx,
                 running_sum
+            );
+        }
+    }
+
+    #[test]
+    fn build_session_plan_total_numbers_0() {
+        // Bypass normalize_session_config which clamps to 1, to test boundary directly
+        let config = SessionConfig {
+            digits_per_number: 1,
+            number_duration_ms: 100,
+            delay_between_numbers_ms: 0,
+            total_numbers: 0,
+            allow_negative_numbers: false,
+        };
+        let config_eff = SessionConfigEffective {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 0,
+            allow_negative_numbers: false,
+        };
+        let plan = build_session_plan(1, config, config_eff, Some(123u64));
+
+        // With total_numbers=0: 1(clear) + 3(countdown) + 1(final clear) + 1(complete) = 6 steps
+        assert_eq!(plan.steps.len(), 6);
+        assert!(plan.numbers_generated.is_empty());
+        assert_eq!(plan.expected_sum, 0);
+        // 3 * 1000 (countdown) + POST_COUNTDOWN_SETTLE_MS (100) = 3100
+        assert_eq!(plan.total_duration_ms, 3100);
+    }
+
+    #[test]
+    fn build_session_plan_total_numbers_1() {
+        let input = SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.5,
+            delay_between_numbers_s: 0.1,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        };
+        let (config, config_eff) = normalize_session_config(input);
+        let plan = build_session_plan(1, config, config_eff, Some(456u64));
+
+        // With total_numbers=1: 1 + 3 + 2 + 1 + 1 = 8 steps
+        assert_eq!(plan.steps.len(), 8);
+        assert_eq!(plan.numbers_generated.len(), 1);
+        assert!(
+            plan.numbers_generated[0] >= 0,
+            "First number should be non-negative"
+        );
+        if let SessionStep::ShowNumber { index, .. } = &plan.steps[4] {
+            assert_eq!(*index, 1, "First ShowNumber should have index 1");
+        } else {
+            panic!("Step 4 should be ShowNumber");
+        }
+    }
+
+    #[test]
+    fn build_session_plan_timing_includes_post_countdown_settle() {
+        let input = SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.5,
+            delay_between_numbers_s: 0.1,
+            total_numbers: 3,
+            allow_negative_numbers: false,
+        };
+        let (config, config_eff) = normalize_session_config(input);
+        // number_duration_ms = 500, delay_between_numbers_ms = 100
+        let plan = build_session_plan(1, config, config_eff, Some(789u64));
+
+        // total_duration_ms = initial_clear(0) + 3*1000(countdown) + POST_COUNTDOWN_SETTLE_MS(100)
+        //   + 3*500(number_durations) + 3*100(delays) + final_clear(0) + complete(0)
+        //   = 0 + 3000 + 100 + 1500 + 300 = 4900
+        assert_eq!(plan.total_duration_ms, 4900);
+    }
+
+    #[test]
+    fn last_countdown_tick_includes_settle_delay() {
+        let input = SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.3,
+            delay_between_numbers_s: 0.1,
+            total_numbers: 2,
+            allow_negative_numbers: false,
+        };
+        let (config, config_eff) = normalize_session_config(input);
+        let plan = build_session_plan(1, config, config_eff, Some(321u64));
+
+        // Verify the last countdown tick ("1") has delay = 1000 + POST_COUNTDOWN_SETTLE_MS(100) = 1100
+        if let SessionStep::CountdownTick {
+            value,
+            delay_ms_before_next,
+            ..
+        } = &plan.steps[3]
+        {
+            assert_eq!(value, "1");
+            assert_eq!(*delay_ms_before_next, 1100);
+        } else {
+            panic!("Step 3 should be CountdownTick");
+        }
+
+        // Other countdown ticks should have delay = 1000
+        if let SessionStep::CountdownTick {
+            delay_ms_before_next,
+            ..
+        } = &plan.steps[1]
+        {
+            assert_eq!(*delay_ms_before_next, 1000);
+        } else {
+            panic!("Step 1 should be CountdownTick");
+        }
+    }
+
+    #[test]
+    fn build_session_plan_max_config() {
+        // Use digits=15 with total=100: max sum ≈ 100 * 10^15 = 10^17, well within i64 range
+        // while still stress-testing plan generation with large digit widths.
+        let input = SessionConfigInput {
+            digits_per_number: 15,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 100,
+            allow_negative_numbers: false,
+        };
+        let (config, config_eff) = normalize_session_config(input);
+
+        // Should not panic
+        let plan = build_session_plan(1, config, config_eff, Some(42u64));
+
+        // Step count: 1(clear) + 3(countdown) + 2*100(show+clear) + 1(final clear) + 1(complete) = 206
+        assert_eq!(plan.steps.len(), 206);
+        assert_eq!(plan.numbers_generated.len(), 100);
+        assert!(plan.expected_sum >= 0, "sum should be non-negative");
+        // sum should fit in i64 (it already is i64)
+        let _ = plan.expected_sum;
+    }
+
+    #[test]
+    fn build_session_plan_negative_numbers_forced() {
+        // Use a seed known to produce negative numbers
+        let input = SessionConfigInput {
+            digits_per_number: 2,
+            number_duration_s: 0.3,
+            delay_between_numbers_s: 0.1,
+            total_numbers: 50,
+            allow_negative_numbers: true,
+        };
+        let (config, config_eff) = normalize_session_config(input);
+        let plan = build_session_plan(1, config, config_eff, Some(77777u64));
+
+        assert_eq!(plan.numbers_generated.len(), 50);
+
+        // Verify first number is non-negative
+        assert!(
+            plan.numbers_generated[0] >= 0,
+            "first number should be non-negative"
+        );
+
+        // Verify at least one negative number exists
+        let has_negative = plan.numbers_generated.iter().any(|&n| n < 0);
+        assert!(
+            has_negative,
+            "expected at least one negative number with allow_negatives=true and seed 77777"
+        );
+
+        // Verify any two consecutive are never duplicates
+        for i in 1..plan.numbers_generated.len() {
+            assert_ne!(
+                plan.numbers_generated[i],
+                plan.numbers_generated[i - 1],
+                "consecutive duplicate at index {}",
+                i
             );
         }
     }

@@ -58,6 +58,9 @@
 	/* Inline gap used between label and input and other small inline controls.
         Increase viewport-driven growth so wide screens receive more spacing. */
 	--inline-gap: clamp(12px, 6vw, 160px);
+	--font-mono:
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+		"Courier New", monospace;
 }
 
 /* Bottom-corner branding and info */
@@ -351,18 +354,14 @@
 }
 
 .answerIndex {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	color: rgba(var(--app-fg-rgb), 0.7);
 	text-align: right;
 	padding-right: 8px;
 }
 
 .answerValue {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: 20px;
 	line-height: 1;
 	padding: 6px 8px;
@@ -379,9 +378,7 @@
 }
 
 .endTitle {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: 18px;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
@@ -389,9 +386,7 @@
 
 .endSub {
 	margin-top: 8px;
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: 13px;
 	opacity: 0.8;
 }
@@ -455,9 +450,7 @@
 }
 
 .autoRepeatStatusText {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: 13px;
 	opacity: 0.75;
 	letter-spacing: 0.04em;
@@ -480,9 +473,7 @@
 }
 
 .autoRepeatCancel {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: 11px;
 	color: inherit;
 	opacity: 0.55;
@@ -500,9 +491,7 @@
 }
 
 .validationWarning {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: 12px;
 	color: rgba(var(--app-fg-rgb), 0.8);
 	opacity: 0.8;
@@ -537,9 +526,7 @@
 	border: 1px solid rgba(var(--app-fg-rgb), 0.16);
 	background: rgba(var(--app-bg-rgb), 0.55);
 	color: var(--app-fg);
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: calc(22px * var(--ui-scale));
 	text-align: center;
 	outline: none;
@@ -575,9 +562,7 @@
 }
 
 .sumValue {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: calc(40px * var(--ui-scale));
 	line-height: 1;
 	color: rgba(var(--app-fg-rgb), 0.96);
@@ -592,9 +577,7 @@
 	border-radius: 12px;
 	border: 1px solid rgba(var(--app-fg-rgb), 0.16);
 	background: rgba(var(--app-fg-rgb), 0.06);
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: 13px;
 	line-height: 1.5;
 	white-space: pre-wrap;
@@ -691,9 +674,7 @@
 }
 
 .advancedSectionTitle {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: var(--label-size);
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
@@ -701,18 +682,14 @@
 }
 
 .hint {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: var(--label-size);
 	opacity: 0.65;
 	margin-top: -4px;
 }
 
 .title {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: var(--panel-title);
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
@@ -742,9 +719,7 @@
 }
 
 .label {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: var(--label-size);
 	opacity: 0.85;
 	white-space: nowrap;
@@ -769,9 +744,7 @@
 	border: 1px solid rgba(var(--app-fg-rgb), 0.18);
 	border-radius: calc(8px * var(--ui-scale));
 	padding: 0 calc(12px * var(--ui-scale));
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: var(--input-size);
 	outline: none;
 	width: 100%;
@@ -946,9 +919,7 @@
 	text-align: center;
 	padding: calc(8px * var(--ui-scale)) calc(12px * var(--ui-scale));
 	border-radius: 999px;
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: var(--button-size);
 	letter-spacing: 0.02em;
 	color: rgba(var(--app-fg-rgb), 0.92);
@@ -1003,9 +974,7 @@
 	background: var(--app-fg);
 	color: var(--app-bg);
 	border: none;
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: var(--button-size);
 	letter-spacing: 0.04em;
 	cursor: pointer;
@@ -1017,14 +986,18 @@
 }
 
 .error {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: 13px;
 	opacity: 0.85;
 }
 
 /* Label displayed just left of the segmented sound control */
+.soundGroup {
+	display: flex;
+	align-items: center;
+	gap: calc(var(--space) * 0.3);
+}
+
 .soundLabel {
 	font-size: var(--label-size);
 	color: rgba(var(--app-fg-rgb), 0.9);
@@ -1037,9 +1010,7 @@
 
 .number {
 	--len: 1;
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	/* Fit long digit strings without overflow (approx monospace glyph width ~0.62em). */
 	font-size: min(70vh, calc(92vw / (var(--len) * 0.62)));
 	line-height: 1;
@@ -1088,18 +1059,14 @@
 }
 
 .splashTitle {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: var(--home-title);
 	letter-spacing: 0.06em;
 	margin-bottom: calc(var(--space) * 0.25);
 }
 
 .splashSubtitle {
-	font-family:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+	font-family: var(--font-mono);
 	font-size: var(--home-subtitle);
 	opacity: 0.85;
 }
