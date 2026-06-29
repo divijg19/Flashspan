@@ -29,7 +29,7 @@ jobs:
           bun-version: latest
 
       - name: Cache Bun runtime
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.bun
@@ -92,7 +92,7 @@ jobs:
             file
 
       - name: Cache Cargo registry and target
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -128,7 +128,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Bun runtime
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.bun
@@ -138,7 +138,7 @@ jobs:
             ${{ runner.os }}-bun-
 
       - name: Cache Cargo registry and target
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
