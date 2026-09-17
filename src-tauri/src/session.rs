@@ -294,10 +294,8 @@ fn run_session_plan<E: SessionEmitter>(
     auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
     beep: impl Fn(),
 ) {
-    const FIRST_FLASH_GRACE: Duration = Duration::from_millis(100);
-
     // Iterate through steps and execute them with relative delays
-    for (step_idx, step) in plan.steps.iter().enumerate() {
+    for step in plan.steps.iter() {
         // Check stop signal before processing each step
         if stop.load(Ordering::SeqCst) {
             emitter.clear_screen(ClearScreen {
@@ -328,15 +326,6 @@ fn run_session_plan<E: SessionEmitter>(
                 running_sum,
                 delay_ms_before_next,
             } => {
-                // Determine if this is the first flash to apply grace period.
-                // First flash comes after initial clear + 3 countdown ticks (step indices 0-3)
-                let is_first_flash = step_idx == 4;
-                let grace = if is_first_flash {
-                    FIRST_FLASH_GRACE
-                } else {
-                    Duration::from_millis(0)
-                };
-
                 emitter.show_number(ShowNumber {
                     session_id: *session_id,
                     index: *index,
@@ -347,7 +336,10 @@ fn run_session_plan<E: SessionEmitter>(
                 });
                 beep();
 
-                let delay = Duration::from_millis(*delay_ms_before_next) + grace;
+                // Every flash uses the same configured exposure. The
+                // pre-first-flash settle lives in the plan's final
+                // countdown delay, not here.
+                let delay = Duration::from_millis(*delay_ms_before_next);
                 sleep_until_interruptible(Instant::now() + delay, &stop);
 
                 let mut st = recover_lock(&*state, "state");

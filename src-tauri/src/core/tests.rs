@@ -172,10 +172,10 @@ mod tests {
             effective.number_duration_s, 1.2,
             "duration should round to 1 decimal place"
         );
-        // 2.567s should round to 2.6s
+        // Inter-number gap is fixed at 100ms regardless of input.
         assert_eq!(
-            effective.delay_between_numbers_s, 2.6,
-            "delay should round to 1 decimal place"
+            effective.delay_between_numbers_s, 0.1,
+            "delay should be fixed at 0.1s"
         );
     }
 
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn normalize_session_config_delay_clamping() {
-        // Test delay below minimum (should be 0)
+        // Inter-number gap is fixed at 100ms; any input is ignored.
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
@@ -343,15 +343,15 @@ mod tests {
         };
         let (config, effective) = normalize_session_config(input);
         assert_eq!(
-            config.delay_between_numbers_ms, 0,
-            "negative delay should clamp to 0"
+            config.delay_between_numbers_ms, 100,
+            "delay input should be ignored and fixed at 100ms"
         );
         assert_eq!(
-            effective.delay_between_numbers_s, 0.0,
-            "effective delay should be 0.0"
+            effective.delay_between_numbers_s, 0.1,
+            "effective delay should be 0.1s"
         );
 
-        // Test delay above maximum (should clamp to 60s)
+        // Test delay above maximum (still fixed at 100ms)
         let input_high = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
@@ -361,12 +361,12 @@ mod tests {
         };
         let (config_high, effective_high) = normalize_session_config(input_high);
         assert_eq!(
-            config_high.delay_between_numbers_ms, 60_000,
-            "large delay should clamp to 60_000ms"
+            config_high.delay_between_numbers_ms, 100,
+            "delay input should be ignored and fixed at 100ms"
         );
         assert_eq!(
-            effective_high.delay_between_numbers_s, 60.0,
-            "effective delay should be 60.0s"
+            effective_high.delay_between_numbers_s, 0.1,
+            "effective delay should be 0.1s"
         );
     }
 }
