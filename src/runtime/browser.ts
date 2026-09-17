@@ -60,7 +60,11 @@ const DEFAULT_SETTINGS: AppSettings = {
 	theme_mode: "dark",
 };
 const COUNTDOWN_TICKS = [3, 2, 1] as const;
-const FIRST_FLASH_GRACE_MS = 100;
+// Blank settle after the countdown, before the first flash. This is a
+// pre-flash pause only; it must not extend the first number's exposure.
+const PRE_FLASH_SETTLE_MS = 100;
+// Fixed blank gap between numbers. Not user-configurable.
+const INTER_NUMBER_GAP_MS = 100;
 
 const listeners = {
 	countdownTick: new Set<Listener<string>>(),
@@ -196,9 +200,9 @@ function normalizeSessionConfig(
 	return {
 		digits_per_number: clamp(safeInt(input.digits_per_number), 1, 18),
 		number_duration_s: round1(clamp(input.number_duration_s, 0.1, 60)),
-		delay_between_numbers_s: round1(
-			clamp(input.delay_between_numbers_s, 0, 60),
-		),
+		// Fixed inter-number gap. The input field is deprecated and ignored
+		// so every session uses the same blank separation.
+		delay_between_numbers_s: INTER_NUMBER_GAP_MS / 1000,
 		total_numbers: clamp(safeInt(input.total_numbers), 1, 10000),
 		allow_negative_numbers: Boolean(input.allow_negative_numbers),
 	};
@@ -573,10 +577,10 @@ async function startSessionImpl(
 			timelineMs += 1000;
 		}
 
-		timelineMs += FIRST_FLASH_GRACE_MS;
+		timelineMs += PRE_FLASH_SETTLE_MS;
 
 		const numberDurationMs = toMs(effectiveConfig.number_duration_s);
-		const gapDurationMs = toMs(effectiveConfig.delay_between_numbers_s);
+		const gapDurationMs = INTER_NUMBER_GAP_MS;
 		let currentAtMs = timelineMs;
 
 		for (let index = 0; index < effectiveConfig.total_numbers; index += 1) {
@@ -594,8 +598,7 @@ async function startSessionImpl(
 			const { payload, value } = generated;
 
 			const showAt = currentAtMs;
-			const clearAt =
-				showAt + numberDurationMs + (index === 0 ? FIRST_FLASH_GRACE_MS : 0);
+			const clearAt = showAt + numberDurationMs;
 
 			const newRunningSum = Math.max(0, session.runningSum + value);
 			session.lastPayload = payload;
@@ -701,7 +704,7 @@ export function __test_setCompletedSession(
 		config: {
 			digits_per_number: 1,
 			number_duration_s: 0.1,
-			delay_between_numbers_s: 0,
+			delay_between_numbers_s: 0.1,
 			total_numbers: numbers.length,
 			allow_negative_numbers: false,
 		},

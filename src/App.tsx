@@ -188,8 +188,6 @@ export default function App() {
 	const [digitsPerNumber, setDigitsPerNumber] = createSignal<number>(1);
 	const [numberDurationSeconds, setNumberDurationSeconds] =
 		createSignal<number>(0.5);
-	const [delayBetweenNumbersSeconds, setDelayBetweenNumbersSeconds] =
-		createSignal<number>(0);
 	const [totalNumbers, setTotalNumbers] = createSignal<number>(5);
 
 	const [allowNegativeNumbers, setAllowNegativeNumbers] =
@@ -451,9 +449,6 @@ export default function App() {
 		setSessionId(resp.session_id);
 		setDigitsPerNumber(resp.effective_config.digits_per_number);
 		setNumberDurationSeconds(resp.effective_config.number_duration_s);
-		setDelayBetweenNumbersSeconds(
-			resp.effective_config.delay_between_numbers_s,
-		);
 		setTotalNumbers(resp.effective_config.total_numbers);
 		setAllowNegativeNumbers(resp.effective_config.allow_negative_numbers);
 
@@ -482,7 +477,9 @@ export default function App() {
 		const config: SessionConfigInput = {
 			digits_per_number: Math.trunc(digitsPerNumber()),
 			number_duration_s: numberDurationSeconds(),
-			delay_between_numbers_s: delayBetweenNumbersSeconds(),
+			// Fixed 100ms blank between numbers. The backend normalizer
+			// enforces this; the value is kept on the wire for compat.
+			delay_between_numbers_s: 0.1,
 			total_numbers: Math.trunc(totalNumbers()),
 			allow_negative_numbers: allowNegativeNumbers(),
 		};
@@ -882,44 +879,6 @@ export default function App() {
 									</div>
 
 									<div class="advancedDivider" />
-
-									<div class="advancedSetting field">
-										<div class="fieldRow">
-											<div class="label">Delay between numbers (s)</div>
-											<input
-												class="input"
-												type="number"
-												min="0"
-												max="5"
-												step="0.1"
-												value={delayBetweenNumbersSeconds()}
-												disabled={isRunning()}
-												onInput={(e) =>
-													setDelayBetweenNumbersSeconds(
-														Number.isFinite(e.currentTarget.valueAsNumber)
-															? e.currentTarget.valueAsNumber
-															: 0,
-													)
-												}
-											/>
-										</div>
-										<input
-											class="range"
-											type="range"
-											min="0"
-											max="5"
-											step="0.1"
-											value={delayBetweenNumbersSeconds()}
-											disabled={isRunning()}
-											onInput={(e) =>
-												setDelayBetweenNumbersSeconds(
-													Number.isFinite(e.currentTarget.valueAsNumber)
-														? e.currentTarget.valueAsNumber
-														: 0,
-												)
-											}
-										/>
-									</div>
 
 									<div class="actions">
 										<button

@@ -503,4 +503,62 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn inter_number_gap_is_fixed_and_exposure_is_uniform() {
+        // The delay input is deprecated: any value must normalize to 100ms.
+        for delay_input in [0.0, 0.5, 5.0] {
+            let input = SessionConfigInput {
+                digits_per_number: 1,
+                number_duration_s: 0.5,
+                delay_between_numbers_s: delay_input,
+                total_numbers: 3,
+                allow_negative_numbers: false,
+            };
+            let (config, _eff) = normalize_session_config(input);
+            assert_eq!(
+                config.delay_between_numbers_ms, 100,
+                "delay input {delay_input} must normalize to fixed 100ms gap"
+            );
+
+            let eff = SessionConfigEffective {
+                digits_per_number: 1,
+                number_duration_s: 0.5,
+                delay_between_numbers_s: 0.1,
+                total_numbers: 3,
+                allow_negative_numbers: false,
+            };
+            let plan = build_session_plan(1, config, eff, Some(7u64));
+
+            // Steps 4,6,8 are ShowNumber; each exposure must equal 500ms,
+            // including the first flash (no first-flash bonus).
+            let show_delays: Vec<u64> = plan
+                .steps
+                .iter()
+                .filter_map(|s| match s {
+                    SessionStep::ShowNumber {
+                        delay_ms_before_next,
+                        ..
+                    } => Some(*delay_ms_before_next),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(show_delays, vec![500, 500, 500]);
+
+            // Steps 5,7,9 are indexed clears; each blank gap must be 100ms.
+            let clear_delays: Vec<u64> = plan
+                .steps
+                .iter()
+                .filter_map(|s| match s {
+                    SessionStep::ClearScreen {
+                        index: Some(_),
+                        delay_ms_before_next,
+                        ..
+                    } => Some(*delay_ms_before_next),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(clear_delays, vec![100, 100, 100]);
+        }
+    }
 }

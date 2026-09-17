@@ -35,7 +35,11 @@ pub fn normalize_session_config(
 
     // UI typically uses 0.1–5s, but we allow up to 60s defensively.
     let duration_s = clamp_f64(input.number_duration_s, 0.1, 60.0);
-    let delay_s = clamp_f64(input.delay_between_numbers_s, 0.0, 60.0);
+
+    // Fixed inter-number gap. The input field is deprecated and ignored so
+    // every session uses the same blank separation between flashes.
+    // (Kept on the wire format to avoid breaking IPC/WASM callers.)
+    let delay_s = 0.1;
 
     let number_duration_ms = seconds_to_ms_clamped(duration_s, 1, 60_000);
     let delay_between_numbers_ms = seconds_to_ms_clamped(delay_s, 0, 60_000);
