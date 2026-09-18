@@ -477,9 +477,6 @@ export default function App() {
 		const config: SessionConfigInput = {
 			digits_per_number: Math.trunc(digitsPerNumber()),
 			number_duration_s: numberDurationSeconds(),
-			// Fixed 100ms blank between numbers. The backend normalizer
-			// enforces this; the value is kept on the wire for compat.
-			delay_between_numbers_s: 0.1,
 			total_numbers: Math.trunc(totalNumbers()),
 			allow_negative_numbers: allowNegativeNumbers(),
 		};

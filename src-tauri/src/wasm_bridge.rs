@@ -64,7 +64,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 2,
             number_duration_s: 0.5,
-            delay_between_numbers_s: 0.2,
             total_numbers: 4,
             allow_negative_numbers: true,
         };

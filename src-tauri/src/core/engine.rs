@@ -1,4 +1,5 @@
 use crate::core::generate::random_number_with_constraints;
+use crate::core::timing::{INTER_NUMBER_GAP_MS, PRE_FLASH_SETTLE_MS};
 use crate::core::types::{SessionConfig, SessionConfigEffective, SessionPlan, SessionStep};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -43,17 +44,16 @@ pub fn build_session_plan(
         accumulated_duration_ms += countdown_step_ms;
     }
 
-    // Post-countdown settle delay (small grace period for fullscreen transition)
-    // Add this as a transparent delay in the final countdown tick
-    const POST_COUNTDOWN_SETTLE_MS: u64 = 100; // Settle delay after countdown before first flash
+    // Post-countdown settle (see crate::core::timing): a transparent delay in
+    // the final countdown tick so the first number paints late, never short.
     if let Some(SessionStep::CountdownTick {
         delay_ms_before_next,
         ..
     }) = steps.last_mut()
     {
-        *delay_ms_before_next += POST_COUNTDOWN_SETTLE_MS;
+        *delay_ms_before_next += PRE_FLASH_SETTLE_MS;
     }
-    accumulated_duration_ms += POST_COUNTDOWN_SETTLE_MS;
+    accumulated_duration_ms += PRE_FLASH_SETTLE_MS;
 
     // Phase 3: Generate numbers and build flash cycles
     let mut last_payload: Option<String> = None;
@@ -142,13 +142,13 @@ pub fn build_session_plan(
         });
         accumulated_duration_ms += config.number_duration_ms;
 
-        // Add clear_screen step
+        // Add clear_screen step with the fixed inter-number gap.
         steps.push(SessionStep::ClearScreen {
             session_id,
             index: Some(i + 1),
-            delay_ms_before_next: config.delay_between_numbers_ms,
+            delay_ms_before_next: INTER_NUMBER_GAP_MS,
         });
-        accumulated_duration_ms += config.delay_between_numbers_ms;
+        accumulated_duration_ms += INTER_NUMBER_GAP_MS;
     }
 
     // Phase 4: Global clear before complete
@@ -190,7 +190,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 2,
             number_duration_s: 0.5,
-            delay_between_numbers_s: 0.2,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -217,7 +216,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 2,
             number_duration_s: 0.5,
-            delay_between_numbers_s: 0.2,
             total_numbers: 10,
             allow_negative_numbers: false,
         };
@@ -239,7 +237,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 3,
             number_duration_s: 0.5,
-            delay_between_numbers_s: 0.1,
             total_numbers: 20,
             allow_negative_numbers: true,
         };
@@ -285,7 +282,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.5,
-            delay_between_numbers_s: 0.1,
             total_numbers: 3,
             allow_negative_numbers: false,
         };
@@ -315,7 +311,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 2,
             number_duration_s: 0.5,
-            delay_between_numbers_s: 0.1,
             total_numbers: 20,
             allow_negative_numbers: true,
         };
@@ -342,14 +337,12 @@ mod tests {
         let config = SessionConfig {
             digits_per_number: 1,
             number_duration_ms: 100,
-            delay_between_numbers_ms: 0,
             total_numbers: 0,
             allow_negative_numbers: false,
         };
         let config_eff = SessionConfigEffective {
             digits_per_number: 1,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 0,
             allow_negative_numbers: false,
         };
@@ -359,7 +352,7 @@ mod tests {
         assert_eq!(plan.steps.len(), 6);
         assert!(plan.numbers_generated.is_empty());
         assert_eq!(plan.expected_sum, 0);
-        // 3 * 1000 (countdown) + POST_COUNTDOWN_SETTLE_MS (100) = 3100
+        // 3 * 1000 (countdown) + PRE_FLASH_SETTLE_MS (100) = 3100
         assert_eq!(plan.total_duration_ms, 3100);
     }
 
@@ -368,7 +361,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.5,
-            delay_between_numbers_s: 0.1,
             total_numbers: 1,
             allow_negative_numbers: false,
         };
@@ -394,15 +386,14 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.5,
-            delay_between_numbers_s: 0.1,
             total_numbers: 3,
             allow_negative_numbers: false,
         };
         let (config, config_eff) = normalize_session_config(input);
-        // number_duration_ms = 500, delay_between_numbers_ms = 100
+        // number_duration_ms = 500, fixed gap = 100 (INTER_NUMBER_GAP_MS)
         let plan = build_session_plan(1, config, config_eff, Some(789u64));
 
-        // total_duration_ms = initial_clear(0) + 3*1000(countdown) + POST_COUNTDOWN_SETTLE_MS(100)
+        // total_duration_ms = initial_clear(0) + 3*1000(countdown) + PRE_FLASH_SETTLE_MS(100)
         //   + 3*500(number_durations) + 3*100(delays) + final_clear(0) + complete(0)
         //   = 0 + 3000 + 100 + 1500 + 300 = 4900
         assert_eq!(plan.total_duration_ms, 4900);
@@ -413,14 +404,13 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.3,
-            delay_between_numbers_s: 0.1,
             total_numbers: 2,
             allow_negative_numbers: false,
         };
         let (config, config_eff) = normalize_session_config(input);
         let plan = build_session_plan(1, config, config_eff, Some(321u64));
 
-        // Verify the last countdown tick ("1") has delay = 1000 + POST_COUNTDOWN_SETTLE_MS(100) = 1100
+        // Verify the last countdown tick ("1") has delay = 1000 + PRE_FLASH_SETTLE_MS(100) = 1100
         if let SessionStep::CountdownTick {
             value,
             delay_ms_before_next,
@@ -452,7 +442,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 15,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 100,
             allow_negative_numbers: false,
         };
@@ -484,7 +473,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 2,
             number_duration_s: 0.3,
-            delay_between_numbers_s: 0.1,
             total_numbers: 50,
             allow_negative_numbers: true,
         };
@@ -519,32 +507,20 @@ mod tests {
 
     #[test]
     fn inter_number_gap_is_fixed_and_exposure_is_uniform() {
-        // The delay input is deprecated: any value must normalize to 100ms.
-        for delay_input in [0.0, 0.5, 5.0] {
+        // The gap is fixed by the timing budget (see crate::core::timing),
+        // not by user input: any session must produce it.
+        for total in [1, 3] {
             let input = SessionConfigInput {
                 digits_per_number: 1,
                 number_duration_s: 0.5,
-                delay_between_numbers_s: delay_input,
-                total_numbers: 3,
+                total_numbers: total,
                 allow_negative_numbers: false,
             };
-            let (config, _eff) = normalize_session_config(input);
-            assert_eq!(
-                config.delay_between_numbers_ms, 100,
-                "delay input {delay_input} must normalize to fixed 100ms gap"
-            );
-
-            let eff = SessionConfigEffective {
-                digits_per_number: 1,
-                number_duration_s: 0.5,
-                delay_between_numbers_s: 0.1,
-                total_numbers: 3,
-                allow_negative_numbers: false,
-            };
+            let (config, eff) = normalize_session_config(input);
             let plan = build_session_plan(1, config, eff, Some(7u64));
 
-            // Steps 4,6,8 are ShowNumber; each exposure must equal 500ms,
-            // including the first flash (no first-flash bonus).
+            // Each ShowNumber exposure must equal 500ms, including the first
+            // flash (no first-flash bonus).
             let show_delays: Vec<u64> = plan
                 .steps
                 .iter()
@@ -556,9 +532,9 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(show_delays, vec![500, 500, 500]);
+            assert_eq!(show_delays, vec![500; total as usize]);
 
-            // Steps 5,7,9 are indexed clears; each blank gap must be 100ms.
+            // Each indexed clear must carry the fixed 100ms blank gap.
             let clear_delays: Vec<u64> = plan
                 .steps
                 .iter()
@@ -571,7 +547,7 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(clear_delays, vec![100, 100, 100]);
+            assert_eq!(clear_delays, vec![100; total as usize]);
         }
     }
 }

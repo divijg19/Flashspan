@@ -247,7 +247,6 @@ fn run_session_loop<E: SessionEmitter + Send + 'static>(
     let config_effective = SessionConfigEffective {
         digits_per_number: config.digits_per_number,
         number_duration_s: config.number_duration_ms as f64 / 1000.0,
-        delay_between_numbers_s: config.delay_between_numbers_ms as f64 / 1000.0,
         total_numbers: config.total_numbers,
         allow_negative_numbers: config.allow_negative_numbers,
     };
@@ -505,7 +504,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 0,
             number_duration_s: 0.049, // below min
-            delay_between_numbers_s: f64::NAN,
             total_numbers: -5,
             allow_negative_numbers: true,
         };
@@ -589,7 +587,6 @@ mod tests {
         let (config, _eff) = normalize_session_config(SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 1,
             allow_negative_numbers: false,
         });
@@ -626,7 +623,6 @@ mod tests {
         let (config, _eff) = normalize_session_config(SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 1,
             allow_negative_numbers: false,
         });
@@ -677,7 +673,6 @@ mod tests {
         let (config, _eff) = normalize_session_config(SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 1,
             allow_negative_numbers: false,
         });
@@ -759,7 +754,6 @@ mod tests {
         let bad = SessionConfig {
             digits_per_number: 0,
             number_duration_ms: 0,
-            delay_between_numbers_ms: 0,
             total_numbers: 0,
             allow_negative_numbers: false,
         };
@@ -768,7 +762,6 @@ mod tests {
         let too_many_digits = SessionConfig {
             digits_per_number: 19,
             number_duration_ms: 1000,
-            delay_between_numbers_ms: 0,
             total_numbers: 1,
             allow_negative_numbers: false,
         };
@@ -777,7 +770,6 @@ mod tests {
         let too_many_total = SessionConfig {
             digits_per_number: 2,
             number_duration_ms: 1000,
-            delay_between_numbers_ms: 0,
             total_numbers: 20_000,
             allow_negative_numbers: false,
         };
@@ -786,7 +778,6 @@ mod tests {
         let too_long = SessionConfig {
             digits_per_number: 2,
             number_duration_ms: 120_000,
-            delay_between_numbers_ms: 0,
             total_numbers: 1,
             allow_negative_numbers: false,
         };
@@ -798,7 +789,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 100,
             number_duration_s: 120.0,
-            delay_between_numbers_s: 120.0,
             total_numbers: 100_000,
             allow_negative_numbers: false,
         };
@@ -806,7 +796,6 @@ mod tests {
         let (cfg, eff) = normalize_session_config(input);
         assert!(cfg.digits_per_number <= 15);
         assert!(cfg.number_duration_ms <= 60_000);
-        assert!(cfg.delay_between_numbers_ms <= 60_000);
         assert!(cfg.total_numbers <= 10_000);
         assert!(eff.number_duration_s <= 60.0);
     }
@@ -856,7 +845,6 @@ mod tests {
         let (config, _eff) = normalize_session_config(SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 1,
             allow_negative_numbers: false,
         });
@@ -891,7 +879,6 @@ mod tests {
         let (config, _eff) = normalize_session_config(SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 1,
             allow_negative_numbers: false,
         });
@@ -915,7 +902,6 @@ mod tests {
             config: SessionConfig {
                 digits_per_number: 1,
                 number_duration_ms: 100,
-                delay_between_numbers_ms: 0,
                 total_numbers: 1,
                 allow_negative_numbers: false,
             },
@@ -965,7 +951,6 @@ mod tests {
             config_snapshot: SessionConfigEffective {
                 digits_per_number: 1,
                 number_duration_s: 0.1,
-                delay_between_numbers_s: 0.0,
                 total_numbers: 2,
                 allow_negative_numbers: false,
             },
@@ -1144,7 +1129,6 @@ mod tests {
             config: SessionConfig {
                 digits_per_number: 1,
                 number_duration_ms: 100,
-                delay_between_numbers_ms: 0,
                 total_numbers: 1,
                 allow_negative_numbers: false,
             },
@@ -1180,7 +1164,6 @@ mod tests {
             config: SessionConfig {
                 digits_per_number: 1,
                 number_duration_ms: 100,
-                delay_between_numbers_ms: 0,
                 total_numbers: 1,
                 allow_negative_numbers: false,
             },
@@ -1282,7 +1265,6 @@ mod tests {
             config_snapshot: SessionConfigEffective {
                 digits_per_number: 1,
                 number_duration_s: 0.1,
-                delay_between_numbers_s: 0.0,
                 total_numbers: 2,
                 allow_negative_numbers: true,
             },
@@ -1397,7 +1379,6 @@ mod tests {
             config_snapshot: SessionConfigEffective {
                 digits_per_number: 1,
                 number_duration_s: 0.1,
-                delay_between_numbers_s: 0.0,
                 total_numbers: 0,
                 allow_negative_numbers: false,
             },
@@ -1481,7 +1462,6 @@ mod tests {
             config_snapshot: SessionConfigEffective {
                 digits_per_number: 1,
                 number_duration_s: 0.1,
-                delay_between_numbers_s: 0.0,
                 total_numbers: 1,
                 allow_negative_numbers: false,
             },
@@ -1622,7 +1602,6 @@ mod tests {
         let (config, _eff) = normalize_session_config(SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 2,
             allow_negative_numbers: false,
         });
@@ -1672,7 +1651,6 @@ mod tests {
         let (config, _eff) = normalize_session_config(SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 1,
             allow_negative_numbers: false,
         });
@@ -1709,7 +1687,6 @@ mod tests {
         let (config, _eff) = normalize_session_config(SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 1,
             allow_negative_numbers: false,
         });
@@ -1812,7 +1789,6 @@ mod tests {
         let (config, _eff) = normalize_session_config(SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.0,
             total_numbers: 1,
             allow_negative_numbers: false,
         });

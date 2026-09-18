@@ -46,14 +46,13 @@ describe("browser session config bounds", () => {
 		const resp = await browserRuntime.startSession({
 			digits_per_number: 20,
 			number_duration_s: 0.5,
-			delay_between_numbers_s: 0,
 			total_numbers: 100,
 			allow_negative_numbers: false,
 		});
 		try {
 			expect(resp.effective_config.digits_per_number).toBe(15);
 			expect(resp.effective_config.total_numbers).toBe(9);
-			expect(resp.effective_config.delay_between_numbers_s).toBe(0.1);
+			expect("delay_between_numbers_s" in resp.effective_config).toBe(false);
 		} finally {
 			await browserRuntime.stopSession();
 		}
@@ -84,7 +83,6 @@ describe("browser session config bounds", () => {
 		const resp = await browserRuntime.startSession({
 			digits_per_number: 3,
 			number_duration_s: 0.5,
-			delay_between_numbers_s: 0,
 			total_numbers: 500,
 			allow_negative_numbers: false,
 		});

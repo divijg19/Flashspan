@@ -6,7 +6,6 @@ import type {
 export interface WasmSessionConfig {
 	digits_per_number: number;
 	number_duration_ms: number;
-	delay_between_numbers_ms: number;
 	total_numbers: number;
 	allow_negative_numbers: boolean;
 }

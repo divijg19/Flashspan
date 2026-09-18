@@ -18,7 +18,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 0,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -32,7 +31,6 @@ mod tests {
         let input_high = SessionConfigInput {
             digits_per_number: 100,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -49,7 +47,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 0,
             allow_negative_numbers: false,
         };
@@ -63,7 +60,6 @@ mod tests {
         let input_high = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 20_000,
             allow_negative_numbers: false,
         };
@@ -80,7 +76,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.01,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -98,7 +93,6 @@ mod tests {
         let input_large = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 100.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -119,7 +113,6 @@ mod tests {
         let input_nan = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: f64::NAN,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -133,7 +126,6 @@ mod tests {
         let input_inf = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: f64::INFINITY,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -147,7 +139,6 @@ mod tests {
         let input_neginf = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: f64::NEG_INFINITY,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -164,7 +155,6 @@ mod tests {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.234,
-            delay_between_numbers_s: 2.567,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -175,11 +165,6 @@ mod tests {
             effective.number_duration_s, 1.2,
             "duration should round to 1 decimal place"
         );
-        // Inter-number gap is fixed at 100ms regardless of input.
-        assert_eq!(
-            effective.delay_between_numbers_s, 0.1,
-            "delay should be fixed at 0.1s"
-        );
     }
 
     #[test]
@@ -187,7 +172,6 @@ mod tests {
         let config_bad_digits = SessionConfig {
             digits_per_number: 0,
             number_duration_ms: 100,
-            delay_between_numbers_ms: 0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -199,7 +183,6 @@ mod tests {
         let config_bad_duration = SessionConfig {
             digits_per_number: 1,
             number_duration_ms: 0,
-            delay_between_numbers_ms: 0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -211,7 +194,6 @@ mod tests {
         let config_bad_numbers = SessionConfig {
             digits_per_number: 1,
             number_duration_ms: 100,
-            delay_between_numbers_ms: 0,
             total_numbers: 0,
             allow_negative_numbers: false,
         };
@@ -227,7 +209,6 @@ mod tests {
         let config_digits_over = SessionConfig {
             digits_per_number: 16,
             number_duration_ms: 100,
-            delay_between_numbers_ms: 0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -240,7 +221,6 @@ mod tests {
         let config_numbers_over = SessionConfig {
             digits_per_number: 1,
             number_duration_ms: 100,
-            delay_between_numbers_ms: 0,
             total_numbers: 10_001,
             allow_negative_numbers: false,
         };
@@ -253,26 +233,12 @@ mod tests {
         let config_duration_over = SessionConfig {
             digits_per_number: 1,
             number_duration_ms: 60_001,
-            delay_between_numbers_ms: 0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
         assert!(
             validate_config(&config_duration_over).is_err(),
             "should reject number_duration_ms > 60_000"
-        );
-
-        // delay_between_numbers_ms > 60_000
-        let config_delay_over = SessionConfig {
-            digits_per_number: 1,
-            number_duration_ms: 100,
-            delay_between_numbers_ms: 60_001,
-            total_numbers: 5,
-            allow_negative_numbers: false,
-        };
-        assert!(
-            validate_config(&config_delay_over).is_err(),
-            "should reject delay_between_numbers_ms > 60_000"
         );
     }
 
@@ -282,7 +248,6 @@ mod tests {
         let config_min = SessionConfig {
             digits_per_number: 1,
             number_duration_ms: 1,
-            delay_between_numbers_ms: 0,
             total_numbers: 1,
             allow_negative_numbers: false,
         };
@@ -296,7 +261,6 @@ mod tests {
         let config_max = SessionConfig {
             digits_per_number: 11,
             number_duration_ms: 60_000,
-            delay_between_numbers_ms: 60_000,
             total_numbers: 10_000,
             allow_negative_numbers: true,
         };
@@ -309,7 +273,6 @@ mod tests {
         let config_wide = SessionConfig {
             digits_per_number: 15,
             number_duration_ms: 100,
-            delay_between_numbers_ms: 100,
             total_numbers: 9,
             allow_negative_numbers: false,
         };
@@ -322,7 +285,6 @@ mod tests {
         let config_over = SessionConfig {
             digits_per_number: 15,
             number_duration_ms: 100,
-            delay_between_numbers_ms: 100,
             total_numbers: 10,
             allow_negative_numbers: false,
         };
@@ -337,7 +299,6 @@ mod tests {
         let input_neg = SessionConfigInput {
             digits_per_number: 2,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 10,
             allow_negative_numbers: true,
         };
@@ -350,7 +311,6 @@ mod tests {
         let input_pos = SessionConfigInput {
             digits_per_number: 2,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 10,
             allow_negative_numbers: false,
         };
@@ -362,41 +322,18 @@ mod tests {
     }
 
     #[test]
-    fn normalize_session_config_delay_clamping() {
-        // Inter-number gap is fixed at 100ms; any input is ignored.
-        let input = SessionConfigInput {
-            digits_per_number: 1,
-            number_duration_s: 1.0,
-            delay_between_numbers_s: -5.0,
-            total_numbers: 5,
-            allow_negative_numbers: false,
-        };
-        let (config, effective) = normalize_session_config(input);
+    fn timing_budget_constants_are_100ms() {
+        // The inter-number gap is no longer configurable; both executors
+        // share these fixed values (see crate::core::timing).
         assert_eq!(
-            config.delay_between_numbers_ms, 100,
-            "delay input should be ignored and fixed at 100ms"
+            crate::core::timing::INTER_NUMBER_GAP_MS,
+            100,
+            "inter-number gap must stay 100ms"
         );
         assert_eq!(
-            effective.delay_between_numbers_s, 0.1,
-            "effective delay should be 0.1s"
-        );
-
-        // Test delay above maximum (still fixed at 100ms)
-        let input_high = SessionConfigInput {
-            digits_per_number: 1,
-            number_duration_s: 1.0,
-            delay_between_numbers_s: 100.0,
-            total_numbers: 5,
-            allow_negative_numbers: false,
-        };
-        let (config_high, effective_high) = normalize_session_config(input_high);
-        assert_eq!(
-            config_high.delay_between_numbers_ms, 100,
-            "delay input should be ignored and fixed at 100ms"
-        );
-        assert_eq!(
-            effective_high.delay_between_numbers_s, 0.1,
-            "effective delay should be 0.1s"
+            crate::core::timing::PRE_FLASH_SETTLE_MS,
+            100,
+            "pre-flash settle must stay 100ms"
         );
     }
 
@@ -436,7 +373,6 @@ mod tests {
         let (config, effective) = normalize_session_config(SessionConfigInput {
             digits_per_number: 15,
             number_duration_s: 0.5,
-            delay_between_numbers_s: 0.0,
             total_numbers: 100,
             allow_negative_numbers: false,
         });
@@ -448,7 +384,6 @@ mod tests {
         let (config_small, _) = normalize_session_config(SessionConfigInput {
             digits_per_number: 3,
             number_duration_s: 0.5,
-            delay_between_numbers_s: 0.0,
             total_numbers: 500,
             allow_negative_numbers: false,
         });
@@ -466,7 +401,6 @@ mod tests {
             let (config, _) = normalize_session_config(SessionConfigInput {
                 digits_per_number: digits as i64,
                 number_duration_s: 0.1,
-                delay_between_numbers_s: 0.0,
                 total_numbers: 10_000,
                 allow_negative_numbers: true,
             });
@@ -493,14 +427,10 @@ mod tests {
         }
     }
 
-    fn config_snapshot(
-        digits: u32,
-        total: u32,
-    ) -> crate::core::types::SessionConfigEffective {
+    fn config_snapshot(digits: u32, total: u32) -> crate::core::types::SessionConfigEffective {
         crate::core::types::SessionConfigEffective {
             digits_per_number: digits,
             number_duration_s: 0.1,
-            delay_between_numbers_s: 0.1,
             total_numbers: total,
             allow_negative_numbers: true,
         }
