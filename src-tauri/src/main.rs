@@ -399,6 +399,10 @@ mod native_app {
             None
         };
 
+        // Pre-warm audio while the 3s countdown runs: cold device open
+        // would otherwise delay the first beep of the first session.
+        crate::audio::warmup();
+
         let session_id = manager.start_with_emitter(TauriEmitter { app: app.clone() }, config)?;
         Ok(StartSessionResponse {
             session_id,

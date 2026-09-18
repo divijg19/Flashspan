@@ -323,6 +323,42 @@ function silenceAudio(): void {
 	}
 }
 
+/**
+ * Prime clips while a user gesture is active (session start originates
+ * from the Start click): a muted play-through unlocks autoplay and forces
+ * decode, so the first flash beep ~3s later plays on time instead of
+ * stalling on first use. Inaudible by construction (muted throughout).
+ */
+function warmupAudio(): void {
+	if (!soundEnabled) {
+		return;
+	}
+
+	for (const clip of Object.values(audio)) {
+		try {
+			const wasMuted = clip.muted;
+			clip.muted = true;
+			void Promise.resolve(clip.play())
+				.then(() => {
+					try {
+						clip.pause();
+						clip.currentTime = 0;
+					} catch {
+						// Best-effort only.
+					}
+				})
+				.catch(() => {
+					// Best-effort only.
+				})
+				.finally(() => {
+					clip.muted = wasMuted;
+				});
+		} catch {
+			// Best-effort only.
+		}
+	}
+}
+
 function randomInt(maxExclusive: number): number {
 	if (maxExclusive <= 1) {
 		return 0;
@@ -616,6 +652,9 @@ async function startSessionImpl(
 
 		currentSession = session;
 		silenceAudio();
+		// Prime clips while the Start-click gesture is active so the first
+		// flash beep plays on time; the countdown absorbs the unlock cost.
+		warmupAudio();
 		emitClearScreen(sessionId, null);
 
 		let timelineMs = 0;
