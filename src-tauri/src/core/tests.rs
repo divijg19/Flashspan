@@ -2,8 +2,11 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
+    use crate::core::engine::build_session_plan;
     use crate::core::types::{SessionConfig, SessionConfigInput};
-    use crate::core::validate::{normalize_session_config, validate_config};
+    use crate::core::validate::{
+        MAX_EXACT_INTEGER, max_total_for_digits, normalize_session_config, validate_config,
+    };
 
     // ======================
     // Validation Module Tests
@@ -35,8 +38,8 @@ mod tests {
         };
         let (config_high, _) = normalize_session_config(input_high);
         assert_eq!(
-            config_high.digits_per_number, 18,
-            "digits_per_number should clamp to 18 maximum"
+            config_high.digits_per_number, 15,
+            "digits_per_number should clamp to 15 maximum"
         );
     }
 
@@ -220,9 +223,9 @@ mod tests {
 
     #[test]
     fn validate_config_rejects_out_of_bounds_values() {
-        // digits_per_number > 18
+        // digits_per_number > 15
         let config_digits_over = SessionConfig {
-            digits_per_number: 19,
+            digits_per_number: 16,
             number_duration_ms: 100,
             delay_between_numbers_ms: 0,
             total_numbers: 5,
@@ -230,7 +233,7 @@ mod tests {
         };
         assert!(
             validate_config(&config_digits_over).is_err(),
-            "should reject digits_per_number > 18"
+            "should reject digits_per_number > 15"
         );
 
         // total_numbers > 10_000
@@ -288,9 +291,10 @@ mod tests {
             "should accept minimum values"
         );
 
-        // All maximum values
+        // Maximum values within the exact-integer bound: 11 digits allow
+        // the full 10,000-number range (worst sum still below 2^53).
         let config_max = SessionConfig {
-            digits_per_number: 18,
+            digits_per_number: 11,
             number_duration_ms: 60_000,
             delay_between_numbers_ms: 60_000,
             total_numbers: 10_000,
@@ -299,6 +303,32 @@ mod tests {
         assert!(
             validate_config(&config_max).is_ok(),
             "should accept maximum values"
+        );
+
+        // Widest digits at their bound: 15 digits allow at most 9 numbers.
+        let config_wide = SessionConfig {
+            digits_per_number: 15,
+            number_duration_ms: 100,
+            delay_between_numbers_ms: 100,
+            total_numbers: 9,
+            allow_negative_numbers: false,
+        };
+        assert!(
+            validate_config(&config_wide).is_ok(),
+            "should accept 15 digits with 9 numbers"
+        );
+
+        // One past the bound must be rejected.
+        let config_over = SessionConfig {
+            digits_per_number: 15,
+            number_duration_ms: 100,
+            delay_between_numbers_ms: 100,
+            total_numbers: 10,
+            allow_negative_numbers: false,
+        };
+        assert!(
+            validate_config(&config_over).is_err(),
+            "should reject total_numbers past the digit-width bound"
         );
     }
 
@@ -368,5 +398,111 @@ mod tests {
             effective_high.delay_between_numbers_s, 0.1,
             "effective delay should be 0.1s"
         );
+    }
+
+    #[test]
+    fn digit_width_total_bound_table() {
+        // Bound = min(10_000, floor((2^53 - 1) / (10^d - 1))). Only d >= 12
+        // is constrained; anything below keeps the global 10,000 ceiling.
+        let expected: [(u32, u32); 15] = [
+            (1, 10_000),
+            (2, 10_000),
+            (3, 10_000),
+            (4, 10_000),
+            (5, 10_000),
+            (6, 10_000),
+            (7, 10_000),
+            (8, 10_000),
+            (9, 10_000),
+            (10, 10_000),
+            (11, 10_000),
+            (12, 9007),
+            (13, 900),
+            (14, 90),
+            (15, 9),
+        ];
+        for (digits, bound) in expected {
+            assert_eq!(
+                max_total_for_digits(digits),
+                bound,
+                "wrong bound for {digits} digits"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_enforces_digit_width_total_bound() {
+        // 15 digits with an excessive request clamps to 9.
+        let (config, effective) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 15,
+            number_duration_s: 0.5,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 100,
+            allow_negative_numbers: false,
+        });
+        assert_eq!(config.digits_per_number, 15);
+        assert_eq!(config.total_numbers, 9);
+        assert_eq!(effective.total_numbers, 9);
+
+        // Small widths keep the requested total.
+        let (config_small, _) = normalize_session_config(SessionConfigInput {
+            digits_per_number: 3,
+            number_duration_s: 0.5,
+            delay_between_numbers_s: 0.0,
+            total_numbers: 500,
+            allow_negative_numbers: false,
+        });
+        assert_eq!(config_small.total_numbers, 500);
+    }
+
+    #[test]
+    fn worst_case_sessions_stay_exact_at_every_width() {
+        // At each width, build the maximum-bound session: must not panic,
+        // every value and the sum must stay exactly representable in f64
+        // (and therefore inside i64 with wide margin).
+        const MAX_EXACT_I128: i128 = MAX_EXACT_INTEGER as i128;
+        for digits in 1..=15u32 {
+            let bound = max_total_for_digits(digits);
+            let (config, _) = normalize_session_config(SessionConfigInput {
+                digits_per_number: digits as i64,
+                number_duration_s: 0.1,
+                delay_between_numbers_s: 0.0,
+                total_numbers: 10_000,
+                allow_negative_numbers: true,
+            });
+            assert_eq!(config.total_numbers, bound);
+
+            let plan = build_session_plan(1, config, config_snapshot(digits, bound), Some(99u64));
+            assert_eq!(plan.numbers_generated.len(), bound as usize);
+            for value in &plan.numbers_generated {
+                assert!(
+                    (*value as i128).abs() <= MAX_EXACT_I128,
+                    "value {value} exceeds exact-integer range at width {digits}"
+                );
+            }
+            assert!(
+                (plan.expected_sum as i128).abs() <= MAX_EXACT_I128,
+                "sum {} exceeds exact-integer range at width {digits}",
+                plan.expected_sum
+            );
+            assert_eq!(
+                plan.expected_sum,
+                plan.numbers_generated.iter().sum::<i64>(),
+                "sum mismatch at width {digits}"
+            );
+        }
+    }
+
+    fn config_snapshot(
+        digits: u32,
+        total: u32,
+    ) -> crate::core::types::SessionConfigEffective {
+        crate::core::types::SessionConfigEffective {
+            digits_per_number: digits,
+            number_duration_s: 0.1,
+            delay_between_numbers_s: 0.1,
+            total_numbers: total,
+            allow_negative_numbers: true,
+        }
     }
 }

@@ -194,16 +194,42 @@ function addListener<T>(
 	return () => set.delete(handler);
 }
 
+/**
+ * Largest integer exactly representable in an f64 (2^53 - 1). The browser
+ * accumulates sums in f64, so the worst-case session sum must stay below
+ * this for grading to be exact. Must mirror Rust `MAX_EXACT_INTEGER`.
+ */
+const MAX_EXACT_INTEGER = 2 ** 53 - 1;
+const MAX_TOTAL_NUMBERS = 10000;
+
+/**
+ * Maximum numbers for a digit width such that even the worst case (every
+ * number at maximum magnitude) sums below MAX_EXACT_INTEGER. Must mirror
+ * Rust `max_total_for_digits`.
+ */
+export function maxTotalForDigits(digits: number): number {
+	const maxMagnitude = digits <= 1 ? 9 : 10 ** digits - 1;
+	return Math.max(
+		1,
+		Math.min(MAX_TOTAL_NUMBERS, Math.floor(MAX_EXACT_INTEGER / maxMagnitude)),
+	);
+}
+
 function normalizeSessionConfig(
 	input: SessionConfigInput,
 ): SessionConfigEffective {
+	// Policy cap: 15 digits keeps every value exactly representable in f64.
+	const digits = clamp(safeInt(input.digits_per_number), 1, 15);
 	return {
-		digits_per_number: clamp(safeInt(input.digits_per_number), 1, 18),
+		digits_per_number: digits,
 		number_duration_s: round1(clamp(input.number_duration_s, 0.1, 60)),
 		// Fixed inter-number gap. The input field is deprecated and ignored
 		// so every session uses the same blank separation.
 		delay_between_numbers_s: INTER_NUMBER_GAP_MS / 1000,
-		total_numbers: clamp(safeInt(input.total_numbers), 1, 10000),
+		total_numbers: Math.min(
+			clamp(safeInt(input.total_numbers), 1, 10000),
+			maxTotalForDigits(digits),
+		),
 		allow_negative_numbers: Boolean(input.allow_negative_numbers),
 	};
 }

@@ -1,6 +1,6 @@
 // Property-based tests using proptest for determinism and bounds checking
 use super::types::{SessionConfig, SessionConfigInput};
-use super::validate::{normalize_session_config, validate_config};
+use super::validate::{max_total_for_digits, normalize_session_config, validate_config};
 use proptest::prelude::*;
 
 #[test]
@@ -15,9 +15,9 @@ fn prop_normalize_digits_in_bounds() {
         };
         let (config, _effective) = normalize_session_config(input);
 
-        // Result should always be between 1 and 18
+        // Result should always be between 1 and 15
         prop_assert!(config.digits_per_number >= 1);
-        prop_assert!(config.digits_per_number <= 18);
+        prop_assert!(config.digits_per_number <= 15);
     });
 }
 
@@ -112,11 +112,14 @@ fn prop_normalize_idempotent() {
 #[test]
 fn prop_validate_accepts_valid_configs() {
     proptest!(|
-        (digits in 1u32..19,
+        (digits in 1u32..16,
          duration_ms in 1u64..60_001,
          delay_ms in 0u64..60_001,
-         total in 1u32..10_001)
+         total_frac in 0.0_f64..1.0)
     | {
+        // Total must respect the digit-width exact-integer bound.
+        let max_total = max_total_for_digits(digits);
+        let total = 1 + ((total_frac * max_total as f64) as u32).min(max_total - 1);
         let config = SessionConfig {
             digits_per_number: digits,
             number_duration_ms: duration_ms,

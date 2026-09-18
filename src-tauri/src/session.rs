@@ -804,7 +804,7 @@ mod tests {
         };
 
         let (cfg, eff) = normalize_session_config(input);
-        assert!(cfg.digits_per_number <= 18);
+        assert!(cfg.digits_per_number <= 15);
         assert!(cfg.number_duration_ms <= 60_000);
         assert!(cfg.delay_between_numbers_ms <= 60_000);
         assert!(cfg.total_numbers <= 10_000);

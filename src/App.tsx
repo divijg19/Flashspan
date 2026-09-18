@@ -902,7 +902,7 @@ export default function App() {
 										class="input"
 										type="number"
 										min="1"
-										max="18"
+										max="15"
 										step="1"
 										value={digitsPerNumber()}
 										disabled={isRunning()}
@@ -919,7 +919,7 @@ export default function App() {
 									class="range"
 									type="range"
 									min="1"
-									max="18"
+									max="15"
 									step="1"
 									value={digitsPerNumber()}
 									disabled={isRunning()}

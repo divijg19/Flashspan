@@ -120,9 +120,13 @@ pub fn build_session_plan(
         running_sum = (running_sum + payload_value).max(0);
         sum_i128 += payload_value;
 
+        // Safe by construction: normalization caps digits at 15 (every value
+        // < 2^53) and bounds total_numbers so the worst-case sum stays below
+        // 2^53 - 1 (see MAX_EXACT_INTEGER), far inside i64 range.
+        debug_assert!(payload_value >= i64::MIN as i128 && payload_value <= i64::MAX as i128);
         let value_i64: i64 = payload_value
             .try_into()
-            .expect("payload_value should fit into i64 with current constraints");
+            .expect("payload_value exceeds i64; normalization bound violated");
         numbers.push(value_i64);
 
         // Add show_number step
@@ -133,7 +137,7 @@ pub fn build_session_plan(
             value: value_i64,
             running_sum: running_sum
                 .try_into()
-                .expect("running_sum should fit into i64 with current constraints"),
+                .expect("running_sum exceeds i64; normalization bound violated"),
             delay_ms_before_next: config.number_duration_ms,
         });
         accumulated_duration_ms += config.number_duration_ms;
@@ -154,10 +158,10 @@ pub fn build_session_plan(
         delay_ms_before_next: 0,
     });
 
-    // Phase 5: Session complete
+    // Phase 5: Session complete (bound proof: see conversion above).
     let sum_i64: i64 = sum_i128
         .try_into()
-        .expect("sum should fit into i64 with current constraints");
+        .expect("sum exceeds i64; normalization bound violated");
 
     steps.push(SessionStep::Complete {
         session_id,
@@ -443,8 +447,8 @@ mod tests {
 
     #[test]
     fn build_session_plan_max_config() {
-        // Use digits=15 with total=100: max sum ≈ 100 * 10^15 = 10^17, well within i64 range
-        // while still stress-testing plan generation with large digit widths.
+        // digits=15 allows at most 9 numbers (exact-integer bound); a request
+        // for 100 must clamp to 9 and still build without panic.
         let input = SessionConfigInput {
             digits_per_number: 15,
             number_duration_s: 0.1,
@@ -453,16 +457,25 @@ mod tests {
             allow_negative_numbers: false,
         };
         let (config, config_eff) = normalize_session_config(input);
+        assert_eq!(config.total_numbers, 9);
 
         // Should not panic
         let plan = build_session_plan(1, config, config_eff, Some(42u64));
 
-        // Step count: 1(clear) + 3(countdown) + 2*100(show+clear) + 1(final clear) + 1(complete) = 206
-        assert_eq!(plan.steps.len(), 206);
-        assert_eq!(plan.numbers_generated.len(), 100);
+        // Step count: 1(clear) + 3(countdown) + 2*9(show+clear) + 1(final clear) + 1(complete) = 24
+        assert_eq!(plan.steps.len(), 24);
+        assert_eq!(plan.numbers_generated.len(), 9);
         assert!(plan.expected_sum >= 0, "sum should be non-negative");
-        // sum should fit in i64 (it already is i64)
-        let _ = plan.expected_sum;
+        // Every value and the sum must stay exactly representable in f64.
+        const MAX_EXACT: i64 = (1i64 << 53) - 1;
+        for value in &plan.numbers_generated {
+            assert!(value.abs() <= MAX_EXACT);
+        }
+        assert!(plan.expected_sum.abs() <= MAX_EXACT);
+        assert_eq!(
+            plan.expected_sum,
+            plan.numbers_generated.iter().sum::<i64>()
+        );
     }
 
     #[test]
