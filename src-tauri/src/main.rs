@@ -54,6 +54,8 @@ mod native_app {
     #[tauri::command]
     fn stop_session(manager: tauri::State<'_, Arc<SessionManager>>) {
         manager.stop();
+        // Cut any lingering flash beeps so audio never outlives the session.
+        crate::audio::silence();
     }
 
     #[tauri::command]
