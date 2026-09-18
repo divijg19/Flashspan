@@ -287,6 +287,11 @@ function emitClearScreen(sessionId: number, index: number | null): void {
 	});
 }
 
+/**
+ * Cut semantics mirroring the native audio worker: restarting a clip cuts
+ * whatever it was playing, so rapid flash ticks stay in sync with the
+ * visuals instead of queueing behind them.
+ */
 function playAudio(kind: "beep" | "applause" | "buzzer"): void {
 	if (!soundEnabled) {
 		return;
@@ -296,9 +301,25 @@ function playAudio(kind: "beep" | "applause" | "buzzer"): void {
 
 	try {
 		clip.currentTime = 0;
-		void clip.play();
+		// Rapid restarts can reject with AbortError; normalize to a promise
+		// so rejections are always observed and swallowed here.
+		void Promise.resolve(clip.play()).catch(() => {
+			// Best-effort only.
+		});
 	} catch {
-		// Best-effort only.
+		// Best-effort only (e.g. playback unsupported in this environment).
+	}
+}
+
+/** Silence all clips; used when a session stops or (re)starts. */
+function silenceAudio(): void {
+	for (const clip of Object.values(audio)) {
+		try {
+			clip.pause();
+			clip.currentTime = 0;
+		} catch {
+			// Best-effort only.
+		}
 	}
 }
 
@@ -594,6 +615,7 @@ async function startSessionImpl(
 		};
 
 		currentSession = session;
+		silenceAudio();
 		emitClearScreen(sessionId, null);
 
 		let timelineMs = 0;
@@ -775,6 +797,8 @@ export const browserRuntime: Runtime = {
 	startSession: startSessionImpl,
 
 	async stopSession(): Promise<void> {
+		// Cut any lingering flash beeps so audio never outlives the session.
+		silenceAudio();
 		if (currentSession) {
 			clearSessionTimers(currentSession);
 			emitClearScreen(currentSession.sessionId, null);
@@ -850,7 +874,9 @@ export const browserRuntime: Runtime = {
 		const clip = audio[kind];
 		try {
 			clip.currentTime = 0;
-			void clip.play();
+			await Promise.resolve(clip.play()).catch(() => {
+				// Best-effort only.
+			});
 		} catch {
 			// Best-effort only.
 		}
