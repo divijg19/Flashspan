@@ -34,10 +34,11 @@ describe("browser audio playback", () => {
 		});
 
 		await vi.advanceTimersByTimeAsync(3100);
-		expect(playMock).toHaveBeenCalledTimes(1);
+		// 3 warmup plays + first flash beep.
+		expect(playMock).toHaveBeenCalledTimes(4);
 
 		await vi.advanceTimersByTimeAsync(600);
-		expect(playMock).toHaveBeenCalledTimes(2);
+		expect(playMock).toHaveBeenCalledTimes(5);
 	});
 
 	it("wires a rejection handler onto every play() (rapid restarts reject)", async () => {
@@ -75,6 +76,34 @@ describe("browser audio playback", () => {
 		await vi.advanceTimersByTimeAsync(3100);
 		expect(playMock).toHaveBeenCalled();
 		expect(rejectionHandlerAttached).toBe(true);
+	});
+
+	it("primes every clip muted, then restores sound for flashes", async () => {
+		await browserRuntime.setSoundEnabled(true);
+		// Record each clip's muted state at play time via the receiver.
+		const mutedAtPlay: boolean[] = [];
+		playMock.mockImplementation(function (this: unknown) {
+			mutedAtPlay.push((this as HTMLMediaElement).muted);
+			return Promise.resolve();
+		} as () => Promise<void>);
+		await browserRuntime.startSession({
+			digits_per_number: 1,
+			number_duration_s: 0.5,
+			total_numbers: 1,
+			allow_negative_numbers: false,
+		});
+		// Flush warmup chains (no flash yet: first show is at 3100ms).
+		await vi.advanceTimersByTimeAsync(0);
+
+		// One unlock play per clip (beep, applause, buzzer), all muted.
+		expect(playMock).toHaveBeenCalledTimes(3);
+		expect(mutedAtPlay).toEqual([true, true, true]);
+		// Each clip paused + reset after its unlock play.
+		expect(pauseMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+
+		// The flash beep itself plays unmuted: warmup restored the state.
+		await vi.advanceTimersByTimeAsync(3100);
+		expect(mutedAtPlay).toEqual([true, true, true, false]);
 	});
 
 	it("silences all clips when the session stops", async () => {

@@ -150,6 +150,21 @@ pub fn silence() {
     let _ = send_command(AudioCommand::Silence);
 }
 
+/// The warmup command: Silence opens the device without making sound.
+fn warmup_command() -> AudioCommand {
+    AudioCommand::Silence
+}
+
+/// Pre-warm the audio worker: forces thread spawn and output-device open
+/// ahead of the first flash. Opening the default device involves device
+/// enumeration and stream negotiation (hundreds of ms cold), which would
+/// otherwise delay the first beep of the first session. Sends Silence, so
+/// warmup itself is inaudible. Never blocks the caller beyond channel send
+/// and never panics: all failures are swallowed by send_command.
+pub fn warmup() {
+    let _ = send_command(warmup_command());
+}
+
 static SOUND_ENABLED: AtomicBool = AtomicBool::new(true);
 
 pub fn set_enabled(v: bool) {
@@ -264,6 +279,15 @@ mod tests {
 
         assert_eq!(sink.events(), vec![Event::Skip, Event::Skip]);
         assert_eq!(sink.queued(), 0);
+    }
+
+    #[test]
+    fn warmup_is_silent_and_never_panics() {
+        // Silence appends nothing (see silence_drains_without_appending),
+        // so warmup is inaudible by construction. Against the real global
+        // sender this must return cleanly with or without audio hardware.
+        assert!(matches!(warmup_command(), AudioCommand::Silence));
+        warmup();
     }
 
     #[test]
