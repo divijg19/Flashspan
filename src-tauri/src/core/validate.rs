@@ -61,26 +61,20 @@ pub fn normalize_session_config(
     // UI typically uses 0.1–5s, but we allow up to 60s defensively.
     let duration_s = clamp_f64(input.number_duration_s, 0.1, 60.0);
 
-    // Fixed inter-number gap. The input field is deprecated and ignored so
-    // every session uses the same blank separation between flashes.
-    // (Kept on the wire format to avoid breaking IPC/WASM callers.)
-    let delay_s = 0.1;
-
     let number_duration_ms = seconds_to_ms_clamped(duration_s, 1, 60_000);
-    let delay_between_numbers_ms = seconds_to_ms_clamped(delay_s, 0, 60_000);
 
     let config = SessionConfig {
         digits_per_number: digits,
         number_duration_ms,
-        delay_between_numbers_ms,
         total_numbers,
         allow_negative_numbers: input.allow_negative_numbers,
     };
 
+    // The inter-number gap is fixed (see crate::core::timing) and no longer
+    // part of the config wire format.
     let effective = SessionConfigEffective {
         digits_per_number: config.digits_per_number,
         number_duration_s: round_1_decimal(config.number_duration_ms as f64 / 1000.0),
-        delay_between_numbers_s: round_1_decimal(config.delay_between_numbers_ms as f64 / 1000.0),
         total_numbers: config.total_numbers,
         allow_negative_numbers: config.allow_negative_numbers,
     };
@@ -115,10 +109,6 @@ pub fn validate_config(config: &SessionConfig) -> Result<(), String> {
 
     if config.number_duration_ms > 60_000 {
         return Err("number_duration_ms must be <= 60000".to_string());
-    }
-
-    if config.delay_between_numbers_ms > 60_000 {
-        return Err("delay_between_numbers_ms must be <= 60000".to_string());
     }
 
     Ok(())

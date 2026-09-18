@@ -9,7 +9,6 @@ fn prop_normalize_digits_in_bounds() {
         let input = SessionConfigInput {
             digits_per_number: digits,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -27,7 +26,6 @@ fn prop_normalize_total_numbers_in_bounds() {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: total,
             allow_negative_numbers: false,
         };
@@ -49,7 +47,6 @@ fn prop_normalize_duration_in_bounds() {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: duration_s,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -62,38 +59,15 @@ fn prop_normalize_duration_in_bounds() {
 }
 
 #[test]
-fn prop_normalize_delay_in_bounds() {
-    proptest!(|(delay_s in -1000.0_f64..1000.0)| {
-        if !delay_s.is_finite() {
-            return Ok(());
-        }
-
-        let input = SessionConfigInput {
-            digits_per_number: 1,
-            number_duration_s: 1.0,
-            delay_between_numbers_s: delay_s,
-            total_numbers: 5,
-            allow_negative_numbers: false,
-        };
-        let (config, _effective) = normalize_session_config(input);
-
-        // Result should always be between 0ms and 60_000ms
-        prop_assert!(config.delay_between_numbers_ms <= 60_000);
-    });
-}
-
-#[test]
 fn prop_normalize_idempotent() {
     proptest!(|
-        (digits in 1i64..19,
+        (digits in 1i64..16,
          total in 1i64..101,
-         duration_s in 0.1_f64..5.0,
-         delay_s in 0.0_f64..5.0)
+         duration_s in 0.1_f64..5.0)
     | {
         let input = SessionConfigInput {
             digits_per_number: digits,
             number_duration_s: duration_s,
-            delay_between_numbers_s: delay_s,
             total_numbers: total,
             allow_negative_numbers: false,
         };
@@ -104,7 +78,6 @@ fn prop_normalize_idempotent() {
         // Normalizing twice should give the same result
         prop_assert_eq!(config1.digits_per_number, config2.digits_per_number);
         prop_assert_eq!(config1.number_duration_ms, config2.number_duration_ms);
-        prop_assert_eq!(config1.delay_between_numbers_ms, config2.delay_between_numbers_ms);
         prop_assert_eq!(config1.total_numbers, config2.total_numbers);
     });
 }
@@ -114,7 +87,6 @@ fn prop_validate_accepts_valid_configs() {
     proptest!(|
         (digits in 1u32..16,
          duration_ms in 1u64..60_001,
-         delay_ms in 0u64..60_001,
          total_frac in 0.0_f64..1.0)
     | {
         // Total must respect the digit-width exact-integer bound.
@@ -123,7 +95,6 @@ fn prop_validate_accepts_valid_configs() {
         let config = SessionConfig {
             digits_per_number: digits,
             number_duration_ms: duration_ms,
-            delay_between_numbers_ms: delay_ms,
             total_numbers: total,
             allow_negative_numbers: false,
         };
@@ -140,7 +111,6 @@ fn prop_effective_duration_round_1_decimal() {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: duration_s,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -159,7 +129,6 @@ fn prop_allow_negative_flag_preserved() {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: allow_neg,
         };
@@ -180,7 +149,6 @@ fn prop_duration_monotonic() {
         let input1 = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: duration1_s,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -188,7 +156,6 @@ fn prop_duration_monotonic() {
         let input2 = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: duration2_s,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -213,7 +180,6 @@ fn prop_nan_duration_clamps_to_min() {
         let input = SessionConfigInput {
             digits_per_number: digits as i64,
             number_duration_s: f64::NAN,
-            delay_between_numbers_s: 0.0,
             total_numbers: total as i64,
             allow_negative_numbers: false,
         };
@@ -231,7 +197,6 @@ fn prop_infinity_duration_clamps_to_max() {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: f64::INFINITY,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };

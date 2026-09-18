@@ -41,7 +41,6 @@ export function createMockRuntime() {
 				effective_config: {
 					digits_per_number: 1,
 					number_duration_s: 0.5,
-					delay_between_numbers_s: 0,
 					total_numbers: 1,
 					allow_negative_numbers: false,
 				},

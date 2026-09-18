@@ -1,5 +1,6 @@
 pub mod engine;
 pub mod generate;
+pub mod timing;
 pub mod types;
 pub mod validate;
 

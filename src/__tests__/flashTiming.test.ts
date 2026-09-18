@@ -13,18 +13,6 @@ describe("flash timing: uniform exposure with fixed 100ms gap", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("forces any delay input to 0.1s in the effective config", async () => {
-		await browserRuntime.setSoundEnabled(false);
-		const resp = await browserRuntime.startSession({
-			digits_per_number: 1,
-			number_duration_s: 0.5,
-			delay_between_numbers_s: 999,
-			total_numbers: 1,
-			allow_negative_numbers: false,
-		});
-		expect(resp.effective_config.delay_between_numbers_s).toBe(0.1);
-	});
-
 	it("schedules countdown, uniform flashes, and 100ms blanks", async () => {
 		await browserRuntime.setSoundEnabled(false);
 
@@ -51,7 +39,6 @@ describe("flash timing: uniform exposure with fixed 100ms gap", () => {
 		await browserRuntime.startSession({
 			digits_per_number: 1,
 			number_duration_s: 0.5,
-			delay_between_numbers_s: 0,
 			total_numbers: 2,
 			allow_negative_numbers: false,
 		});

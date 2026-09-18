@@ -60,8 +60,11 @@ const DEFAULT_SETTINGS: AppSettings = {
 	theme_mode: "dark",
 };
 const COUNTDOWN_TICKS = [3, 2, 1] as const;
-// Blank settle after the countdown, before the first flash. This is a
-// pre-flash pause only; it must not extend the first number's exposure.
+// Flash-timing budget mirror. The authoritative schedule lives in
+// src-tauri/src/core/timing.rs; these values must match it exactly.
+// Changing either side requires updating the schedule tests on both sides
+// (engine.rs timing tests, src/__tests__/flashTiming.test.ts).
+// Pre-flash pause only; it must not extend the first number's exposure.
 const PRE_FLASH_SETTLE_MS = 100;
 // Fixed blank gap between numbers. Not user-configurable.
 const INTER_NUMBER_GAP_MS = 100;
@@ -223,9 +226,7 @@ function normalizeSessionConfig(
 	return {
 		digits_per_number: digits,
 		number_duration_s: round1(clamp(input.number_duration_s, 0.1, 60)),
-		// Fixed inter-number gap. The input field is deprecated and ignored
-		// so every session uses the same blank separation.
-		delay_between_numbers_s: INTER_NUMBER_GAP_MS / 1000,
+		// No inter-number gap field: the gap is fixed (INTER_NUMBER_GAP_MS).
 		total_numbers: Math.min(
 			clamp(safeInt(input.total_numbers), 1, 10000),
 			maxTotalForDigits(digits),
@@ -730,7 +731,6 @@ export function __test_setCompletedSession(
 		config: {
 			digits_per_number: 1,
 			number_duration_s: 0.1,
-			delay_between_numbers_s: 0.1,
 			total_numbers: numbers.length,
 			allow_negative_numbers: false,
 		},

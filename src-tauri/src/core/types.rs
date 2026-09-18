@@ -38,7 +38,6 @@ pub struct AutoRepeatPlan {
 pub struct SessionConfigInput {
     pub digits_per_number: i64,
     pub number_duration_s: f64,
-    pub delay_between_numbers_s: f64,
     pub total_numbers: i64,
 
     #[serde(default)]
@@ -49,7 +48,6 @@ pub struct SessionConfigInput {
 pub struct SessionConfigEffective {
     pub digits_per_number: u32,
     pub number_duration_s: f64,
-    pub delay_between_numbers_s: f64,
     pub total_numbers: u32,
     pub allow_negative_numbers: bool,
 }
@@ -58,7 +56,6 @@ pub struct SessionConfigEffective {
 pub struct SessionConfig {
     pub digits_per_number: u32,
     pub number_duration_ms: u64,
-    pub delay_between_numbers_ms: u64,
     pub total_numbers: u32,
     pub allow_negative_numbers: bool,
 }

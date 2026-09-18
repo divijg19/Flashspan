@@ -32,7 +32,6 @@ mod wasm_tests {
         let input = SessionConfigInput {
             digits_per_number: 2,
             number_duration_s: 1.5,
-            delay_between_numbers_s: 0.5,
             total_numbers: 10,
             allow_negative_numbers: false,
         };
@@ -51,7 +50,6 @@ mod wasm_tests {
         let input = SessionConfigInput {
             digits_per_number: 0,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -67,7 +65,6 @@ mod wasm_tests {
         let input = SessionConfigInput {
             digits_per_number: 100,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -82,7 +79,6 @@ mod wasm_tests {
         let input = SessionConfigInput {
             digits_per_number: 2,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.5,
             total_numbers: 5,
             allow_negative_numbers: false,
         };
@@ -100,7 +96,6 @@ mod wasm_tests {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 3,
             allow_negative_numbers: false,
         };
@@ -127,7 +122,6 @@ mod wasm_tests {
         let input = SessionConfigInput {
             digits_per_number: 2,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 4,
             allow_negative_numbers: true,
         };
@@ -165,7 +159,6 @@ mod wasm_tests {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 2,
             allow_negative_numbers: false,
         };
@@ -192,7 +185,6 @@ mod wasm_tests {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
-            delay_between_numbers_s: 0.0,
             total_numbers: 5,
             allow_negative_numbers: false,
         };

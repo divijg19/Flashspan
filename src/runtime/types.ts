@@ -25,7 +25,6 @@ export interface AppSettings {
 export interface SessionConfigInput {
 	digits_per_number: number;
 	number_duration_s: number;
-	delay_between_numbers_s: number;
 	total_numbers: number;
 	allow_negative_numbers: boolean;
 }
@@ -33,7 +32,6 @@ export interface SessionConfigInput {
 export interface SessionConfigEffective {
 	digits_per_number: number;
 	number_duration_s: number;
-	delay_between_numbers_s: number;
 	total_numbers: number;
 	allow_negative_numbers: boolean;
 }
