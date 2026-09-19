@@ -242,10 +242,12 @@ function normalizeAutoRepeat(
 		return null;
 	}
 
+	// Mirrors the native start_session clamps: at least 1 repeat and a
+	// 5s minimum gap so API callers get identical behavior on both runtimes.
 	return {
 		enabled: true,
-		repeats: clamp(safeInt(autoRepeat.repeats), 0, 20),
-		delay_s: round1(clamp(autoRepeat.delay_s, 0, 120)),
+		repeats: clamp(safeInt(autoRepeat.repeats), 1, 20),
+		delay_s: round1(clamp(autoRepeat.delay_s, 5, 120)),
 	};
 }
 
@@ -369,7 +371,8 @@ function randomInt(maxExclusive: number): number {
 
 function randomMagnitude(digits: number): number {
 	if (digits <= 1) {
-		return randomInt(10);
+		// No leading zero: 1..=9, mirroring the native generator.
+		return 1 + randomInt(9);
 	}
 
 	const min = 10 ** (digits - 1);
@@ -377,7 +380,7 @@ function randomMagnitude(digits: number): number {
 	return min + randomInt(span);
 }
 
-function generateNumber(
+export function generateNumber(
 	digits: number,
 	allowNegative: boolean,
 	index: number,
@@ -411,13 +414,14 @@ function generateNumber(
 		return { payload, value: signedValue };
 	}
 
-	return deterministicFallback(lastPayload, digits, runningSum);
+	return deterministicFallback(lastPayload, digits, runningSum, allowNegative);
 }
 
 export function deterministicFallback(
 	lastPayload: string | null,
 	digits: number,
 	runningSum: number,
+	allowNegative: boolean,
 ): { payload: string; value: number } {
 	if (lastPayload == null) {
 		return { payload: "1", value: 1 };
@@ -432,7 +436,8 @@ export function deterministicFallback(
 	const maxExclusive = digits <= 1 ? 10 : 10 ** digits;
 	const next = (lastVal % (maxExclusive - 1)) + 1;
 
-	if (runningSum - next >= 0) {
+	// Never invent a negative when negatives are disabled (mirrors native).
+	if (allowNegative && runningSum - next >= 0) {
 		return { payload: String(-next), value: -next };
 	}
 	return { payload: String(next), value: next };
@@ -727,18 +732,32 @@ async function startSessionImpl(
 	}
 }
 
+/**
+ * Strict answer rule, mirroring Rust `parse_answer_text` in
+ * `src-tauri/src/main.rs` exactly: trim ends, strip commas everywhere,
+ * optional single sign, ASCII digits only, 64-char cap, i64 range.
+ * `BigInt` keeps accept/reject identical to Rust on every input (including
+ * beyond f64 precision); the return is exact for every attainable session
+ * sum, which the digit-width bound keeps below 2^53.
+ */
+const INVALID_ANSWER_MESSAGE =
+	"Enter a single integer answer (e.g. 42 or -17).";
+const I64_MIN = -(2n ** 63n);
+const I64_MAX = 2n ** 63n - 1n;
+
 function parseProvidedAnswerText(value: string): number {
-	const normalized = value.replace(/[\s,]+/g, "").trim();
-	if (!normalized) {
-		throw new Error("Answer is required");
+	const cleaned = value.trim().replace(/,/g, "");
+	if (!cleaned || cleaned.length > 64) {
+		throw new Error(INVALID_ANSWER_MESSAGE);
 	}
-
-	const parsed = Number(normalized);
-	if (!Number.isFinite(parsed)) {
-		throw new Error("Answer must be a number");
+	if (!/^[+-]?[0-9]+$/.test(cleaned)) {
+		throw new Error(INVALID_ANSWER_MESSAGE);
 	}
-
-	return Math.trunc(parsed);
+	const big = BigInt(cleaned);
+	if (big < I64_MIN || big > I64_MAX) {
+		throw new Error(INVALID_ANSWER_MESSAGE);
+	}
+	return Number(big);
 }
 
 function validateAnswer(
