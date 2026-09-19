@@ -78,6 +78,25 @@ describe("browser session config bounds", () => {
 		expect(rangeInputs.map((i) => i.max)).not.toContain("18");
 	});
 
+	it("mirrors native auto-repeat clamps (min 1 repeat, 5s delay)", async () => {
+		await browserRuntime.setSoundEnabled(false);
+		const resp = await browserRuntime.startSession(
+			{
+				digits_per_number: 1,
+				number_duration_s: 0.5,
+				total_numbers: 1,
+				allow_negative_numbers: false,
+			},
+			{ enabled: true, repeats: 0, delay_s: 0 },
+		);
+		try {
+			expect(resp.effective_auto_repeat?.repeats).toBe(1);
+			expect(resp.effective_auto_repeat?.delay_s).toBe(5);
+		} finally {
+			await browserRuntime.stopSession();
+		}
+	});
+
 	it("preserves totals within the bound", async () => {
 		await browserRuntime.setSoundEnabled(false);
 		const resp = await browserRuntime.startSession({

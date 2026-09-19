@@ -231,6 +231,38 @@ mod native_app {
         }
 
         #[test]
+        fn parse_answer_text_mirror_vectors() {
+            // Must accept/reject exactly like the browser parser
+            // (parseProvidedAnswerText): strict integers only.
+            assert_eq!(parse_answer_text("+42").unwrap(), 42);
+            assert_eq!(parse_answer_text("1,,2").unwrap(), 12);
+
+            for bad in [
+                "42.9",
+                "-3.14",
+                "42.0",
+                "1e3",
+                "0x10",
+                "1_2",
+                "1 2",
+                "4\t2",
+                "--42",
+                "+-42",
+                "not a number",
+                "12abc34",
+            ] {
+                assert!(
+                    parse_answer_text(bad).is_err(),
+                    "{bad:?} should be rejected"
+                );
+            }
+
+            assert!(parse_answer_text(&"1".repeat(65)).is_err());
+            assert!(parse_answer_text("9223372036854775808").is_err());
+            assert!(parse_answer_text("-9223372036854775809").is_err());
+        }
+
+        #[test]
         fn parse_answer_text_negatives_and_extremes() {
             // Negative numbers
             assert_eq!(parse_answer_text("-42").unwrap(), -42);
