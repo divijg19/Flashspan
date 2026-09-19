@@ -8,7 +8,7 @@
 import applauseUrl from "../assets/applause.wav?url";
 import beepUrl from "../assets/beep.wav?url";
 import buzzerUrl from "../assets/buzzer.wav?url";
-import { getWasmCoreBridge } from "../wasm/coreBridge";
+import { getWasmCoreBridge, type WasmSessionStep } from "../wasm/coreBridge";
 import type { Runtime, UnlistenFn } from "./index";
 import type {
 	AppSettings,
@@ -461,6 +461,7 @@ async function resolvePlannedSessionData(
 	config: SessionConfigEffective;
 	numbers: number[];
 	sum: number;
+	steps: WasmSessionStep[] | null;
 } | null> {
 	const bridge = getWasmCoreBridge();
 	if (!bridge) {
@@ -500,7 +501,122 @@ async function resolvePlannedSessionData(
 		config: plan.config_snapshot,
 		numbers: plan.numbers_generated.slice(),
 		sum: plan.expected_sum,
+		steps: plan.steps,
 	};
+}
+
+/** Driver event with a planned show value (null = generate locally). */
+export type PlannedDriverEvent =
+	| { at: number; kind: "countdown"; value: string }
+	| {
+			at: number;
+			kind: "show";
+			index: number;
+			value: number | null;
+			runningSum: number | null;
+	  }
+	| { at: number; kind: "clear"; index: number }
+	| { at: number; kind: "finish" };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function asNonNegativeInt(value: unknown): number | null {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+		return null;
+	}
+	return value;
+}
+
+function asFiniteNumber(value: unknown): number | null {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return null;
+	}
+	return value;
+}
+
+/**
+ * Convert validated WASM plan steps into driver events. Times accumulate
+ * each step's `delay_ms_before_next`, matching engine semantics (the delay
+ * follows the step it belongs to). Index-free clears are skipped: the
+ * initial one is emitted synchronously at session start and the trailing
+ * one by `finishSession`. Returns null on any shape violation so the
+ * caller falls back to the local JS planner.
+ */
+export function planStepsToEvents(
+	steps: WasmSessionStep[] | null,
+): PlannedDriverEvent[] | null {
+	if (!Array.isArray(steps) || steps.length === 0) {
+		return null;
+	}
+
+	const events: PlannedDriverEvent[] = [];
+	let at = 0;
+	let shows = 0;
+
+	for (const step of steps) {
+		if (!isRecord(step)) {
+			return null;
+		}
+		const keys = Object.keys(step);
+		if (keys.length !== 1) {
+			return null;
+		}
+
+		const tag = keys[0];
+		if (
+			tag !== "CountdownTick" &&
+			tag !== "ShowNumber" &&
+			tag !== "ClearScreen" &&
+			tag !== "Complete"
+		) {
+			return null;
+		}
+		const body = (step as Record<string, unknown>)[tag];
+		if (!isRecord(body)) {
+			return null;
+		}
+		const delay = asNonNegativeInt(body.delay_ms_before_next);
+		// Complete carries no delay; every other step must.
+		if (tag !== "Complete" && delay == null) {
+			return null;
+		}
+
+		if (tag === "CountdownTick") {
+			if (typeof body.value !== "string") {
+				return null;
+			}
+			events.push({ at, kind: "countdown", value: body.value });
+		} else if (tag === "ShowNumber") {
+			const index = asNonNegativeInt(body.index);
+			const value = asFiniteNumber(body.value);
+			const runningSum = asFiniteNumber(body.running_sum);
+			if (index == null || index < 1 || value == null || runningSum == null) {
+				return null;
+			}
+			events.push({ at, kind: "show", index, value, runningSum });
+			shows += 1;
+		} else if (tag === "ClearScreen") {
+			if (body.index == null) {
+				at += delay ?? 0;
+				continue;
+			}
+			const index = asNonNegativeInt(body.index);
+			if (index == null || index < 1) {
+				return null;
+			}
+			events.push({ at, kind: "clear", index });
+		}
+
+		at += delay ?? 0;
+	}
+
+	if (shows === 0) {
+		return null;
+	}
+	events.push({ at, kind: "finish" });
+	return events;
 }
 
 function scheduleAutoRepeatCountdown(): void {
@@ -662,31 +778,32 @@ async function startSessionImpl(
 		warmupAudio();
 		emitClearScreen(sessionId, null);
 
-		// Event times are pure arithmetic (no RNG): cheap to precompute for
-		// any total. Values are generated lazily at fire time from live
-		// session state in index order, so sequences are identical to eager
-		// generation while startup stays instant for large totals.
-		type ScheduledEvent =
-			| { at: number; kind: "countdown"; value: string }
-			| { at: number; kind: "show"; index: number }
-			| { at: number; kind: "clear"; index: number }
-			| { at: number; kind: "finish" };
-
+		// Single-source execution when the WASM planner yields valid steps:
+		// times, values, and running sums come straight from the Rust plan.
+		// Otherwise the local JS planner builds the same schedule shape
+		// (times are pure arithmetic, values generate lazily at fire time),
+		// so startup stays instant for large totals either way.
 		const numberDurationMs = toMs(effectiveConfig.number_duration_s);
-		const events: ScheduledEvent[] = [];
-		let at = 0;
-		for (const value of COUNTDOWN_TICKS) {
-			events.push({ at, kind: "countdown", value: String(value) });
-			at += 1000;
+		let events: PlannedDriverEvent[] | null = plannedSession?.steps
+			? planStepsToEvents(plannedSession.steps)
+			: null;
+		if (events == null) {
+			const local: PlannedDriverEvent[] = [];
+			let at = 0;
+			for (const value of COUNTDOWN_TICKS) {
+				local.push({ at, kind: "countdown", value: String(value) });
+				at += 1000;
+			}
+			at += PRE_FLASH_SETTLE_MS;
+			for (let index = 0; index < effectiveConfig.total_numbers; index += 1) {
+				local.push({ at, kind: "show", index, value: null, runningSum: null });
+				at += numberDurationMs;
+				local.push({ at, kind: "clear", index });
+				at += INTER_NUMBER_GAP_MS;
+			}
+			local.push({ at, kind: "finish" });
+			events = local;
 		}
-		at += PRE_FLASH_SETTLE_MS;
-		for (let index = 0; index < effectiveConfig.total_numbers; index += 1) {
-			events.push({ at, kind: "show", index });
-			at += numberDurationMs;
-			events.push({ at, kind: "clear", index });
-			at += INTER_NUMBER_GAP_MS;
-		}
-		events.push({ at, kind: "finish" });
 
 		// Chained single-timer driver: at most one pending timeout, so timer
 		// bookkeeping stays O(1) and stopping clears a single handle. Each
@@ -705,19 +822,26 @@ async function startSessionImpl(
 						break;
 					}
 					case "show": {
-						const plannedValue = session.plannedNumbers?.[event.index];
-						const generated =
-							plannedValue === undefined
-								? generateNumber(
-										effectiveConfig.digits_per_number,
-										effectiveConfig.allow_negative_numbers,
-										event.index,
-										session.runningSum,
-										session.lastPayload,
-									)
-								: { payload: String(plannedValue), value: plannedValue };
-						const { payload, value } = generated;
-						const newRunningSum = Math.max(0, session.runningSum + value);
+						let payload: string;
+						let value: number;
+						let newRunningSum: number;
+						if (event.value != null && event.runningSum != null) {
+							// Planned step: values come straight from the Rust plan.
+							payload = String(event.value);
+							value = event.value;
+							newRunningSum = event.runningSum;
+						} else {
+							const generated = generateNumber(
+								effectiveConfig.digits_per_number,
+								effectiveConfig.allow_negative_numbers,
+								event.index,
+								session.runningSum,
+								session.lastPayload,
+							);
+							payload = generated.payload;
+							value = generated.value;
+							newRunningSum = Math.max(0, session.runningSum + value);
+						}
 						session.lastPayload = payload;
 						session.runningSum = newRunningSum;
 						session.numbers.push(value);

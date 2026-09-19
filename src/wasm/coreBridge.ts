@@ -15,10 +15,41 @@ export interface WasmNormalizedSessionConfig {
 	effective: SessionConfigEffective;
 }
 
+/**
+ * Plan steps as serialized by serde (externally tagged enum — exactly the
+ * shape Rust `SessionStep` produces). Mirrors `src-tauri/src/core/types.rs`;
+ * any shape drift breaks `planStepsToEvents` validation and falls back to
+ * the local JS planner.
+ */
+export type WasmSessionStep =
+	| {
+			CountdownTick: { value: string; delay_ms_before_next: number };
+	  }
+	| {
+			ShowNumber: {
+				session_id: number;
+				index: number;
+				total: number;
+				value: number;
+				running_sum: number;
+				delay_ms_before_next: number;
+			};
+	  }
+	| {
+			ClearScreen: {
+				session_id: number;
+				index: number | null;
+				delay_ms_before_next: number;
+			};
+	  }
+	| {
+			Complete: { session_id: number; numbers: number[]; sum: number };
+	  };
+
 export interface WasmSessionPlan {
 	session_id: number;
 	config_snapshot: SessionConfigEffective;
-	steps: unknown[];
+	steps: WasmSessionStep[];
 	total_duration_ms: number;
 	numbers_generated: number[];
 	expected_sum: number;
