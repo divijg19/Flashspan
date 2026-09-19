@@ -77,4 +77,48 @@ describe("flash timing: uniform exposure with fixed 100ms gap", () => {
 		await vi.advanceTimersByTimeAsync(100);
 		expect(completedAt).toBe(4300);
 	});
+
+	it("schedules large sessions without upfront generation", async () => {
+		await browserRuntime.setSoundEnabled(false);
+
+		const shows: Array<{ index: number; at: number }> = [];
+		const completion: {
+			current: { numbers: number[]; sum: number } | null;
+		} = { current: null };
+
+		await browserRuntime.onShowNumber((payload) => {
+			shows.push({ index: payload.index, at: Date.now() });
+		});
+		await browserRuntime.onSessionComplete((payload) => {
+			completion.current = { numbers: payload.numbers, sum: payload.sum };
+		});
+
+		// 500 numbers schedule instantly: startSession returns before any
+		// event fires (no upfront generation or timer fan-out).
+		const started = await browserRuntime.startSession({
+			digits_per_number: 1,
+			number_duration_s: 0.1,
+			total_numbers: 500,
+			allow_negative_numbers: false,
+		});
+		expect(shows).toEqual([]);
+		expect(started.effective_config.total_numbers).toBe(500);
+
+		// Early events keep exact golden times.
+		await vi.advanceTimersByTimeAsync(3100);
+		expect(shows[0]).toEqual({ index: 1, at: 3100 });
+		await vi.advanceTimersByTimeAsync(200);
+		expect(shows[1]).toEqual({ index: 2, at: 3300 });
+
+		// The chained driver runs the full session to identical completion:
+		// 3100 + 500 * (100 + 100).
+		await vi.advanceTimersByTimeAsync(100000 - 200);
+		if (completion.current === null) {
+			throw new Error("large session did not complete");
+		}
+		expect(completion.current.numbers).toHaveLength(500);
+		expect(completion.current.sum).toBe(
+			completion.current.numbers.reduce((s, n) => s + n, 0),
+		);
+	});
 });
