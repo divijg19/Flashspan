@@ -150,6 +150,11 @@ mod native_app {
     }
 
     #[tauri::command]
+    fn get_audio_status() -> crate::audio::AudioStatus {
+        crate::audio::status()
+    }
+
+    #[tauri::command]
     fn set_color_scheme(
         app: tauri::AppHandle,
         settings: tauri::State<'_, SettingsState>,
@@ -444,15 +449,6 @@ mod native_app {
     }
 
     #[tauri::command]
-    fn mark_validated(
-        app: tauri::AppHandle,
-        manager: tauri::State<'_, Arc<SessionManager>>,
-        session_id: u64,
-    ) -> Result<Option<AutoRepeatWaitingPayload>, String> {
-        schedule_auto_repeat_if_needed(app, Arc::clone(&*manager), session_id)
-    }
-
-    #[tauri::command]
     fn acknowledge_complete(
         app: tauri::AppHandle,
         manager: tauri::State<'_, Arc<SessionManager>>,
@@ -569,13 +565,13 @@ mod native_app {
                 start_session,
                 stop_session,
                 cancel_auto_repeat,
-                mark_validated,
                 acknowledge_complete,
                 submit_answer,
                 submit_answer_text,
                 crate::audio::play_sound_kind,
                 get_sound_enabled,
-                set_sound_enabled
+                set_sound_enabled,
+                get_audio_status
             ])
             .run(tauri::generate_context!())
             .expect("error while running tauri application");

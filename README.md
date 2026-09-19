@@ -66,6 +66,10 @@ python3 -m http.server 8000  # or any web server
 
 Then visit `http://localhost:8000` in your browser.
 
+### Browser support
+
+The web build needs `BigInt` for exact answer grading (Chrome 67+, Firefox 68+, Safari 14+, Edge 79+). Older browsers fall back to exact grading for answers up to 15 digits and reject longer inputs.
+
 ## Development
 
 ```bash

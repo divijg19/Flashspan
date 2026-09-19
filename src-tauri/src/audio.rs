@@ -180,6 +180,30 @@ pub fn is_enabled() -> bool {
     SOUND_ENABLED.load(Ordering::SeqCst)
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AudioStatus {
+    pub enabled: bool,
+    pub available: bool,
+    pub detail: String,
+}
+
+/// Read-only audio health for the sound status indicator. Never initializes
+/// the device: an untouched worker reports available with detail
+/// "not-started" (assume usable until proven otherwise).
+pub fn status() -> AudioStatus {
+    let enabled = is_enabled();
+    let (available, detail) = match AUDIO_SENDER.get() {
+        None => (true, "not-started".to_string()),
+        Some(Ok(_)) => (true, "ready".to_string()),
+        Some(Err(e)) => (false, e.clone()),
+    };
+    AudioStatus {
+        enabled,
+        available,
+        detail,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +317,24 @@ mod tests {
         // sender this must return cleanly with or without audio hardware.
         assert!(matches!(warmup_command(), AudioCommand::Silence));
         warmup();
+    }
+
+    #[test]
+    fn status_reflects_enabled_flag_not_device_state() {
+        let before = is_enabled();
+        set_enabled(false);
+        let off = status();
+        set_enabled(true);
+        let on = status();
+        set_enabled(before);
+
+        assert!(!off.enabled);
+        assert!(on.enabled);
+        // The enabled flag must never leak into availability: availability
+        // describes the output device only.
+        assert_eq!(off.available, on.available);
+        assert!(!off.detail.is_empty());
+        assert!(!on.detail.is_empty());
     }
 
     #[test]

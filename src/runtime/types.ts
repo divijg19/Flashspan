@@ -87,6 +87,12 @@ export interface AutoRepeatTickPayload {
 	remaining: number;
 }
 
+export interface AudioStatus {
+	enabled: boolean;
+	available: boolean;
+	detail: string;
+}
+
 export interface ValidationResult {
 	expected_sum: number;
 	provided_sum: number;

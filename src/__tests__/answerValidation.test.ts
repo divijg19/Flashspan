@@ -4,8 +4,26 @@ import {
 	deterministicFallback,
 	generateNumber,
 	parseProvidedAnswerText,
+	parseWithNumberFallback,
 	validateAnswer,
 } from "../runtime/browser";
+
+describe("parseWithNumberFallback (pre-BigInt browsers)", () => {
+	it("grades exactly up to 15 digits", () => {
+		expect(parseWithNumberFallback("42")).toBe(42);
+		expect(parseWithNumberFallback("+123456789012345")).toBe(123456789012345);
+		expect(parseWithNumberFallback("-17")).toBe(-17);
+	});
+
+	it("rejects longer inputs that native would grade incorrect", () => {
+		expect(() => parseWithNumberFallback("1234567890123456")).toThrow(
+			"Enter a single integer answer",
+		);
+		expect(() => parseWithNumberFallback("+1234567890123456")).toThrow(
+			"Enter a single integer answer",
+		);
+	});
+});
 
 describe("generateNumber invariants (mirror of native generator)", () => {
 	it("never emits zero, negatives when disabled, or consecutive duplicates", () => {
@@ -55,6 +73,28 @@ describe("parseProvidedAnswerText", () => {
 		expect(parseProvidedAnswerText("1,234")).toBe(1234);
 		expect(parseProvidedAnswerText("+42")).toBe(42);
 		expect(parseProvidedAnswerText("-0")).toBe(0);
+	});
+
+	it("falls back gracefully without BigInt", () => {
+		const realBigInt = globalThis.BigInt;
+		Object.defineProperty(globalThis, "BigInt", {
+			configurable: true,
+			writable: true,
+			value: undefined,
+		});
+		try {
+			expect(parseProvidedAnswerText("1,234")).toBe(1234);
+			expect(parseProvidedAnswerText("  -17 ")).toBe(-17);
+			expect(() => parseProvidedAnswerText("42.9")).toThrow(
+				"Enter a single integer answer",
+			);
+		} finally {
+			Object.defineProperty(globalThis, "BigInt", {
+				configurable: true,
+				writable: true,
+				value: realBigInt,
+			});
+		}
 	});
 
 	it("mirrors the native strict rule: same accepts and rejects", () => {

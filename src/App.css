@@ -1008,6 +1008,13 @@
 	/* tiny nudge to avoid crammed edges */
 }
 
+.soundStatus {
+	font-family: var(--font-mono);
+	font-size: var(--label-size);
+	color: rgba(var(--app-fg-rgb), 0.65);
+	margin-top: calc(4px * var(--ui-scale));
+}
+
 .number {
 	--len: 1;
 	font-family: var(--font-mono);
