@@ -483,7 +483,11 @@ mod native_app {
         let result = manager.result_for(session_id)?;
         let expected_sum = result.sum;
 
-        let delta = provided_sum.saturating_sub(expected_sum);
+        // Exact by construction: normalization bounds every session sum far
+        // inside i64 range, so plain subtraction cannot overflow (mirrors the
+        // browser validator, which relies on the same bound for f64 exactness).
+        debug_assert!(provided_sum.checked_sub(expected_sum).is_some());
+        let delta = provided_sum - expected_sum;
         let correct = delta == 0;
 
         let validation = ValidationResult {

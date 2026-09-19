@@ -662,65 +662,90 @@ async function startSessionImpl(
 		warmupAudio();
 		emitClearScreen(sessionId, null);
 
-		let timelineMs = 0;
-		for (const value of COUNTDOWN_TICKS) {
-			queueTimer(session, timelineMs, () => {
-				emit(listeners.countdownTick, String(value));
-			});
-			timelineMs += 1000;
-		}
-
-		timelineMs += PRE_FLASH_SETTLE_MS;
+		// Event times are pure arithmetic (no RNG): cheap to precompute for
+		// any total. Values are generated lazily at fire time from live
+		// session state in index order, so sequences are identical to eager
+		// generation while startup stays instant for large totals.
+		type ScheduledEvent =
+			| { at: number; kind: "countdown"; value: string }
+			| { at: number; kind: "show"; index: number }
+			| { at: number; kind: "clear"; index: number }
+			| { at: number; kind: "finish" };
 
 		const numberDurationMs = toMs(effectiveConfig.number_duration_s);
-		const gapDurationMs = INTER_NUMBER_GAP_MS;
-		let currentAtMs = timelineMs;
-
-		for (let index = 0; index < effectiveConfig.total_numbers; index += 1) {
-			const plannedValue = session.plannedNumbers?.[index];
-			const generated =
-				plannedValue === undefined
-					? generateNumber(
-							effectiveConfig.digits_per_number,
-							effectiveConfig.allow_negative_numbers,
-							index,
-							session.runningSum,
-							session.lastPayload,
-						)
-					: { payload: String(plannedValue), value: plannedValue };
-			const { payload, value } = generated;
-
-			const showAt = currentAtMs;
-			const clearAt = showAt + numberDurationMs;
-
-			const newRunningSum = Math.max(0, session.runningSum + value);
-			session.lastPayload = payload;
-			session.runningSum = newRunningSum;
-			session.numbers.push(value);
-			session.sum += value;
-
-			queueTimer(session, showAt, () => {
-				emit(listeners.showNumber, {
-					session_id: sessionId,
-					index: index + 1,
-					total: effectiveConfig.total_numbers,
-					value,
-					running_sum: newRunningSum,
-					emitted_at_ms: nowMs(),
-				});
-				playAudio("beep");
-			});
-
-			queueTimer(session, clearAt, () => {
-				emitClearScreen(sessionId, index + 1);
-			});
-
-			currentAtMs = clearAt + gapDurationMs;
+		const events: ScheduledEvent[] = [];
+		let at = 0;
+		for (const value of COUNTDOWN_TICKS) {
+			events.push({ at, kind: "countdown", value: String(value) });
+			at += 1000;
 		}
+		at += PRE_FLASH_SETTLE_MS;
+		for (let index = 0; index < effectiveConfig.total_numbers; index += 1) {
+			events.push({ at, kind: "show", index });
+			at += numberDurationMs;
+			events.push({ at, kind: "clear", index });
+			at += INTER_NUMBER_GAP_MS;
+		}
+		events.push({ at, kind: "finish" });
 
-		queueTimer(session, currentAtMs, () => {
-			finishSession(session);
-		});
+		// Chained single-timer driver: at most one pending timeout, so timer
+		// bookkeeping stays O(1) and stopping clears a single handle. Each
+		// delay is recomputed against the wall clock, preserving the
+		// absolute golden timeline (late events fire ASAP via clamping).
+		const startedAtMs = nowMs();
+		const fireEvent = (pos: number): void => {
+			if (pos >= events.length) {
+				return;
+			}
+			const event = events[pos];
+			queueTimer(session, startedAtMs + event.at - nowMs(), () => {
+				switch (event.kind) {
+					case "countdown": {
+						emit(listeners.countdownTick, event.value);
+						break;
+					}
+					case "show": {
+						const plannedValue = session.plannedNumbers?.[event.index];
+						const generated =
+							plannedValue === undefined
+								? generateNumber(
+										effectiveConfig.digits_per_number,
+										effectiveConfig.allow_negative_numbers,
+										event.index,
+										session.runningSum,
+										session.lastPayload,
+									)
+								: { payload: String(plannedValue), value: plannedValue };
+						const { payload, value } = generated;
+						const newRunningSum = Math.max(0, session.runningSum + value);
+						session.lastPayload = payload;
+						session.runningSum = newRunningSum;
+						session.numbers.push(value);
+						session.sum += value;
+						emit(listeners.showNumber, {
+							session_id: sessionId,
+							index: event.index + 1,
+							total: effectiveConfig.total_numbers,
+							value,
+							running_sum: newRunningSum,
+							emitted_at_ms: nowMs(),
+						});
+						playAudio("beep");
+						break;
+					}
+					case "clear": {
+						emitClearScreen(sessionId, event.index + 1);
+						break;
+					}
+					case "finish": {
+						finishSession(session);
+						break;
+					}
+				}
+				fireEvent(pos + 1);
+			});
+		};
+		fireEvent(0);
 
 		return {
 			session_id: sessionId,

@@ -277,7 +277,9 @@ fn sleep_until_interruptible(deadline: Instant, stop: &AtomicBool) {
 
         let now = Instant::now();
         let remaining = deadline.saturating_duration_since(now);
-        let step = remaining.min(Duration::from_millis(10));
+        // 1ms steps keep transition jitter far below the 100ms minimum
+        // flash exposure; coarser steps visibly quantize fast sessions.
+        let step = remaining.min(Duration::from_millis(1));
         thread::sleep(step);
     }
 }

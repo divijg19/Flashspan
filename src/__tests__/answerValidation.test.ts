@@ -124,6 +124,24 @@ describe("validateAnswer", () => {
 		expect(resp.validation.delta).toBe(-1);
 		expect(resp.validation.correct).toBe(false);
 	});
+
+	it("grades exactly at the largest allowed sums", () => {
+		// 9 x (10^15 - 1): the digit-width bound maximum, still below 2^53.
+		const wide = 999999999999999;
+		const numbers = Array.from({ length: 9 }, () => wide);
+		const sum = wide * 9;
+		expect(sum).toBeLessThan(2 ** 53);
+		__test_setCompletedSession(303, numbers);
+		const resp = validateAnswer(303, sum);
+		expect(resp.validation.expected_sum).toBe(sum);
+		expect(resp.validation.provided_sum).toBe(sum);
+		expect(resp.validation.delta).toBe(0);
+		expect(resp.validation.correct).toBe(true);
+
+		const off = validateAnswer(303, sum - 1);
+		expect(off.validation.correct).toBe(false);
+		expect(off.validation.delta).toBe(-1);
+	});
 });
 
 describe("deterministicFallback", () => {

@@ -145,8 +145,13 @@ pub fn play_kind(kind: &str) -> Result<(), String> {
 }
 
 /// Drop any queued or playing audio. Best-effort: failures are ignored so
-/// session lifecycle never depends on audio hardware.
+/// session lifecycle never depends on audio hardware. Skips entirely when
+/// audio was never initialized, so stopping a silent session never pays
+/// for a cold device open.
 pub fn silence() {
+    if AUDIO_SENDER.get().is_none() {
+        return;
+    }
     let _ = send_command(AudioCommand::Silence);
 }
 
