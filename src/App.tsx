@@ -183,7 +183,23 @@ export default function App() {
 
 	const [showAdvanced, setShowAdvanced] = createSignal<boolean>(false);
 	const [soundEnabled, setSoundEnabled] = createSignal<boolean>(true);
+	const [soundStatusText, setSoundStatusText] = createSignal<string>("");
 	const [countdownTickId, setCountdownTickId] = createSignal<number>(0);
+
+	const refreshSoundStatus = async (): Promise<void> => {
+		try {
+			const status = await runtime.getAudioStatus();
+			if (!status.enabled) {
+				setSoundStatusText("");
+			} else if (status.available) {
+				setSoundStatusText("Sound ready");
+			} else {
+				setSoundStatusText(`Sound unavailable (${status.detail})`);
+			}
+		} catch {
+			setSoundStatusText("");
+		}
+	};
 
 	const [digitsPerNumber, setDigitsPerNumber] = createSignal<number>(1);
 	const [numberDurationSeconds, setNumberDurationSeconds] =
@@ -326,6 +342,7 @@ export default function App() {
 			} catch {
 				// ignore: best-effort to sync backend sound flag
 			}
+			void refreshSoundStatus();
 		} catch {
 			// Best-effort.
 		}
@@ -1009,7 +1026,16 @@ export default function App() {
 
 						<div class="actions">
 							<div class="soundGroup">
-								<div class="soundLabel">Sound</div>
+								<div class="soundLabelWrap">
+									<div class="soundLabel">Sound</div>
+									<div
+										class="soundStatus"
+										aria-live="polite"
+										title={soundStatusText() || undefined}
+									>
+										{soundStatusText()}
+									</div>
+								</div>
 								<div class="segmented" role="radiogroup" aria-label="Sound">
 									<label class="segmentedOption">
 										<input
@@ -1026,6 +1052,7 @@ export default function App() {
 													setSoundEnabled(false);
 													setErrorText(String(e));
 												}
+												void refreshSoundStatus();
 											}}
 										/>
 										<span class="segmentedLabel">🔊 On</span>
@@ -1045,6 +1072,7 @@ export default function App() {
 													setSoundEnabled(true);
 													setErrorText(String(e));
 												}
+												void refreshSoundStatus();
 											}}
 										/>
 										<span class="segmentedLabel">Off</span>

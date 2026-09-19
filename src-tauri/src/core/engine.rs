@@ -12,16 +12,24 @@ use rand::rngs::StdRng;
 ///
 /// Given the same config and seed, this function always produces identical results,
 /// enabling replay, serialization, and testing without timers or platform dependencies.
+///
+/// # Panics
+///
+/// Panics if `config` violates the normalization bounds (digits, totals, or
+/// sums outside the exact-integer budget); normalized configs never trigger
+/// this. See `crate::core::validate`.
+// Long by design: one linear pass per plan phase; splitting would scatter
+// the phase structure this function documents.
+#[allow(clippy::too_many_lines)]
+#[must_use]
 pub fn build_session_plan(
     session_id: u64,
-    config: SessionConfig,
+    config: &SessionConfig,
     config_effective: SessionConfigEffective,
     seed_opt: Option<u64>,
 ) -> SessionPlan {
-    let mut rng: StdRng = match seed_opt {
-        Some(seed) => StdRng::seed_from_u64(seed),
-        None => StdRng::from_rng(&mut rand::rng()),
-    };
+    let mut rng: StdRng =
+        seed_opt.map_or_else(|| StdRng::from_rng(&mut rand::rng()), StdRng::seed_from_u64);
 
     let mut steps: Vec<SessionStep> = Vec::new();
     let mut accumulated_duration_ms: u64 = 0;
@@ -58,7 +66,10 @@ pub fn build_session_plan(
     // Phase 3: Generate numbers and build flash cycles
     let mut last_payload: Option<String> = None;
     let mut running_sum: i128 = 0;
-    let mut numbers: Vec<i64> = Vec::with_capacity(config.total_numbers as usize);
+    // `total_numbers <= 10_000` fits `usize` on every supported target.
+    let mut numbers: Vec<i64> = Vec::with_capacity(
+        usize::try_from(config.total_numbers).expect("total_numbers fits usize"),
+    );
     let mut sum_i128: i128 = 0;
 
     for i in 0..config.total_numbers {
@@ -91,14 +102,14 @@ pub fn build_session_plan(
             let fallback = if payload.starts_with('-') {
                 payload.trim_start_matches('-').to_string()
             } else {
-                match payload.parse::<u64>() {
-                    Ok(mag) => {
+                payload.parse::<u64>().map_or_else(
+                    |_| "1".to_string(),
+                    |mag| {
                         let max_exclusive = if digits <= 1 { 10 } else { 10u64.pow(digits) };
                         let next = (mag % (max_exclusive - 1)) + 1;
                         next.to_string()
-                    }
-                    Err(_) => "1".to_string(),
-                }
+                    },
+                )
             };
 
             let fallback_val: i128 = fallback.parse::<i128>().unwrap_or(0);
@@ -123,7 +134,9 @@ pub fn build_session_plan(
         // Safe by construction: normalization caps digits at 15 (every value
         // < 2^53) and bounds total_numbers so the worst-case sum stays below
         // 2^53 - 1 (see MAX_EXACT_INTEGER), far inside i64 range.
-        debug_assert!(payload_value >= i64::MIN as i128 && payload_value <= i64::MAX as i128);
+        debug_assert!(
+            payload_value >= i128::from(i64::MIN) && payload_value <= i128::from(i64::MAX)
+        );
         let value_i64: i64 = payload_value
             .try_into()
             .expect("payload_value exceeds i64; normalization bound violated");
@@ -185,6 +198,9 @@ mod tests {
     use crate::core::types::{SessionConfig, SessionConfigEffective, SessionConfigInput};
     use crate::core::validate::normalize_session_config;
 
+    /// Largest exactly representable f64 integer, for exactness assertions.
+    const MAX_EXACT: i64 = (1i64 << 53) - 1;
+
     #[test]
     fn session_plan_determinism_same_seed() {
         let input = SessionConfigInput {
@@ -194,11 +210,11 @@ mod tests {
             allow_negative_numbers: false,
         };
 
-        let (config, config_eff) = normalize_session_config(input);
+        let (config, config_eff) = normalize_session_config(&input);
         let seed = Some(12345u64);
 
-        let plan1 = build_session_plan(1, config.clone(), config_eff.clone(), seed);
-        let plan2 = build_session_plan(2, config.clone(), config_eff.clone(), seed);
+        let plan1 = build_session_plan(1, &config, config_eff.clone(), seed);
+        let plan2 = build_session_plan(2, &config, config_eff, seed);
 
         // Same seed should produce identical numbers and sum
         assert_eq!(
@@ -220,10 +236,10 @@ mod tests {
             allow_negative_numbers: false,
         };
 
-        let (config, config_eff) = normalize_session_config(input);
+        let (config, config_eff) = normalize_session_config(&input);
 
-        let plan1 = build_session_plan(1, config.clone(), config_eff.clone(), Some(111u64));
-        let plan2 = build_session_plan(2, config.clone(), config_eff.clone(), Some(222u64));
+        let plan1 = build_session_plan(1, &config, config_eff.clone(), Some(111u64));
+        let plan2 = build_session_plan(2, &config, config_eff, Some(222u64));
 
         // Different seeds should (very likely) produce different sequences
         assert_ne!(
@@ -242,13 +258,13 @@ mod tests {
         };
 
         let total_numbers = input.total_numbers;
-        let (config, config_eff) = normalize_session_config(input);
-        let plan = build_session_plan(1, config, config_eff, Some(54321u64));
+        let (config, config_eff) = normalize_session_config(&input);
+        let plan = build_session_plan(1, &config, config_eff, Some(54321u64));
 
         // Check that numbers contain expected count
         assert_eq!(
             plan.numbers_generated.len(),
-            total_numbers as usize,
+            usize::try_from(total_numbers).expect("test total fits usize"),
             "Plan should generate correct number of numbers"
         );
 
@@ -286,8 +302,8 @@ mod tests {
             allow_negative_numbers: false,
         };
 
-        let (config, config_eff) = normalize_session_config(input);
-        let plan = build_session_plan(1, config, config_eff, Some(999u64));
+        let (config, config_eff) = normalize_session_config(&input);
+        let plan = build_session_plan(1, &config, config_eff, Some(999u64));
 
         // Verify step sequence structure
         // Expected: ClearScreen (initial) + 3x CountdownTick + 3x (ShowNumber + ClearScreen) + ClearScreen (final) + Complete
@@ -315,18 +331,16 @@ mod tests {
             allow_negative_numbers: true,
         };
 
-        let (config, config_eff) = normalize_session_config(input);
-        let plan = build_session_plan(1, config, config_eff, Some(77777u64));
+        let (config, config_eff) = normalize_session_config(&input);
+        let plan = build_session_plan(1, &config, config_eff, Some(77777u64));
 
         // Verify that running sum never goes negative
         let mut running_sum: i128 = 0;
         for (idx, num) in plan.numbers_generated.iter().enumerate() {
-            running_sum += *num as i128;
+            running_sum += i128::from(*num);
             assert!(
                 running_sum >= 0,
-                "Running sum went negative at index {}: sum was {}",
-                idx,
-                running_sum
+                "Running sum went negative at index {idx}: sum was {running_sum}"
             );
         }
     }
@@ -346,7 +360,7 @@ mod tests {
             total_numbers: 0,
             allow_negative_numbers: false,
         };
-        let plan = build_session_plan(1, config, config_eff, Some(123u64));
+        let plan = build_session_plan(1, &config, config_eff, Some(123u64));
 
         // With total_numbers=0: 1(clear) + 3(countdown) + 1(final clear) + 1(complete) = 6 steps
         assert_eq!(plan.steps.len(), 6);
@@ -364,8 +378,8 @@ mod tests {
             total_numbers: 1,
             allow_negative_numbers: false,
         };
-        let (config, config_eff) = normalize_session_config(input);
-        let plan = build_session_plan(1, config, config_eff, Some(456u64));
+        let (config, config_eff) = normalize_session_config(&input);
+        let plan = build_session_plan(1, &config, config_eff, Some(456u64));
 
         // With total_numbers=1: 1 + 3 + 2 + 1 + 1 = 8 steps
         assert_eq!(plan.steps.len(), 8);
@@ -389,9 +403,9 @@ mod tests {
             total_numbers: 3,
             allow_negative_numbers: false,
         };
-        let (config, config_eff) = normalize_session_config(input);
+        let (config, config_eff) = normalize_session_config(&input);
         // number_duration_ms = 500, fixed gap = 100 (INTER_NUMBER_GAP_MS)
-        let plan = build_session_plan(1, config, config_eff, Some(789u64));
+        let plan = build_session_plan(1, &config, config_eff, Some(789u64));
 
         // total_duration_ms = initial_clear(0) + 3*1000(countdown) + PRE_FLASH_SETTLE_MS(100)
         //   + 3*500(number_durations) + 3*100(delays) + final_clear(0) + complete(0)
@@ -407,8 +421,8 @@ mod tests {
             total_numbers: 2,
             allow_negative_numbers: false,
         };
-        let (config, config_eff) = normalize_session_config(input);
-        let plan = build_session_plan(1, config, config_eff, Some(321u64));
+        let (config, config_eff) = normalize_session_config(&input);
+        let plan = build_session_plan(1, &config, config_eff, Some(321u64));
 
         // Verify the last countdown tick ("1") has delay = 1000 + PRE_FLASH_SETTLE_MS(100) = 1100
         if let SessionStep::CountdownTick {
@@ -445,18 +459,17 @@ mod tests {
             total_numbers: 100,
             allow_negative_numbers: false,
         };
-        let (config, config_eff) = normalize_session_config(input);
+        let (config, config_eff) = normalize_session_config(&input);
         assert_eq!(config.total_numbers, 9);
 
         // Should not panic
-        let plan = build_session_plan(1, config, config_eff, Some(42u64));
+        let plan = build_session_plan(1, &config, config_eff, Some(42u64));
 
         // Step count: 1(clear) + 3(countdown) + 2*9(show+clear) + 1(final clear) + 1(complete) = 24
         assert_eq!(plan.steps.len(), 24);
         assert_eq!(plan.numbers_generated.len(), 9);
         assert!(plan.expected_sum >= 0, "sum should be non-negative");
         // Every value and the sum must stay exactly representable in f64.
-        const MAX_EXACT: i64 = (1i64 << 53) - 1;
         for value in &plan.numbers_generated {
             assert!(value.abs() <= MAX_EXACT);
         }
@@ -476,8 +489,8 @@ mod tests {
             total_numbers: 50,
             allow_negative_numbers: true,
         };
-        let (config, config_eff) = normalize_session_config(input);
-        let plan = build_session_plan(1, config, config_eff, Some(77777u64));
+        let (config, config_eff) = normalize_session_config(&input);
+        let plan = build_session_plan(1, &config, config_eff, Some(77777u64));
 
         assert_eq!(plan.numbers_generated.len(), 50);
 
@@ -499,8 +512,7 @@ mod tests {
             assert_ne!(
                 plan.numbers_generated[i],
                 plan.numbers_generated[i - 1],
-                "consecutive duplicate at index {}",
-                i
+                "consecutive duplicate at index {i}"
             );
         }
     }
@@ -516,8 +528,8 @@ mod tests {
                 total_numbers: total,
                 allow_negative_numbers: false,
             };
-            let (config, eff) = normalize_session_config(input);
-            let plan = build_session_plan(1, config, eff, Some(7u64));
+            let (config, eff) = normalize_session_config(&input);
+            let plan = build_session_plan(1, &config, eff, Some(7u64));
 
             // Each ShowNumber exposure must equal 500ms, including the first
             // flash (no first-flash bonus).
@@ -532,7 +544,10 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(show_delays, vec![500; total as usize]);
+            assert_eq!(
+                show_delays,
+                vec![500; usize::try_from(total).expect("test total fits usize")]
+            );
 
             // Each indexed clear must carry the fixed 100ms blank gap.
             let clear_delays: Vec<u64> = plan
@@ -547,7 +562,10 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(clear_delays, vec![100; total as usize]);
+            assert_eq!(
+                clear_delays,
+                vec![100; usize::try_from(total).expect("test total fits usize")]
+            );
         }
     }
 }

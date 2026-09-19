@@ -1,4 +1,5 @@
 // Property-based tests using proptest for determinism and bounds checking
+use super::engine::build_session_plan;
 use super::types::{SessionConfig, SessionConfigInput};
 use super::validate::{max_total_for_digits, normalize_session_config, validate_config};
 use proptest::prelude::*;
@@ -12,7 +13,7 @@ fn prop_normalize_digits_in_bounds() {
             total_numbers: 5,
             allow_negative_numbers: false,
         };
-        let (config, _effective) = normalize_session_config(input);
+        let (config, _effective) = normalize_session_config(&input);
 
         // Result should always be between 1 and 15
         prop_assert!(config.digits_per_number >= 1);
@@ -29,7 +30,7 @@ fn prop_normalize_total_numbers_in_bounds() {
             total_numbers: total,
             allow_negative_numbers: false,
         };
-        let (config, _effective) = normalize_session_config(input);
+        let (config, _effective) = normalize_session_config(&input);
 
         // Result should always be between 1 and 10_000
         prop_assert!(config.total_numbers >= 1);
@@ -50,7 +51,7 @@ fn prop_normalize_duration_in_bounds() {
             total_numbers: 5,
             allow_negative_numbers: false,
         };
-        let (config, _effective) = normalize_session_config(input);
+        let (config, _effective) = normalize_session_config(&input);
 
         // Result should always be between 1ms and 60_000ms
         prop_assert!(config.number_duration_ms >= 1);
@@ -72,8 +73,8 @@ fn prop_normalize_idempotent() {
             allow_negative_numbers: false,
         };
 
-        let (config1, _) = normalize_session_config(input.clone());
-        let (config2, _) = normalize_session_config(input);
+        let (config1, _) = normalize_session_config(&input);
+        let (config2, _) = normalize_session_config(&input);
 
         // Normalizing twice should give the same result
         prop_assert_eq!(config1.digits_per_number, config2.digits_per_number);
@@ -84,14 +85,10 @@ fn prop_normalize_idempotent() {
 
 #[test]
 fn prop_validate_accepts_valid_configs() {
-    proptest!(|
-        (digits in 1u32..16,
-         duration_ms in 1u64..60_001,
-         total_frac in 0.0_f64..1.0)
-    | {
-        // Total must respect the digit-width exact-integer bound.
-        let max_total = max_total_for_digits(digits);
-        let total = 1 + ((total_frac * max_total as f64) as u32).min(max_total - 1);
+    proptest!(|(digits in 1u32..16, duration_ms in 1u64..60_001, total_seed in any::<u32>())| {
+        // Total must respect the digit-width exact-integer bound; map an
+        // arbitrary seed into range (bound is always >= 1).
+        let total = total_seed % max_total_for_digits(digits) + 1;
         let config = SessionConfig {
             digits_per_number: digits,
             number_duration_ms: duration_ms,
@@ -105,6 +102,8 @@ fn prop_validate_accepts_valid_configs() {
     });
 }
 
+// Exactness lock: rounding behavior must be bit-exact, so no epsilon.
+#[allow(clippy::float_cmp)]
 #[test]
 fn prop_effective_duration_round_1_decimal() {
     proptest!(|(duration_s in 0.1_f64..5.0)| {
@@ -115,9 +114,10 @@ fn prop_effective_duration_round_1_decimal() {
             allow_negative_numbers: false,
         };
 
-        let (_config, effective) = normalize_session_config(input);
+        let (_config, effective) = normalize_session_config(&input);
 
         // Check that effective is rounded to 1 decimal place
+        // (exactness lock: no epsilon).
         let rounded = (effective.number_duration_s * 10.0).round() / 10.0;
         prop_assert_eq!(effective.number_duration_s, rounded);
     });
@@ -133,7 +133,7 @@ fn prop_allow_negative_flag_preserved() {
             allow_negative_numbers: allow_neg,
         };
 
-        let (_config, effective) = normalize_session_config(input);
+        let (_config, effective) = normalize_session_config(&input);
 
         // Flag should be preserved through normalization
         prop_assert_eq!(effective.allow_negative_numbers, allow_neg);
@@ -160,8 +160,8 @@ fn prop_duration_monotonic() {
             allow_negative_numbers: false,
         };
 
-        let (config1, _) = normalize_session_config(input1);
-        let (config2, _) = normalize_session_config(input2);
+        let (config1, _) = normalize_session_config(&input1);
+        let (config2, _) = normalize_session_config(&input2);
 
         // If duration1 < duration2, then normalized duration1 <= duration2
         // (accounting for clamping and rounding)
@@ -178,13 +178,13 @@ fn prop_nan_duration_clamps_to_min() {
          total in 1u32..101)
     | {
         let input = SessionConfigInput {
-            digits_per_number: digits as i64,
+            digits_per_number: i64::from(digits),
             number_duration_s: f64::NAN,
-            total_numbers: total as i64,
+            total_numbers: i64::from(total),
             allow_negative_numbers: false,
         };
 
-        let (config, _) = normalize_session_config(input);
+        let (config, _) = normalize_session_config(&input);
 
         // NaN should clamp to minimum 100ms (0.1 seconds)
         prop_assert_eq!(config.number_duration_ms, 100);
@@ -193,7 +193,7 @@ fn prop_nan_duration_clamps_to_min() {
 
 #[test]
 fn prop_infinity_duration_clamps_to_max() {
-    proptest!(|(_ in Just(()))| {
+    proptest!(|(() in Just(()))| {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: f64::INFINITY,
@@ -201,9 +201,32 @@ fn prop_infinity_duration_clamps_to_max() {
             allow_negative_numbers: false,
         };
 
-        let (config, _) = normalize_session_config(input);
+        let (config, _) = normalize_session_config(&input);
 
         // Infinity should clamp to maximum 60_000ms
         prop_assert_eq!(config.number_duration_ms, 60_000);
+    });
+}
+
+#[test]
+fn prop_plan_sum_never_negative() {
+    proptest!(|(digits in 1u32..16, seed in any::<u64>())| {
+        // Total stays well inside the digit-width bound for speed; the
+        // non-negativity proof holds for every total.
+        let input = SessionConfigInput {
+            digits_per_number: i64::from(digits),
+            number_duration_s: 0.5,
+            total_numbers: 20,
+            allow_negative_numbers: true,
+        };
+        let (config, effective) = normalize_session_config(&input);
+        let plan = build_session_plan(1, &config, effective, Some(seed));
+
+        prop_assert!(
+            plan.expected_sum >= 0,
+            "true sum went negative at width {digits}"
+        );
+        let recomputed: i64 = plan.numbers_generated.iter().sum();
+        prop_assert_eq!(plan.expected_sum, recomputed);
     });
 }

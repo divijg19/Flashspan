@@ -28,7 +28,7 @@ pub fn wasm_version() -> String {
 pub fn normalize_session_config_wasm(input: JsValue) -> Result<JsValue, JsValue> {
     let input: SessionConfigInput = serde_wasm_bindgen::from_value(input)
         .map_err(|err| js_error(format!("failed to decode SessionConfigInput: {err}")))?;
-    let (config, effective) = normalize_session_config(input);
+    let (config, effective) = normalize_session_config(&input);
     let output = WasmNormalizedSessionConfig { config, effective };
     serde_wasm_bindgen::to_value(&output)
         .map_err(|err| js_error(format!("failed to encode normalized config: {err}")))
@@ -42,8 +42,8 @@ pub fn build_session_plan_wasm(
 ) -> Result<JsValue, JsValue> {
     let input: SessionConfigInput = serde_wasm_bindgen::from_value(input)
         .map_err(|err| js_error(format!("failed to decode SessionConfigInput: {err}")))?;
-    let (config, effective) = normalize_session_config(input);
-    let plan = build_session_plan(session_id, config, effective, seed);
+    let (config, effective) = normalize_session_config(&input);
+    let plan = build_session_plan(session_id, &config, effective, seed);
     serde_wasm_bindgen::to_value(&plan)
         .map_err(|err| js_error(format!("failed to encode SessionPlan: {err}")))
 }

@@ -1,5 +1,11 @@
 pub mod core;
 
+/// Launch the Tauri application event loop.
+///
+/// # Panics
+///
+/// Panics if the Tauri runtime fails to start (missing `WebView` backend or
+/// context initialization failure).
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

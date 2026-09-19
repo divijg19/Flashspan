@@ -12,6 +12,7 @@ import { getWasmCoreBridge, type WasmSessionStep } from "../wasm/coreBridge";
 import type { Runtime, UnlistenFn } from "./index";
 import type {
 	AppSettings,
+	AudioStatus,
 	AutoRepeatConfig,
 	AutoRepeatEffective,
 	AutoRepeatTickPayload,
@@ -894,6 +895,31 @@ const INVALID_ANSWER_MESSAGE =
 const I64_MIN = -(2n ** 63n);
 const I64_MAX = 2n ** 63n - 1n;
 
+function hasBigInt(): boolean {
+	try {
+		return typeof BigInt === "function";
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Pre-BigInt fallback: exact for inputs up to 15 digits (every attainable
+ * session sum), since those fit f64 exactly. Longer inputs are rejected
+ * here while native would grade them incorrect — a documented deviation
+ * confined to obsolete browsers and unanswerable inputs.
+ */
+export function parseWithNumberFallback(cleaned: string): number {
+	if (cleaned.replace(/^[+-]/, "").length > 15) {
+		throw new Error(INVALID_ANSWER_MESSAGE);
+	}
+	const parsed = Number(cleaned);
+	if (!Number.isSafeInteger(parsed)) {
+		throw new Error(INVALID_ANSWER_MESSAGE);
+	}
+	return parsed;
+}
+
 function parseProvidedAnswerText(value: string): number {
 	const cleaned = value.trim().replace(/,/g, "");
 	if (!cleaned || cleaned.length > 64) {
@@ -901,6 +927,9 @@ function parseProvidedAnswerText(value: string): number {
 	}
 	if (!/^[+-]?[0-9]+$/.test(cleaned)) {
 		throw new Error(INVALID_ANSWER_MESSAGE);
+	}
+	if (!hasBigInt()) {
+		return parseWithNumberFallback(cleaned);
 	}
 	const big = BigInt(cleaned);
 	if (big < I64_MIN || big > I64_MAX) {
@@ -1034,12 +1063,6 @@ export const browserRuntime: Runtime = {
 		pendingAutoRepeat = null;
 	},
 
-	async markValidated(
-		sessionId: number,
-	): Promise<AutoRepeatWaitingPayload | null> {
-		return armAutoRepeatForSession(sessionId);
-	},
-
 	async acknowledgeComplete(
 		sessionId: number,
 	): Promise<AutoRepeatWaitingPayload | null> {
@@ -1071,6 +1094,17 @@ export const browserRuntime: Runtime = {
 	async setSoundEnabled(enabled: boolean): Promise<void> {
 		soundEnabled = Boolean(enabled);
 		persistSoundEnabled();
+	},
+
+	async getAudioStatus(): Promise<AudioStatus> {
+		const supported =
+			typeof window.Audio === "function" &&
+			audio.beep.canPlayType("audio/wav") !== "";
+		return {
+			enabled: soundEnabled,
+			available: supported,
+			detail: supported ? "ready" : "wav-playback-unsupported",
+		};
 	},
 
 	async playSound(kind: "beep" | "applause" | "buzzer"): Promise<void> {

@@ -6,7 +6,7 @@ pub(crate) fn random_fixed_digits_no_leading_zero(rng: &mut impl Rng, digits: u3
         return rng.random_range(1u32..=9u32).to_string();
     }
 
-    debug_assert!(digits <= 18, "digits {} exceeds u64 range", digits);
+    debug_assert!(digits <= 18, "digits {digits} exceeds u64 range");
     let min = 10u64.pow(digits - 1);
     let max_exclusive = 10u64.pow(digits);
     rng.random_range(min..max_exclusive).to_string()
@@ -35,6 +35,13 @@ pub(crate) fn random_fixed_digits_no_leading_zero_capped(
     Some(rng.random_range(min..cap_exclusive).to_string())
 }
 
+/// Generate one constrained flash number and its signed value.
+///
+/// # Panics
+///
+/// Panics only on internal inconsistency (a generated magnitude failing to
+/// parse as an integer), which cannot occur for magnitudes this module
+/// produces.
 pub fn random_number_with_constraints(
     rng: &mut impl Rng,
     digits: u32,
@@ -56,7 +63,10 @@ pub fn random_number_with_constraints(
     let sum_cap_u64 = if running_sum <= 0 {
         0u64
     } else {
-        (running_sum.min(max_for_digits as i128)) as u64
+        // Non-negative by the branch guard and capped at max_for_digits,
+        // so the conversion is exact.
+        u64::try_from(running_sum.min(i128::from(max_for_digits)))
+            .expect("capped non-negative running sum fits u64")
     };
 
     let can_choose_negative = allow_negative_here && sum_cap_u64 > 0;

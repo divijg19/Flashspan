@@ -7,6 +7,9 @@ mod core;
 mod session;
 
 #[cfg(not(target_arch = "wasm32"))]
+// Tauri resolves command inputs (`AppHandle`, `State`) by value by
+// framework contract; borrowing them is not an option.
+#[allow(clippy::needless_pass_by_value)]
 mod native_app {
     use crate::core::{
         types::{
@@ -150,18 +153,23 @@ mod native_app {
     }
 
     #[tauri::command]
+    fn get_audio_status() -> crate::audio::AudioStatus {
+        crate::audio::status()
+    }
+
+    #[tauri::command]
     fn set_color_scheme(
         app: tauri::AppHandle,
         settings: tauri::State<'_, SettingsState>,
         color_scheme: ColorScheme,
-    ) -> Result<AppSettings, String> {
+    ) -> AppSettings {
         let updated = {
             let mut guard = recover_lock(&settings.0, "settings");
             guard.color_scheme = color_scheme;
             guard.clone()
         };
         let _ = app.emit("app_settings_changed", updated.clone());
-        Ok(updated)
+        updated
     }
 
     #[tauri::command]
@@ -169,7 +177,7 @@ mod native_app {
         app: tauri::AppHandle,
         settings: tauri::State<'_, SettingsState>,
         theme_mode: ThemeMode,
-    ) -> Result<AppSettings, String> {
+    ) -> AppSettings {
         let updated = {
             let mut guard = recover_lock(&settings.0, "settings");
             guard.theme_mode = theme_mode;
@@ -177,7 +185,7 @@ mod native_app {
         };
 
         let _ = app.emit("app_settings_changed", updated.clone());
-        Ok(updated)
+        updated
     }
 
     #[derive(Debug, Clone, serde::Serialize)]
@@ -193,6 +201,18 @@ mod native_app {
         validation: ValidationResult,
         auto_repeat_waiting: Option<AutoRepeatWaitingPayload>,
         message: String,
+    }
+
+    /// Answer delta with verdict. Saturating (not plain) subtraction: the
+    /// digit-width bound keeps attainable sums far inside i64 range, but a
+    /// user can still *type* `i64::MIN`/`MAX`, and plain subtraction would
+    /// then panic in debug (or wrap in release) against a large expected
+    /// sum. Saturation can never flip the verdict: a clamped delta is
+    /// nonzero exactly when the true delta is nonzero, and deltas that fit
+    /// stay exact.
+    const fn validation_delta(provided_sum: i64, expected_sum: i64) -> (i64, bool) {
+        let delta = provided_sum.saturating_sub(expected_sum);
+        (delta, delta == 0)
     }
 
     fn parse_answer_text(input: &str) -> Result<i64, String> {
@@ -228,6 +248,26 @@ mod native_app {
             // Very long numeric string is rejected by our defensive bound
             let long = "1".repeat(100);
             assert!(parse_answer_text(&long).is_err());
+        }
+
+        #[test]
+        fn validation_delta_extremes_and_saturation() {
+            // Ordinary cases stay exact.
+            assert_eq!(validation_delta(6, 6), (0, true));
+            assert_eq!(validation_delta(9, 10), (-1, false));
+            assert_eq!(validation_delta(12, 10), (2, false));
+
+            // Absurd typed extremes saturate without flipping the verdict.
+            assert_eq!(
+                validation_delta(i64::MIN, 9_000_000_000_000_000),
+                (i64::MIN, false)
+            );
+            assert_eq!(
+                validation_delta(i64::MAX, -9_000_000_000_000_000),
+                (i64::MAX, false)
+            );
+            // Exact boundary: MIN minus zero fits and stays exact.
+            assert_eq!(validation_delta(i64::MIN, 0), (i64::MIN, false));
         }
 
         #[test]
@@ -274,7 +314,7 @@ mod native_app {
             assert_eq!(parse_answer_text("-9223372036854775808").unwrap(), i64::MIN);
 
             // Whitespace and commas
-            assert_eq!(parse_answer_text("  1,234,567  ").unwrap(), 1234567);
+            assert_eq!(parse_answer_text("  1,234,567  ").unwrap(), 1_234_567);
             assert_eq!(parse_answer_text("-9,876").unwrap(), -9876);
 
             // Rejects non-numeric and empty
@@ -285,29 +325,24 @@ mod native_app {
     }
 
     fn now_ms() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64
+        u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+        )
+        .expect("epoch millis fits u64 for hundreds of millions of years")
     }
 
     fn schedule_auto_repeat_if_needed(
-        app: tauri::AppHandle,
+        app: &tauri::AppHandle,
         manager: Arc<SessionManager>,
         session_id: u64,
-    ) -> Result<Option<AutoRepeatWaitingPayload>, String> {
-        warn!(
-            "[auto-repeat] schedule_auto_repeat_if_needed: session_id={}",
-            session_id
-        );
-        let result = manager.mark_validated_and_schedule_info(session_id)?;
-        warn!(
-            "[auto-repeat] mark_validated_and_schedule_info returned: {:?}",
-            result
-        );
-        let Some((delay_ms, remaining, config, generation)) = result else {
-            return Ok(None);
-        };
+    ) -> Option<AutoRepeatWaitingPayload> {
+        warn!("[auto-repeat] schedule_auto_repeat_if_needed: session_id={session_id}");
+        let result = manager.mark_validated_and_schedule_info(session_id);
+        warn!("[auto-repeat] mark_validated_and_schedule_info returned: {result:?}");
+        let (delay_ms, remaining, config, generation) = result?;
 
         let next_start_at_ms = now_ms().saturating_add(delay_ms);
         let payload = AutoRepeatWaitingPayload {
@@ -338,7 +373,10 @@ mod native_app {
                     }
 
                     let remaining_duration = end_at.saturating_duration_since(now);
-                    let seconds_left = (remaining_duration.as_millis() as u64).div_ceil(1000);
+                    // Bounded by the auto-repeat delay (<= 120s), far inside u64.
+                    let seconds_left = u64::try_from(remaining_duration.as_millis())
+                        .expect("auto-repeat remaining fits u64")
+                        .div_ceil(1000);
 
                     if last_sent != Some(seconds_left) {
                         last_sent = Some(seconds_left);
@@ -379,16 +417,19 @@ mod native_app {
                     },
                     config,
                 ) {
-                    warn!("auto-repeat start failed: {}", e);
+                    warn!("auto-repeat start failed: {e}");
                 }
             })
         {
-            warn!("auto-repeat thread spawn failed: {}", e);
+            warn!("auto-repeat thread spawn failed: {e}");
         }
 
-        Ok(Some(payload))
+        Some(payload)
     }
 
+    // Millisecond values below are exactly representable in f64
+    // (`delay_ms <= 120_000`, durations <= 60_000); `From` has no u64 impl.
+    #[allow(clippy::cast_precision_loss)]
     #[tauri::command]
     fn start_session(
         app: tauri::AppHandle,
@@ -396,46 +437,56 @@ mod native_app {
         config: SessionConfigInput,
         auto_repeat: Option<AutoRepeatConfigInput>,
     ) -> Result<StartSessionResponse, String> {
-        warn!("[auto-repeat] start_session: auto_repeat={:?}", auto_repeat);
-        let (config, effective_config) = normalize_session_config(config);
+        warn!("[auto-repeat] start_session: auto_repeat={auto_repeat:?}");
+        let (config, effective_config) = normalize_session_config(&config);
 
         // Configure auto-repeat plan for this run (or clear it).
-        let effective_auto_repeat = if let Some(ar) = auto_repeat {
-            if ar.enabled {
-                let repeats = ar.repeats.clamp(1, 20) as u32;
-                let delay_s = if ar.delay_s.is_finite() {
-                    ar.delay_s.clamp(5.0, 120.0)
-                } else {
-                    5.0
-                };
-                let delay_ms = ((delay_s * 1000.0).round() as u64).max(5_000);
-
-                manager.configure_auto_repeat(Some(AutoRepeatPlan {
-                    remaining: repeats,
-                    delay_ms,
-                    config: config.clone(),
-                    awaiting_validation_session_id: None,
-                }));
-
-                Some(AutoRepeatEffective {
-                    enabled: true,
-                    repeats,
-                    delay_s: (delay_ms as f64 / 1000.0),
-                })
-            } else {
+        let effective_auto_repeat = auto_repeat.map_or_else(
+            || {
                 manager.configure_auto_repeat(None);
                 None
-            }
-        } else {
-            manager.configure_auto_repeat(None);
-            None
-        };
+            },
+            |ar| {
+                if ar.enabled {
+                    let repeats =
+                        u32::try_from(ar.repeats.clamp(1, 20)).expect("clamped 1..=20 fits u32");
+                    let delay_secs = if ar.delay_s.is_finite() {
+                        ar.delay_s.clamp(5.0, 120.0)
+                    } else {
+                        5.0
+                    };
+                    // `delay_secs` is finite and clamped to 5..=120, so the
+                    // millisecond value is non-negative, exactly representable,
+                    // and far inside u64 range.
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let delay_ms = ((delay_secs * 1000.0).round() as u64).max(5_000);
+
+                    manager.configure_auto_repeat(Some(AutoRepeatPlan {
+                        remaining: repeats,
+                        delay_ms,
+                        config: config.clone(),
+                        awaiting_validation_session_id: None,
+                    }));
+
+                    // `delay_ms <= 120_000` is exactly representable in f64.
+                    let effective_delay_s = delay_ms as f64 / 1000.0;
+                    Some(AutoRepeatEffective {
+                        enabled: true,
+                        repeats,
+                        delay_s: effective_delay_s,
+                    })
+                } else {
+                    manager.configure_auto_repeat(None);
+                    None
+                }
+            },
+        );
 
         // Pre-warm audio while the 3s countdown runs: cold device open
         // would otherwise delay the first beep of the first session.
         crate::audio::warmup();
 
-        let session_id = manager.start_with_emitter(TauriEmitter { app: app.clone() }, config)?;
+        let session_id = manager.start_with_emitter(TauriEmitter { app }, config)?;
         Ok(StartSessionResponse {
             session_id,
             effective_config,
@@ -443,22 +494,20 @@ mod native_app {
         })
     }
 
-    #[tauri::command]
-    fn mark_validated(
-        app: tauri::AppHandle,
-        manager: tauri::State<'_, Arc<SessionManager>>,
-        session_id: u64,
-    ) -> Result<Option<AutoRepeatWaitingPayload>, String> {
-        schedule_auto_repeat_if_needed(app, Arc::clone(&*manager), session_id)
-    }
-
+    // The outer `Result` is the Tauri command contract (IPC errors); the
+    // inner `Option` is the only meaningful absence signal.
+    #[allow(clippy::unnecessary_wraps)]
     #[tauri::command]
     fn acknowledge_complete(
         app: tauri::AppHandle,
         manager: tauri::State<'_, Arc<SessionManager>>,
         session_id: u64,
     ) -> Result<Option<AutoRepeatWaitingPayload>, String> {
-        schedule_auto_repeat_if_needed(app, Arc::clone(&*manager), session_id)
+        Ok(schedule_auto_repeat_if_needed(
+            &app,
+            Arc::clone(&*manager),
+            session_id,
+        ))
     }
 
     #[tauri::command]
@@ -476,19 +525,14 @@ mod native_app {
         }
 
         let parsed: SubmitAnswerArgs =
-            serde_json::from_value(args).map_err(|e| format!("invalid args: {}", e))?;
+            serde_json::from_value(args).map_err(|e| format!("invalid args: {e}"))?;
         let session_id = parsed.session_id;
         let provided_sum = parsed.provided_sum;
 
         let result = manager.result_for(session_id)?;
         let expected_sum = result.sum;
 
-        // Exact by construction: normalization bounds every session sum far
-        // inside i64 range, so plain subtraction cannot overflow (mirrors the
-        // browser validator, which relies on the same bound for f64 exactness).
-        debug_assert!(provided_sum.checked_sub(expected_sum).is_some());
-        let delta = provided_sum - expected_sum;
-        let correct = delta == 0;
+        let (delta, correct) = validation_delta(provided_sum, expected_sum);
 
         let validation = ValidationResult {
             expected_sum,
@@ -500,7 +544,7 @@ mod native_app {
         // Play feedback sound based on validation result (Rust owns playback).
         let _ = crate::audio::play_kind(if correct { "applause" } else { "buzzer" });
 
-        let waiting = schedule_auto_repeat_if_needed(app, Arc::clone(&*manager), session_id)?;
+        let waiting = schedule_auto_repeat_if_needed(&app, Arc::clone(&*manager), session_id);
         let message = {
             let mut lines: Vec<String> = Vec::new();
             if correct {
@@ -508,7 +552,7 @@ mod native_app {
             } else {
                 lines.push("Incorrect".to_string());
             }
-            lines.push(format!("Expected answer: {}", expected_sum));
+            lines.push(format!("Expected answer: {expected_sum}"));
             if !correct {
                 let d = validation.delta;
                 lines.push(format!("Difference: {}{}", if d > 0 { "+" } else { "" }, d));
@@ -538,7 +582,7 @@ mod native_app {
         }
 
         let parsed: SubmitAnswerTextArgs =
-            serde_json::from_value(args).map_err(|e| format!("invalid args: {}", e))?;
+            serde_json::from_value(args).map_err(|e| format!("invalid args: {e}"))?;
         let provided_sum = parse_answer_text(&parsed.provided_text)?;
         let args_for_submit = serde_json::json!({
             "session_id": parsed.session_id,
@@ -569,13 +613,13 @@ mod native_app {
                 start_session,
                 stop_session,
                 cancel_auto_repeat,
-                mark_validated,
                 acknowledge_complete,
                 submit_answer,
                 submit_answer_text,
                 crate::audio::play_sound_kind,
                 get_sound_enabled,
-                set_sound_enabled
+                set_sound_enabled,
+                get_audio_status
             ])
             .run(tauri::generate_context!())
             .expect("error while running tauri application");
