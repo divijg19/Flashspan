@@ -16,6 +16,7 @@
 // --- Re-export types that UI will use ---
 export type {
 	AppSettings,
+	AudioStatus,
 	AutoRepeatConfig,
 	AutoRepeatEffective,
 	AutoRepeatTickPayload,
@@ -53,7 +54,6 @@ export interface Runtime {
 	): Promise<StartSessionResponse>;
 	stopSession(): Promise<void>;
 	cancelAutoRepeat(): Promise<void>;
-	markValidated(sessionId: number): Promise<AutoRepeatWaitingPayload | null>;
 	acknowledgeComplete(
 		sessionId: number,
 	): Promise<AutoRepeatWaitingPayload | null>;
@@ -67,6 +67,7 @@ export interface Runtime {
 	): Promise<SubmitAnswerResponse>;
 	getSoundEnabled(): Promise<boolean>;
 	setSoundEnabled(enabled: boolean): Promise<void>;
+	getAudioStatus(): Promise<AudioStatus>;
 	playSound(kind: "beep" | "applause" | "buzzer"): Promise<void>;
 
 	// --- Event listeners ---
@@ -90,6 +91,7 @@ export interface Runtime {
 // Import type (lazy-loaded to avoid circular deps)
 import type {
 	AppSettings,
+	AudioStatus,
 	AutoRepeatConfig,
 	AutoRepeatTickPayload,
 	AutoRepeatWaitingPayload,
@@ -164,9 +166,6 @@ export const runtime = {
 	get cancelAutoRepeat() {
 		return () => getRuntime().cancelAutoRepeat();
 	},
-	get markValidated() {
-		return (sessionId: number) => getRuntime().markValidated(sessionId);
-	},
 	get acknowledgeComplete() {
 		return (sessionId: number) => getRuntime().acknowledgeComplete(sessionId);
 	},
@@ -183,6 +182,9 @@ export const runtime = {
 	},
 	get setSoundEnabled() {
 		return (enabled: boolean) => getRuntime().setSoundEnabled(enabled);
+	},
+	get getAudioStatus() {
+		return () => getRuntime().getAudioStatus();
 	},
 	get playSound() {
 		return (kind: "beep" | "applause" | "buzzer") =>

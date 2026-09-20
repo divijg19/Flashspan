@@ -11,6 +11,11 @@ import type {
 type Listener<T> = (payload: T) => void;
 
 export function createMockRuntime() {
+	let audioStatus = {
+		enabled: true,
+		available: true,
+		detail: "ready",
+	};
 	const listeners = {
 		countdownTick: new Set<Listener<string>>(),
 		showNumber: new Set<Listener<ShowNumber>>(),
@@ -49,9 +54,6 @@ export function createMockRuntime() {
 		},
 		async stopSession() {},
 		async cancelAutoRepeat() {},
-		async markValidated() {
-			return null;
-		},
 		async acknowledgeComplete() {
 			return null;
 		},
@@ -84,6 +86,16 @@ export function createMockRuntime() {
 			return true;
 		},
 		async setSoundEnabled() {},
+		async getAudioStatus() {
+			return { ...audioStatus };
+		},
+		setAudioStatus(next: {
+			enabled: boolean;
+			available: boolean;
+			detail: string;
+		}) {
+			audioStatus = { ...next };
+		},
 		async playSound() {},
 
 		// event listeners
@@ -134,5 +146,10 @@ export function createMockRuntime() {
 		emitShowNumber: (p: ShowNumber) => void;
 		emitClearScreen: (p: ClearScreen) => void;
 		emitSessionComplete: (p: SessionComplete) => void;
+		setAudioStatus: (next: {
+			enabled: boolean;
+			available: boolean;
+			detail: string;
+		}) => void;
 	};
 }

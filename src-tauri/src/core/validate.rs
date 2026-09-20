@@ -4,7 +4,7 @@ fn round_1_decimal(v: f64) -> f64 {
     (v * 10.0).round() / 10.0
 }
 
-fn clamp_f64(v: f64, min: f64, max: f64) -> f64 {
+const fn clamp_f64(v: f64, min: f64, max: f64) -> f64 {
     if v.is_nan() {
         return min;
     }
@@ -18,6 +18,10 @@ fn clamp_i64(v: i64, min: i64, max: i64) -> i64 {
     v.max(min).min(max)
 }
 
+// The `as u64` below saturates before the final min/max clamp, so
+// out-of-range inputs still clamp correctly (`From` has no f64 impl);
+// the guarded branch makes sign loss impossible.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn seconds_to_ms_clamped(seconds: f64, min_ms: u64, max_ms: u64) -> u64 {
     let ms = (seconds * 1000.0).round();
     if !ms.is_finite() {
@@ -36,27 +40,45 @@ pub const MAX_EXACT_INTEGER: u64 = (1u64 << 53) - 1;
 pub const MAX_TOTAL_NUMBERS: u32 = 10_000;
 
 /// Maximum numbers allowed for a digit width such that even the worst case
-/// (every number the maximum magnitude) sums to less than MAX_EXACT_INTEGER.
-/// Since 2^53 is far below i64::MAX, this also guarantees the sum fits in i64.
+/// (every number the maximum magnitude) sums to less than
+/// `MAX_EXACT_INTEGER`.
+///
+/// Since 2^53 is far below `i64::MAX`, this also guarantees the sum fits in i64.
+/// # Panics
+///
+/// Panics only if `u32` could not hold the result, which is impossible: the
+/// `bound` never exceeds `MAX_TOTAL_NUMBERS` (`10_000`).
+#[must_use]
 pub fn max_total_for_digits(digits: u32) -> u32 {
     let max_magnitude: u128 = if digits <= 1 {
         9
     } else {
         10u128.pow(digits) - 1
     };
-    let bound = (MAX_EXACT_INTEGER as u128 / max_magnitude).min(MAX_TOTAL_NUMBERS as u128);
-    bound.max(1) as u32
+    let bound = (u128::from(MAX_EXACT_INTEGER) / max_magnitude).min(u128::from(MAX_TOTAL_NUMBERS));
+    u32::try_from(bound.max(1)).expect("bound fits u32 by construction")
 }
 
+/// # Panics
+///
+/// Panics only if a clamped value could not fit its target integer type,
+/// which is impossible: every clamp range lies far inside the target range.
+// Millisecond values below are exactly representable in f64 (`From` has no
+// u64 impl).
+#[allow(clippy::cast_precision_loss)]
+#[must_use]
 pub fn normalize_session_config(
-    input: SessionConfigInput,
+    input: &SessionConfigInput,
 ) -> (SessionConfig, SessionConfigEffective) {
     // Policy cap: 15 digits keeps every individual value exactly
     // representable in f64 (10^15 - 1 < 2^53 - 1). The generator itself
     // remains u64-safe to 18 digits; only normalized sessions are capped.
-    let digits = clamp_i64(input.digits_per_number, 1, 15) as u32;
-    let total_numbers =
-        clamp_i64(input.total_numbers, 1, 10_000).min(max_total_for_digits(digits) as i64) as u32;
+    let digits =
+        u32::try_from(clamp_i64(input.digits_per_number, 1, 15)).expect("clamped 1..=15 fits u32");
+    let total_numbers = u32::try_from(
+        clamp_i64(input.total_numbers, 1, 10_000).min(i64::from(max_total_for_digits(digits))),
+    )
+    .expect("clamped total within digit-width bound fits u32");
 
     // UI typically uses 0.1–5s, but we allow up to 60s defensively.
     let duration_s = clamp_f64(input.number_duration_s, 0.1, 60.0);
@@ -82,6 +104,11 @@ pub fn normalize_session_config(
     (config, effective)
 }
 
+/// # Errors
+///
+/// Returns an error describing the first violated bound (zero digits,
+/// duration, or totals; digits above 15; totals above `10_000` or past the
+/// digit-width exact-integer `bound`; durations above `60s`).
 pub fn validate_config(config: &SessionConfig) -> Result<(), String> {
     if config.digits_per_number == 0 || config.number_duration_ms == 0 || config.total_numbers == 0
     {

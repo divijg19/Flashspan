@@ -18,7 +18,7 @@
 //! Invariants:
 //! - I1: every `show(i) -> clear(i)` equals the configured number duration,
 //!   including the first flash (no first-flash bonus).
-//! - I2: every `clear(i) -> show(i+1)` is exactly INTER_NUMBER_GAP_MS, so no
+//! - I2: every `clear(i) -> show(i+1)` is exactly `INTER_NUMBER_GAP_MS`, so no
 //!   two events share a timestamp and a blank frame always separates numbers.
 //! - I3: the pre-first-flash settle is a pause *before* exposure, never an
 //!   extension of it.

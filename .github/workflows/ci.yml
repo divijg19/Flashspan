@@ -109,7 +109,7 @@ jobs:
         run: cargo test --locked
 
       - name: Run Rust lints
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings -D clippy::pedantic
 
   wasm:
     name: WASM Build and Tests

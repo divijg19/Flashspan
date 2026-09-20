@@ -1,7 +1,6 @@
 // Tests for core validation and engine modules
 #[cfg(test)]
-#[allow(clippy::module_inception)]
-mod tests {
+mod validation_tests {
     use crate::core::engine::build_session_plan;
     use crate::core::types::{SessionConfig, SessionConfigInput};
     use crate::core::validate::{
@@ -21,7 +20,7 @@ mod tests {
             total_numbers: 5,
             allow_negative_numbers: false,
         };
-        let (config, _effective) = normalize_session_config(input);
+        let (config, _effective) = normalize_session_config(&input);
         assert_eq!(
             config.digits_per_number, 1,
             "digits_per_number should clamp to 1 minimum"
@@ -34,7 +33,7 @@ mod tests {
             total_numbers: 5,
             allow_negative_numbers: false,
         };
-        let (config_high, _) = normalize_session_config(input_high);
+        let (config_high, _) = normalize_session_config(&input_high);
         assert_eq!(
             config_high.digits_per_number, 15,
             "digits_per_number should clamp to 15 maximum"
@@ -50,7 +49,7 @@ mod tests {
             total_numbers: 0,
             allow_negative_numbers: false,
         };
-        let (config, _) = normalize_session_config(input);
+        let (config, _) = normalize_session_config(&input);
         assert_eq!(
             config.total_numbers, 1,
             "total_numbers should clamp to 1 minimum"
@@ -63,13 +62,15 @@ mod tests {
             total_numbers: 20_000,
             allow_negative_numbers: false,
         };
-        let (config_high, _) = normalize_session_config(input_high);
+        let (config_high, _) = normalize_session_config(&input_high);
         assert_eq!(
             config_high.total_numbers, 10_000,
             "total_numbers should clamp to 10_000 maximum"
         );
     }
 
+    // Exactness locks below assert bit-exact rounding: no epsilon.
+    #[allow(clippy::float_cmp)]
     #[test]
     fn normalize_session_config_handles_duration_values() {
         // Test very small duration (should clamp to 0.1s = 100ms)
@@ -79,11 +80,12 @@ mod tests {
             total_numbers: 5,
             allow_negative_numbers: false,
         };
-        let (config, effective) = normalize_session_config(input);
+        let (config, effective) = normalize_session_config(&input);
         assert!(
             config.number_duration_ms >= 1,
             "duration should clamp to minimum 1ms"
         );
+        // Exactness lock: rounding behavior must be bit-exact, so no epsilon.
         assert_eq!(
             effective.number_duration_s, 0.1,
             "effective should round to 0.1s"
@@ -96,7 +98,7 @@ mod tests {
             total_numbers: 5,
             allow_negative_numbers: false,
         };
-        let (config_large, effective_large) = normalize_session_config(input_large);
+        let (config_large, effective_large) = normalize_session_config(&input_large);
         assert_eq!(
             config_large.number_duration_ms, 60_000,
             "duration should clamp to 60_000ms maximum"
@@ -116,7 +118,7 @@ mod tests {
             total_numbers: 5,
             allow_negative_numbers: false,
         };
-        let (config_nan, _) = normalize_session_config(input_nan);
+        let (config_nan, _) = normalize_session_config(&input_nan);
         assert_eq!(
             config_nan.number_duration_ms, 100,
             "NaN duration should clamp to minimum 100ms (0.1 seconds)"
@@ -129,7 +131,7 @@ mod tests {
             total_numbers: 5,
             allow_negative_numbers: false,
         };
-        let (config_inf, _) = normalize_session_config(input_inf);
+        let (config_inf, _) = normalize_session_config(&input_inf);
         assert_eq!(
             config_inf.number_duration_ms, 60_000,
             "Infinity should clamp to maximum 60_000ms"
@@ -142,13 +144,14 @@ mod tests {
             total_numbers: 5,
             allow_negative_numbers: false,
         };
-        let (config_neginf, _) = normalize_session_config(input_neginf);
+        let (config_neginf, _) = normalize_session_config(&input_neginf);
         assert_eq!(
             config_neginf.number_duration_ms, 100,
             "Negative infinity should clamp to minimum 100ms (0.1 seconds)"
         );
     }
 
+    #[allow(clippy::float_cmp)]
     #[test]
     fn normalize_session_config_rounds_to_1_decimal() {
         // Test rounding of effective duration
@@ -158,7 +161,7 @@ mod tests {
             total_numbers: 5,
             allow_negative_numbers: false,
         };
-        let (_config, effective) = normalize_session_config(input);
+        let (_config, effective) = normalize_session_config(&input);
 
         // 1.234s should round to 1.2s
         assert_eq!(
@@ -302,7 +305,7 @@ mod tests {
             total_numbers: 10,
             allow_negative_numbers: true,
         };
-        let (_config, effective) = normalize_session_config(input_neg);
+        let (_config, effective) = normalize_session_config(&input_neg);
         assert!(
             effective.allow_negative_numbers,
             "should preserve allow_negative_numbers flag"
@@ -314,7 +317,7 @@ mod tests {
             total_numbers: 10,
             allow_negative_numbers: false,
         };
-        let (_config_pos, effective_pos) = normalize_session_config(input_pos);
+        let (_config_pos, effective_pos) = normalize_session_config(&input_pos);
         assert!(
             !effective_pos.allow_negative_numbers,
             "should preserve allow_negative_numbers flag"
@@ -370,7 +373,7 @@ mod tests {
     #[test]
     fn normalize_enforces_digit_width_total_bound() {
         // 15 digits with an excessive request clamps to 9.
-        let (config, effective) = normalize_session_config(SessionConfigInput {
+        let (config, effective) = normalize_session_config(&SessionConfigInput {
             digits_per_number: 15,
             number_duration_s: 0.5,
             total_numbers: 100,
@@ -381,7 +384,7 @@ mod tests {
         assert_eq!(effective.total_numbers, 9);
 
         // Small widths keep the requested total.
-        let (config_small, _) = normalize_session_config(SessionConfigInput {
+        let (config_small, _) = normalize_session_config(&SessionConfigInput {
             digits_per_number: 3,
             number_duration_s: 0.5,
             total_numbers: 500,
@@ -398,26 +401,36 @@ mod tests {
         const MAX_EXACT_I128: i128 = MAX_EXACT_INTEGER as i128;
         for digits in 1..=15u32 {
             let bound = max_total_for_digits(digits);
-            let (config, _) = normalize_session_config(SessionConfigInput {
-                digits_per_number: digits as i64,
+            let (config, _) = normalize_session_config(&SessionConfigInput {
+                digits_per_number: i64::from(digits),
                 number_duration_s: 0.1,
                 total_numbers: 10_000,
                 allow_negative_numbers: true,
             });
             assert_eq!(config.total_numbers, bound);
 
-            let plan = build_session_plan(1, config, config_snapshot(digits, bound), Some(99u64));
+            let plan = build_session_plan(1, &config, config_snapshot(digits, bound), Some(99u64));
             assert_eq!(plan.numbers_generated.len(), bound as usize);
             for value in &plan.numbers_generated {
                 assert!(
-                    (*value as i128).abs() <= MAX_EXACT_I128,
+                    i128::from(*value).abs() <= MAX_EXACT_I128,
                     "value {value} exceeds exact-integer range at width {digits}"
                 );
             }
             assert!(
-                (plan.expected_sum as i128).abs() <= MAX_EXACT_I128,
+                i128::from(plan.expected_sum).abs() <= MAX_EXACT_I128,
                 "sum {} exceeds exact-integer range at width {digits}",
                 plan.expected_sum
+            );
+            // Lock: the true sum is never negative. Proof: the gap
+            // running_sum - true_sum starts at 0 and every accepted step
+            // preserves it (negatives require running_sum + v >= 0, so the
+            // max() floor never engages on an accepted value). Hence the
+            // true sum equals the floored running sum and stays >= 0, which
+            // is what makes plain-f64 and saturating-i64 grading agree.
+            assert!(
+                plan.expected_sum >= 0,
+                "sum went negative at width {digits}"
             );
             assert_eq!(
                 plan.expected_sum,

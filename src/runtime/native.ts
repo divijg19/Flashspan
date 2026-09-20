@@ -17,6 +17,7 @@ import buzzerUrl from "../assets/buzzer.wav?url";
 import type { Runtime, UnlistenFn } from "./index";
 import type {
 	AppSettings,
+	AudioStatus,
 	AutoRepeatConfig,
 	AutoRepeatTickPayload,
 	AutoRepeatWaitingPayload,
@@ -84,14 +85,6 @@ export const nativeRuntime: Runtime = {
 		return invoke<void>("cancel_auto_repeat");
 	},
 
-	async markValidated(
-		sessionId: number,
-	): Promise<AutoRepeatWaitingPayload | null> {
-		return invoke<AutoRepeatWaitingPayload | null>("mark_validated", {
-			sessionId: sessionId,
-		});
-	},
-
 	async acknowledgeComplete(
 		sessionId: number,
 	): Promise<AutoRepeatWaitingPayload | null> {
@@ -130,6 +123,10 @@ export const nativeRuntime: Runtime = {
 
 	async setSoundEnabled(enabled: boolean): Promise<void> {
 		return invoke<void>("set_sound_enabled", { enabled });
+	},
+
+	async getAudioStatus(): Promise<AudioStatus> {
+		return invoke<AudioStatus>("get_audio_status");
 	},
 
 	async playSound(kind: "beep" | "applause" | "buzzer"): Promise<void> {

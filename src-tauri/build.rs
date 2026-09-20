@@ -60,5 +60,5 @@ fn main() {
     // Some setups still look for this legacy path; keep it valid as well.
     write_rgba_png(&source_icon, &icons_dir.join("icon.png"), 256);
 
-    tauri_build::build()
+    tauri_build::build();
 }

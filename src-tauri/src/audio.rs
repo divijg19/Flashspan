@@ -37,13 +37,13 @@ impl AudioSink for Player {
     }
 
     fn skip_one(&self) {
-        Player::skip_one(self);
+        Self::skip_one(self);
     }
 
     fn append_bytes(&self, data: &'static [u8]) {
         match Decoder::try_from(Cursor::new(data)) {
             Ok(src) => self.append(src),
-            Err(e) => error!("audio decode error: {}", e),
+            Err(e) => error!("audio decode error: {e}"),
         }
     }
 }
@@ -84,7 +84,7 @@ fn get_audio_sender() -> Result<&'static Sender<AudioCommand>, String> {
                     info!("audio worker receiver loop ended");
                 }
                 Err(e) => {
-                    error!("audio worker failed to init output sink: {}", e);
+                    error!("audio worker failed to init output sink: {e}");
                 }
             })
             .map_err(|e| e.to_string())
@@ -93,21 +93,21 @@ fn get_audio_sender() -> Result<&'static Sender<AudioCommand>, String> {
             Err(e) => Err(e),
         }
     });
-    value.as_ref().map_err(|e| e.clone())
+    value.as_ref().map_err(std::clone::Clone::clone)
 }
 
 fn send_command(command: AudioCommand) -> Result<(), String> {
     let sender = match get_audio_sender() {
         Ok(s) => s,
         Err(e) => {
-            warn!("audio sender init failed: {}", e);
+            warn!("audio sender init failed: {e}");
             return Err(e);
         }
     };
 
     sender
         .send(command)
-        .map_err(|e| format!("audio send error: {}", e))
+        .map_err(|e| format!("audio send error: {e}"))
 }
 
 fn command_for_kind(kind: &str) -> Result<AudioCommand, String> {
@@ -131,14 +131,14 @@ pub fn play_sound_kind(kind: &str) -> Result<(), String> {
 /// Play a sound from Rust (same mapping as the Tauri command).
 pub fn play_kind(kind: &str) -> Result<(), String> {
     if !is_enabled() {
-        info!("sound disabled; skipping play_kind({})", kind);
+        info!("sound disabled; skipping play_kind({kind})");
         return Ok(());
     }
 
     let res = command_for_kind(kind).and_then(send_command);
 
     if let Err(ref e) = res {
-        error!("failed to play {}: {}", kind, e);
+        error!("failed to play {kind}: {e}");
     }
 
     res
@@ -156,7 +156,7 @@ pub fn silence() {
 }
 
 /// The warmup command: Silence opens the device without making sound.
-fn warmup_command() -> AudioCommand {
+const fn warmup_command() -> AudioCommand {
     AudioCommand::Silence
 }
 
@@ -165,7 +165,7 @@ fn warmup_command() -> AudioCommand {
 /// enumeration and stream negotiation (hundreds of ms cold), which would
 /// otherwise delay the first beep of the first session. Sends Silence, so
 /// warmup itself is inaudible. Never blocks the caller beyond channel send
-/// and never panics: all failures are swallowed by send_command.
+/// and never panics: all failures are swallowed by `send_command`.
 pub fn warmup() {
     let _ = send_command(warmup_command());
 }
@@ -178,6 +178,30 @@ pub fn set_enabled(v: bool) {
 
 pub fn is_enabled() -> bool {
     SOUND_ENABLED.load(Ordering::SeqCst)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AudioStatus {
+    pub enabled: bool,
+    pub available: bool,
+    pub detail: String,
+}
+
+/// Read-only audio health for the sound status indicator. Never initializes
+/// the device: an untouched worker reports available with detail
+/// "not-started" (assume usable until proven otherwise).
+pub fn status() -> AudioStatus {
+    let enabled = is_enabled();
+    let (available, detail) = match AUDIO_SENDER.get() {
+        None => (true, "not-started".to_string()),
+        Some(Ok(_)) => (true, "ready".to_string()),
+        Some(Err(e)) => (false, e.clone()),
+    };
+    AudioStatus {
+        enabled,
+        available,
+        detail,
+    }
 }
 
 #[cfg(test)]
@@ -278,6 +302,16 @@ mod tests {
     }
 
     #[test]
+    fn beep_on_empty_queue_appends_without_skips() {
+        // Warm path shape: nothing stale, so no skip precedes the append.
+        let sink = RecordingSink::with_queued(0);
+        handle_command(&sink, AudioCommand::Beep);
+
+        assert_eq!(sink.events(), vec![Event::Append(BEEP)]);
+        assert_eq!(sink.queued(), 1);
+    }
+
+    #[test]
     fn silence_drains_without_appending() {
         let sink = RecordingSink::with_queued(2);
         handle_command(&sink, AudioCommand::Silence);
@@ -293,6 +327,24 @@ mod tests {
         // sender this must return cleanly with or without audio hardware.
         assert!(matches!(warmup_command(), AudioCommand::Silence));
         warmup();
+    }
+
+    #[test]
+    fn status_reflects_enabled_flag_not_device_state() {
+        let before = is_enabled();
+        set_enabled(false);
+        let off = status();
+        set_enabled(true);
+        let on = status();
+        set_enabled(before);
+
+        assert!(!off.enabled);
+        assert!(on.enabled);
+        // The enabled flag must never leak into availability: availability
+        // describes the output device only.
+        assert_eq!(off.available, on.available);
+        assert!(!off.detail.is_empty());
+        assert!(!on.detail.is_empty());
     }
 
     #[test]
