@@ -4,6 +4,14 @@
 	--app-bg-rgb: 0, 0, 0;
 	--app-fg-rgb: 255, 255, 255;
 
+	/*
+	 * Length of the countdown, as the ring animation sees it: `COUNTDOWN_FROM`
+	 * counts of `COUNTDOWN_TICK_MS` from `crate::core::engine`, pinned at
+	 * 3 x 1000ms by the cross-runtime timeline tests. The ring's drain is a
+	 * single animation over exactly this span, so nothing in JS drives it.
+	 */
+	--countdown-total: 3000ms;
+
 	width: 100vw;
 	height: 100vh;
 	background: var(--app-bg);
@@ -324,6 +332,10 @@
 	align-items: center;
 	justify-content: center;
 	padding: 24px;
+	/* The page itself cannot scroll (body has overflow hidden), so a long
+	   summary or a short landscape viewport clipped this content with no way to
+	   reach it. Scroll within the screen instead. */
+	overflow-y: auto;
 }
 
 .answerNumbers {
@@ -464,12 +476,40 @@
 	overflow: hidden;
 }
 
+/*
+ * One continuous ramp across the whole auto-repeat delay.
+ *
+ * `scaleX` rather than `width`: width is a layout property, while a scale is
+ * composited. The duration comes from the countdown's real remaining time,
+ * written once when the countdown arms (a duration derived from the ticking
+ * `seconds_left` would change every second and restart the animation, turning
+ * the ramp back into steps). Because the animation owns `transform`, the
+ * per-tick updates no longer touch it, so it cannot stutter or drift when a
+ * tick is late or the tab is backgrounded.
+ *
+ * The bar is a 3px informational readout that restates the countdown already in
+ * the label beside it, so it keeps filling under reduced motion too.
+ */
 .autoRepeatProgressFill {
+	width: 100%;
 	height: 100%;
 	background: currentColor;
 	border-radius: 2px;
-	transition: width 1s linear;
+	transform-origin: left center;
+	animation-name: autoRepeatFill;
+	animation-timing-function: linear;
+	animation-fill-mode: forwards;
 	opacity: 0.5;
+}
+
+@keyframes autoRepeatFill {
+	from {
+		transform: scaleX(0);
+	}
+
+	to {
+		transform: scaleX(1);
+	}
 }
 
 .autoRepeatCancel {
@@ -1050,7 +1090,17 @@
 }
 
 /* Splash screen */
+/*
+ * Splash timings have exactly one definition, here. The JS schedule reads these
+ * three values rather than repeating them, so the reduced-motion overrides below
+ * cannot drift out of sync with the timers and strand an invisible overlay on
+ * screen.
+ */
 .splash {
+	--splash-enter: 3000ms;
+	--splash-hold: 1000ms;
+	--splash-exit: 3000ms;
+
 	position: fixed;
 	inset: 0;
 	z-index: 50;
@@ -1058,23 +1108,44 @@
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	pointer-events: none;
+	/*
+	 * Captures input for the splash's whole lifetime, including the fade-out.
+	 * Tying this to `.visible` used to make the overlay click-through while it
+	 * was still on screen, so a click landed on the app underneath mid-fade.
+	 */
+	pointer-events: auto;
 	opacity: 0;
-	transition: opacity 2s ease;
+	transition: opacity var(--splash-enter) ease;
 }
 
 .splash.visible {
 	opacity: 1;
-	pointer-events: auto;
 }
 
+/* Enter and exit share one opacity transition; only the duration differs. */
+.splash.exiting {
+	transition-duration: var(--splash-exit);
+}
+
+/*
+ * The intrinsic width/height attributes on the element give the browser the
+ * aspect ratio up front, so the flex column is laid out correctly before the
+ * 278KB PNG decodes. Without them the box had zero height until the image
+ * arrived and the whole splash visibly re-centred mid-fade. `width`/`height`
+ * are reset to `auto` here so those attributes describe the intrinsic size
+ * while `max-width`/`max-height` still scale it down responsively.
+ *
+ * No drop-shadow: a 24px blur behind a 1080x340 image, inside a full-viewport
+ * overlay, was the most expensive paint in the splash.
+ */
 .splashBanner {
+	width: auto;
+	height: auto;
 	max-width: 64vw;
 	max-height: 28vh;
 	object-fit: contain;
 	transform: translateY(-12%);
 	pointer-events: none;
-	filter: drop-shadow(0 8px 24px rgba(var(--app-bg-rgb), 0.6));
 }
 
 .splashText {
@@ -1133,61 +1204,55 @@
 	-webkit-mask-image: radial-gradient(circle, transparent 0 33%, #000 34% 100%);
 	mask-image: radial-gradient(circle, transparent 0 33%, #000 34% 100%);
 
-	filter: drop-shadow(0 0 18px rgba(var(--app-fg-rgb), 0.12));
+	/* No filter here: this element animates `transform`, and a drop-shadow on an
+	   animating 74vh disc is re-rasterized every frame. The halo lives on the
+	   static `.countdownGlow` sibling instead, so the rotating layer touches
+	   only compositor-friendly properties. */
 	opacity: 0.55;
 	transform: translate(-50%, -50%);
+
+	/*
+	 * The blades hold one angle per count and turn once when the digit changes,
+	 * rather than sweeping through intermediate angles for the whole second. The
+	 * angle lives in a class (see `.bladeQuarter` and friends), and a transition
+	 * on the transform is all it takes to make the change a single quarter turn:
+	 * no keyframes, no restart, nothing that has to be re-triggered per tick.
+	 */
+	transition: transform 200ms ease-out;
 }
 
-.countdownShutter.shutterA {
-	animation: shutterSnapA 1s steps(1, end) forwards;
+.countdownShutter.bladeQuarter {
+	transform: translate(-50%, -50%) rotate(90deg);
 }
 
-.countdownShutter.shutterB {
-	animation: shutterSnapB 1s steps(1, end) forwards;
+.countdownShutter.bladeHalf {
+	transform: translate(-50%, -50%) rotate(180deg);
 }
 
-@keyframes shutterSnapA {
-	0% {
-		transform: translate(-50%, -50%) rotate(0deg) scale(1);
-		opacity: 0.45;
-	}
-
-	18% {
-		transform: translate(-50%, -50%) rotate(90deg) scale(0.94);
-		opacity: 0.78;
-	}
-
-	34% {
-		transform: translate(-50%, -50%) rotate(140deg) scale(1);
-		opacity: 0.5;
-	}
-
-	100% {
-		transform: translate(-50%, -50%) rotate(360deg) scale(1);
-		opacity: 0.45;
-	}
+.countdownShutter.bladeThreeQuarter {
+	transform: translate(-50%, -50%) rotate(270deg);
 }
 
-@keyframes shutterSnapB {
-	0% {
-		transform: translate(-50%, -50%) rotate(0deg) scale(1);
-		opacity: 0.45;
-	}
-
-	18% {
-		transform: translate(-50%, -50%) rotate(90deg) scale(0.94);
-		opacity: 0.78;
-	}
-
-	34% {
-		transform: translate(-50%, -50%) rotate(140deg) scale(1);
-		opacity: 0.5;
-	}
-
-	100% {
-		transform: translate(-50%, -50%) rotate(360deg) scale(1);
-		opacity: 0.45;
-	}
+/*
+ * Static halo behind the shutter blades. Painted once, never animated, and it
+ * needs no `filter`: a soft radial gradient reads the same as the blurred
+ * shadow it replaces.
+ */
+.countdownGlow {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: min(74vh, 74vw);
+	height: min(74vh, 74vw);
+	transform: translate(-50%, -50%);
+	background: radial-gradient(
+		circle,
+		transparent 30%,
+		rgba(var(--app-fg-rgb), 0.1) 62%,
+		transparent 78%
+	);
+	pointer-events: none;
+	z-index: 0;
 }
 
 .countdownRing {
@@ -1198,6 +1263,7 @@
 	width: min(78vh, 78vw);
 	height: min(78vh, 78vw);
 	pointer-events: none;
+	/* Above the blades (0), below the digit (2). */
 	z-index: 1;
 }
 
@@ -1207,6 +1273,33 @@
 	stroke-width: 5;
 }
 
+/*
+ * The progress ring is 78vh and animates for the whole countdown, so it carries
+ * no filter: a drop-shadow here was re-rasterized on every frame of the drain.
+ * The faint `.countdownTrack` gives the ring its context and the stroke itself is
+ * at 0.92 alpha, so contrast is unaffected.
+ *
+ * The ring drains once, across the whole countdown, from full to empty in step
+ * with the digits. One animation for all three counts rather than one per count:
+ * it starts the instant the countdown surface mounts, which is the instant "3"
+ * appears, so there is no restart mechanism to lose. Restarting a per-count
+ * animation needs a class swap that can silently fail to fire, and a rewind to
+ * full on every digit, which is what made the ring read as three separate
+ * sweeps instead of one drain.
+ *
+ * Nothing in JS touches the offset, so the ring cannot drift from the digits by
+ * a frame and cannot skip a beat when a tick arrives late.
+ *
+ * The duration is `COUNTDOWN_FROM` counts of `COUNTDOWN_TICK_MS` from
+ * `crate::core::engine`, which the cross-runtime timeline tests pin at 3 x 1000.
+ * The final tick also carries `PRE_FLASH_SETTLE_MS`, so the drain completes just
+ * before the flashing rather than being cut short by it.
+ *
+ * The target overshoots the 276.46 circumference because `stroke-linecap: round`
+ * renders a zero-length dash as a dot, which would sit at twelve o'clock. No
+ * reduced-motion variant is needed: the drain never reverses, never scales, and
+ * never crosses a large area. The blades are the part that needs one.
+ */
 .countdownProgress {
 	fill: none;
 	stroke: rgba(var(--app-fg-rgb), 0.92);
@@ -1216,34 +1309,16 @@
 	transform-origin: 50% 50%;
 	stroke-dasharray: 276.46;
 	stroke-dashoffset: 0;
-	filter: drop-shadow(0 0 10px rgba(var(--app-fg-rgb), 0.28));
+	animation: ringDrain var(--countdown-total) linear forwards;
 }
 
-.countdownProgressA {
-	animation: countdownSweepA 1s linear forwards;
-}
-
-.countdownProgressB {
-	animation: countdownSweepB 1s linear forwards;
-}
-
-@keyframes countdownSweepA {
+@keyframes ringDrain {
 	from {
 		stroke-dashoffset: 0;
 	}
 
 	to {
-		stroke-dashoffset: 276.46;
-	}
-}
-
-@keyframes countdownSweepB {
-	from {
-		stroke-dashoffset: 0;
-	}
-
-	to {
-		stroke-dashoffset: 276.46;
+		stroke-dashoffset: 277;
 	}
 }
 
@@ -1270,4 +1345,32 @@
 	width: 1ch;
 	text-align: left;
 	pointer-events: none;
+}
+
+/*
+ * Respect a reduced-motion preference. The countdown shutter rotates a disc up
+ * to 74vh across three consecutive ticks and the progress ring sweeps; both are
+ * large-area continuous motion. Disabling the animation keeps the digit, the
+ * ring and the cadence intact, so no information is lost.
+ */
+/*
+ * Reduced motion changes *how* the countdown moves, not *whether* it moves.
+ *
+ * The film-leader chug is stepped, and real film leaders advance in discrete
+ * frames, so this is already the motion-safe version of the effect; disabling it
+ * outright was both unnecessary and destructive. What changes is the cadence
+ * (four frames instead of eight), the scale dip goes away because a 74vh disc
+ * pulsing in size is the part that actually reads as motion, and the rotation
+ * amplitude halves. The progress ring still sweeps once per tick, and the 3px
+ * auto-repeat bar still fills: both are informational readouts of a countdown,
+ * not vestibular triggers.
+ */
+@media (prefers-reduced-motion: reduce) {
+	/*
+	 * The blades still turn once per count, but without the eased travel: the
+	 * angle changes instantly at the digit change instead of sweeping.
+	 */
+	.countdownShutter {
+		transition: none;
+	}
 }

@@ -70,6 +70,8 @@ Then visit `http://localhost:8000` in your browser.
 
 The web build needs `BigInt` for exact answer grading (Chrome 67+, Firefox 68+, Safari 14+, Edge 79+). Older browsers fall back to exact grading for answers up to 15 digits and reject longer inputs.
 
+The Rust core compiled to WebAssembly additionally requires the bulk-memory and non-trapping-float-to-int proposals, which current Rust emits unconditionally: Chrome 75+, Firefox 79+, Safari 15+, Edge 79+. Older browsers are still served the app, which detects the unavailable module and runs the equivalent JavaScript planner.
+
 ## Development
 
 ```bash
@@ -105,9 +107,15 @@ cd src-tauri
 cargo test --locked -p Flashspan
 ```
 
-Run linter:
+Run linters (both are enforced in CI, including the `wasm32` target that the
+host build never compiles):
 
 ```bash
 cd src-tauri
-cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --all-targets -- -D warnings -D clippy::pedantic
+cargo clippy --locked --target wasm32-unknown-unknown --all-targets -- -D warnings -D clippy::pedantic
 ```
+
+`bun run build:web` builds the WASM package before the frontend bundle, so the
+JavaScript/WASM parity tests in `src/__tests__/wasmParity.test.ts` have a module
+to compare against. Without it they skip rather than fail.

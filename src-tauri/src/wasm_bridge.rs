@@ -15,15 +15,23 @@ fn js_error(message: impl Into<String>) -> JsValue {
 }
 
 #[wasm_bindgen]
+#[must_use]
 pub fn ping() -> String {
     "pong (wasm)".to_string()
 }
 
 #[wasm_bindgen]
+#[must_use]
 pub fn wasm_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Normalize a session config for the browser runtime.
+///
+/// # Errors
+///
+/// Returns a JS error if `input` cannot be decoded as a `SessionConfigInput`
+/// or if the normalized config cannot be encoded back to JS.
 #[wasm_bindgen]
 pub fn normalize_session_config_wasm(input: JsValue) -> Result<JsValue, JsValue> {
     let input: SessionConfigInput = serde_wasm_bindgen::from_value(input)
@@ -34,6 +42,17 @@ pub fn normalize_session_config_wasm(input: JsValue) -> Result<JsValue, JsValue>
         .map_err(|err| js_error(format!("failed to encode normalized config: {err}")))
 }
 
+/// Build a deterministic session plan for the browser runtime.
+///
+/// # Errors
+///
+/// Returns a JS error if `input` cannot be decoded as a `SessionConfigInput`
+/// or if the resulting plan cannot be encoded back to JS.
+///
+/// # Panics
+///
+/// Panics if `input` normalizes to a config outside the generator's bounds;
+/// normalized configs never do (see `crate::core::validate`).
 #[wasm_bindgen]
 pub fn build_session_plan_wasm(
     session_id: u64,

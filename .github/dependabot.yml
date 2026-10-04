@@ -1,7 +1,9 @@
 version: 2
 
 updates:
-  - package-ecosystem: "npm"
+  # `bun` is its own ecosystem: the npm ecosystem would update package.json
+  # without ever writing bun.lock, which fails CI's frozen-lockfile install.
+  - package-ecosystem: "bun"
     directory: "/"
     schedule:
       interval: "weekly"

@@ -1,5 +1,4 @@
 // Tests for core validation and engine modules
-#[cfg(test)]
 mod validation_tests {
     use crate::core::engine::build_session_plan;
     use crate::core::types::{SessionConfig, SessionConfigInput};
@@ -73,7 +72,7 @@ mod validation_tests {
     #[allow(clippy::float_cmp)]
     #[test]
     fn normalize_session_config_handles_duration_values() {
-        // Test very small duration (should clamp to 0.1s = 100ms)
+        // Very small duration: clamps up to the 0.1s grid floor (100ms)
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 0.01,
@@ -81,14 +80,14 @@ mod validation_tests {
             allow_negative_numbers: false,
         };
         let (config, effective) = normalize_session_config(&input);
-        assert!(
-            config.number_duration_ms >= 1,
-            "duration should clamp to minimum 1ms"
+        assert_eq!(
+            config.number_duration_ms, 100,
+            "duration should clamp to the 0.1s floor"
         );
         // Exactness lock: rounding behavior must be bit-exact, so no epsilon.
         assert_eq!(
             effective.number_duration_s, 0.1,
-            "effective should round to 0.1s"
+            "effective should report the exposure exactly"
         );
 
         // Test large duration (should clamp to 60s = 60_000ms)

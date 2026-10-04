@@ -44,7 +44,7 @@ pub struct SessionConfigInput {
     pub allow_negative_numbers: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionConfigEffective {
     pub digits_per_number: u32,
     pub number_duration_s: f64,
@@ -93,6 +93,32 @@ pub enum SessionStep {
         numbers: Vec<i64>,
         sum: i64,
     },
+}
+
+impl SessionStep {
+    /// The delay this step imposes before the next one (ms).
+    ///
+    /// Single source of truth for a plan's `total_duration_ms`: derived by
+    /// summing over the steps themselves, so the advertised total cannot drift
+    /// from the schedule that is actually executed.
+    #[must_use]
+    pub fn delay_ms(&self) -> u64 {
+        match self {
+            Self::CountdownTick {
+                delay_ms_before_next,
+                ..
+            }
+            | Self::ShowNumber {
+                delay_ms_before_next,
+                ..
+            }
+            | Self::ClearScreen {
+                delay_ms_before_next,
+                ..
+            } => *delay_ms_before_next,
+            Self::Complete { .. } => 0,
+        }
+    }
 }
 
 /// An immutable snapshot of a complete session progression.

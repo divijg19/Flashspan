@@ -44,14 +44,14 @@ interface BrowserSession {
 	sessionId: number;
 	config: SessionConfigEffective;
 	autoRepeat: AutoRepeatEffective | null;
-	plannedNumbers: number[] | null;
 	plannedSum: number | null;
 	numbers: number[];
 	sum: number;
 	runningSum: number;
 	lastPayload: string | null;
 	completed: boolean;
-	timers: number[];
+	/** At most one pending driver timeout (the driver is a single chain). */
+	timerId: number | null;
 }
 
 const SETTINGS_KEY = "flashspan.runtime.settings";
@@ -96,7 +96,11 @@ const audio = {
 };
 
 Object.values(audio).forEach((clip) => {
-	clip.preload = "auto";
+	// "metadata" rather than "auto": eagerly preloading all three clips fetched
+	// ~430KB (applause alone is 350KB) in competition with the wasm download,
+	// for audio that is not needed until a session ends. `warmupAudio` decodes
+	// the clips under the Start gesture anyway, so the beep still lands on time.
+	clip.preload = "metadata";
 	clip.volume = 0.9;
 });
 
@@ -114,6 +118,18 @@ function round1(value: number): number {
 
 function nowMs(): number {
 	return Date.now();
+}
+
+/**
+ * Monotonic clock for scheduling only.
+ *
+ * `Date.now()` is wall-clock time, so an NTP step or a manual clock change
+ * would retroactively invalidate every pending delay (a forward jump fires the
+ * whole session at once). It stays in use for the `emitted_at_ms` /
+ * `next_start_at_ms` payload fields, which the UI compares against `Date.now()`.
+ */
+function schedulerNowMs(): number {
+	return performance.now();
 }
 
 function toMs(seconds: number): number {
@@ -219,7 +235,15 @@ export function maxTotalForDigits(digits: number): number {
 	);
 }
 
-function normalizeSessionConfig(
+/**
+ * Normalize a session config for the browser.
+ *
+ * Exported for the JS/WASM parity test, which asserts this agrees with the Rust
+ * normalizer on an adversarial input table. The comment-based protocol between
+ * the two is not sufficient on its own: the auto-repeat decrement and the
+ * duplicate-value fallback both drifted without any test failing.
+ */
+export function normalizeSessionConfig(
 	input: SessionConfigInput,
 ): SessionConfigEffective {
 	// Policy cap: 15 digits keeps every value exactly representable in f64.
@@ -253,12 +277,17 @@ function normalizeAutoRepeat(
 }
 
 function clearSessionTimers(session: BrowserSession): void {
-	for (const timerId of session.timers) {
-		window.clearTimeout(timerId);
+	if (session.timerId != null) {
+		window.clearTimeout(session.timerId);
+		session.timerId = null;
 	}
-	session.timers.length = 0;
 }
 
+/**
+ * Schedule the next driver step. The chained driver keeps at most one pending
+ * timeout, so a single handle replaces the list this used to re-filter on every
+ * one of up to 20,000 events.
+ */
 function queueTimer(
 	session: BrowserSession,
 	delayMs: number,
@@ -266,7 +295,7 @@ function queueTimer(
 ): void {
 	const timerId = window.setTimeout(
 		() => {
-			session.timers = session.timers.filter((value) => value !== timerId);
+			session.timerId = null;
 			if (
 				currentSession?.sessionId !== session.sessionId ||
 				session.completed
@@ -279,7 +308,7 @@ function queueTimer(
 		Math.max(0, delayMs),
 	);
 
-	session.timers.push(timerId);
+	session.timerId = timerId;
 }
 
 function emitClearScreen(sessionId: number, index: number | null): void {
@@ -425,7 +454,11 @@ export function deterministicFallback(
 	allowNegative: boolean,
 ): { payload: string; value: number } {
 	if (lastPayload == null) {
-		return { payload: "1", value: 1 };
+		// No previous value to rotate from. Unreachable from the generator (the
+		// fallback only runs on a repeat), but keep it inside the digit width
+		// rather than hard-coding a one-digit value.
+		const min = digits <= 1 ? 1 : 10 ** (digits - 1);
+		return { payload: String(min), value: min };
 	}
 
 	const lastVal = Number(lastPayload);
@@ -434,8 +467,13 @@ export function deterministicFallback(
 		return { payload: String(positive), value: positive };
 	}
 
-	const maxExclusive = digits <= 1 ? 10 : 10 ** digits;
-	const next = (lastVal % (maxExclusive - 1)) + 1;
+	// Rotate the magnitude one step inside its own digit-width domain, mirroring
+	// `next_distinct_value` in the Rust core. The previous form wrapped to
+	// `(max - 1) + 1 = 1`, which put a one-digit value in a three-digit session
+	// and silently dropped the configured digit width.
+	const min = digits <= 1 ? 1 : 10 ** (digits - 1);
+	const max = digits <= 1 ? 9 : 10 ** digits - 1;
+	const next = min + ((Math.abs(lastVal) - min + 1) % (max - min + 1));
 
 	// Never invent a negative when negatives are disabled (mirrors native).
 	if (allowNegative && runningSum - next >= 0) {
@@ -500,7 +538,8 @@ async function resolvePlannedSessionData(
 
 	return {
 		config: plan.config_snapshot,
-		numbers: plan.numbers_generated.slice(),
+		// No copy: `plan` was just decoded from wasm and nothing else retains it.
+		numbers: plan.numbers_generated,
 		sum: plan.expected_sum,
 		steps: plan.steps,
 	};
@@ -518,6 +557,14 @@ export type PlannedDriverEvent =
 	  }
 	| { at: number; kind: "clear"; index: number }
 	| { at: number; kind: "finish" };
+
+/** Serde enum tags the WASM bridge can produce, in schema order. */
+const STEP_TAGS = [
+	"CountdownTick",
+	"ShowNumber",
+	"ClearScreen",
+	"Complete",
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -560,18 +607,19 @@ export function planStepsToEvents(
 		if (!isRecord(step)) {
 			return null;
 		}
-		const keys = Object.keys(step);
-		if (keys.length !== 1) {
-			return null;
+		// serde's externally-tagged enum shape is `{ Tag: payload }`, so exactly
+		// one known tag must be present. Walking a hoisted list avoids the
+		// `Object.keys(step)` array allocation per step (up to 20,000 of them).
+		let tag: (typeof STEP_TAGS)[number] | null = null;
+		for (const candidate of STEP_TAGS) {
+			if (candidate in step) {
+				if (tag != null) {
+					return null;
+				}
+				tag = candidate;
+			}
 		}
-
-		const tag = keys[0];
-		if (
-			tag !== "CountdownTick" &&
-			tag !== "ShowNumber" &&
-			tag !== "ClearScreen" &&
-			tag !== "Complete"
-		) {
+		if (tag == null) {
 			return null;
 		}
 		const body = (step as Record<string, unknown>)[tag];
@@ -642,10 +690,18 @@ function scheduleAutoRepeatCountdown(): void {
 		if (remainingMs <= 0) {
 			const next = pendingAutoRepeat;
 			pendingAutoRepeat = null;
-			void startSessionImpl(next.config, {
-				enabled: true,
-				repeats: next.remaining,
-				delay_s: next.delayMs / 1000,
+			void startSessionImpl(
+				next.config,
+				{
+					enabled: true,
+					repeats: next.remaining,
+					delay_s: next.delayMs / 1000,
+				},
+				true,
+			).catch((err: unknown) => {
+				// A manual Start that won the race makes this restart throw; observe
+				// it so it never surfaces as an unhandled rejection.
+				console.info("[runtime/browser] auto-repeat restart skipped:", err);
 			});
 			return;
 		}
@@ -684,6 +740,13 @@ function armAutoRepeatForSession(
 		};
 	}
 
+	// `repeats` counts the sessions still to run. Decrementing to zero still means
+	// "schedule exactly one more", matching native, where the guard
+	// `remaining > 0` lives in the completion path (`run_session_plan` only arms
+	// `awaiting_validation_session_id` when repeats remain) rather than here.
+	// The chain stops because `normalizeAutoRepeat` treats a zero count as "no
+	// auto-repeat" instead of clamping it back up to 1, which is what made it
+	// loop forever.
 	const remaining = Math.max(0, session.autoRepeat.repeats - 1);
 	session.autoRepeat = {
 		...session.autoRepeat,
@@ -729,22 +792,30 @@ function finishSession(session: BrowserSession): void {
 async function startSessionImpl(
 	config: SessionConfigInput,
 	autoRepeat?: AutoRepeatConfig | null,
+	// Set by the auto-repeat restart, which carries a plan that is already
+	// normalized and whose `repeats` may legitimately be 0 ("nothing left").
+	// Re-applying the user-facing clamp turned that 0 back into 1 and restarted
+	// the chain forever. Native never re-normalizes: it reuses the stored
+	// `AutoRepeatPlan` with its decremented `remaining`.
+	alreadyNormalized = false,
 ): Promise<StartSessionResponse> {
 	if (sessionStarting) {
 		throw new Error("A session is already starting");
 	}
 	sessionStarting = true;
 	try {
-		const effectiveAutoRepeat = normalizeAutoRepeat(autoRepeat);
-		const plannedSession = await resolvePlannedSessionData(
-			nextSessionId,
-			config,
-		);
-		const effectiveConfig =
-			plannedSession?.config ?? normalizeSessionConfig(config);
+		const effectiveAutoRepeat = alreadyNormalized
+			? (autoRepeat ?? null)
+			: normalizeAutoRepeat(autoRepeat);
 
+		// Tear the outgoing session down *before* awaiting the plan. The plan
+		// build (and its WASM deserialize) can take long enough for the previous
+		// session's chained timer to fire again mid-teardown and flash a stale
+		// number; clearing first and dropping `currentSession` makes the timer
+		// guard fail closed.
 		if (currentSession) {
 			clearSessionTimers(currentSession);
+			currentSession = null;
 		}
 
 		if (pendingAutoRepeat) {
@@ -755,6 +826,13 @@ async function startSessionImpl(
 			pendingAutoRepeat = null;
 		}
 
+		const plannedSession = await resolvePlannedSessionData(
+			nextSessionId,
+			config,
+		);
+		const effectiveConfig =
+			plannedSession?.config ?? normalizeSessionConfig(config);
+
 		const sessionId = nextSessionId;
 		nextSessionId += 1;
 
@@ -762,14 +840,13 @@ async function startSessionImpl(
 			sessionId,
 			config: effectiveConfig,
 			autoRepeat: effectiveAutoRepeat,
-			plannedNumbers: plannedSession?.numbers ?? null,
 			plannedSum: plannedSession?.sum ?? null,
 			numbers: [],
 			sum: 0,
 			runningSum: 0,
 			lastPayload: null,
 			completed: false,
-			timers: [],
+			timerId: null,
 		};
 
 		currentSession = session;
@@ -810,13 +887,13 @@ async function startSessionImpl(
 		// bookkeeping stays O(1) and stopping clears a single handle. Each
 		// delay is recomputed against the wall clock, preserving the
 		// absolute golden timeline (late events fire ASAP via clamping).
-		const startedAtMs = nowMs();
+		const startedAtMs = schedulerNowMs();
 		const fireEvent = (pos: number): void => {
 			if (pos >= events.length) {
 				return;
 			}
 			const event = events[pos];
-			queueTimer(session, startedAtMs + event.at - nowMs(), () => {
+			queueTimer(session, startedAtMs + event.at - schedulerNowMs(), () => {
 				switch (event.kind) {
 					case "countdown": {
 						emit(listeners.countdownTick, event.value);
@@ -867,7 +944,18 @@ async function startSessionImpl(
 						break;
 					}
 				}
-				fireEvent(pos + 1);
+				// Skip stimulus whose moment has already passed. A backgrounded
+				// tab has its timers throttled, so without this the whole backlog
+				// would fire back to back as an unreadable strobe (with a beep per
+				// number). Dropping the unseen numbers keeps the intended cadence
+				// and keeps the "shown total" honest: a flash trainer must not
+				// count numbers the user never saw.
+				let next = pos + 1;
+				const now = schedulerNowMs();
+				while (next < events.length && startedAtMs + events[next].at <= now) {
+					next += 1;
+				}
+				fireEvent(next);
 			});
 		};
 		fireEvent(0);
@@ -975,7 +1063,9 @@ function validateAnswer(
 }
 
 // Testing helpers (internal). Exported to enable deterministic unit tests.
-export function __test_clearSessionTimers(session: { timers: number[] }): void {
+export function __test_clearSessionTimers(session: {
+	timerId: number | null;
+}): void {
 	clearSessionTimers(session as unknown as BrowserSession);
 }
 
@@ -993,14 +1083,13 @@ export function __test_setCompletedSession(
 			allow_negative_numbers: false,
 		},
 		autoRepeat: null,
-		plannedNumbers: numbers,
 		plannedSum: sum,
 		numbers: numbers.slice(),
 		sum,
 		runningSum: sum,
 		lastPayload: null,
 		completed: true,
-		timers: [],
+		timerId: null,
 	};
 }
 

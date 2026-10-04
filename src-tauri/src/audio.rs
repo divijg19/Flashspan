@@ -343,8 +343,8 @@ mod tests {
         // The enabled flag must never leak into availability: availability
         // describes the output device only.
         assert_eq!(off.available, on.available);
-        assert!(!off.detail.is_empty());
-        assert!(!on.detail.is_empty());
+        assert_ne!(off.detail, "");
+        assert_ne!(on.detail, "");
     }
 
     #[test]

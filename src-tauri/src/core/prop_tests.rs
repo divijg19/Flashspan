@@ -1,7 +1,12 @@
 // Property-based tests using proptest for determinism and bounds checking
 use super::engine::build_session_plan;
-use super::types::{SessionConfig, SessionConfigInput};
-use super::validate::{max_total_for_digits, normalize_session_config, validate_config};
+use super::generate::magnitude_bounds;
+use super::types::SessionStep;
+use super::types::{SessionConfig, SessionConfigInput, SessionPlan};
+use super::validate::{
+    MAX_DURATION_MS, effective_from, max_total_for_digits, normalize_session_config,
+    validate_config,
+};
 use proptest::prelude::*;
 
 #[test]
@@ -41,10 +46,6 @@ fn prop_normalize_total_numbers_in_bounds() {
 #[test]
 fn prop_normalize_duration_in_bounds() {
     proptest!(|(duration_s in 0.0_f64..1000.0)| {
-        if !duration_s.is_finite() {
-            return Ok(());
-        }
-
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: duration_s,
@@ -60,7 +61,30 @@ fn prop_normalize_duration_in_bounds() {
 }
 
 #[test]
-fn prop_normalize_idempotent() {
+fn prop_duration_is_grid_aligned() {
+    proptest!(|(duration_s in 0.0_f64..1000.0)| {
+        let input = SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: duration_s,
+            total_numbers: 5,
+            allow_negative_numbers: false,
+        };
+        let (config, _effective) = normalize_session_config(&input);
+
+        // Normalized durations snap to the 0.1s grid the UI exposes, so the
+        // exposure is a whole number of 100ms steps and can always be
+        // reported exactly.
+        prop_assert_eq!(config.number_duration_ms % 100, 0);
+        prop_assert!(config.number_duration_ms >= 100);
+        prop_assert!(config.number_duration_ms <= MAX_DURATION_MS);
+    });
+}
+
+// Exactness lock: the effective values compared here are produced by the same
+// rounding, so identical inputs must yield bit-identical output.
+#[allow(clippy::float_cmp)]
+#[test]
+fn prop_normalize_is_a_fixed_point() {
     proptest!(|
         (digits in 1i64..16,
          total in 1i64..101,
@@ -73,13 +97,26 @@ fn prop_normalize_idempotent() {
             allow_negative_numbers: false,
         };
 
-        let (config1, _) = normalize_session_config(&input);
-        let (config2, _) = normalize_session_config(&input);
+        let (config, effective) = normalize_session_config(&input);
 
-        // Normalizing twice should give the same result
-        prop_assert_eq!(config1.digits_per_number, config2.digits_per_number);
-        prop_assert_eq!(config1.number_duration_ms, config2.number_duration_ms);
-        prop_assert_eq!(config1.total_numbers, config2.total_numbers);
+        // Re-normalizing what was reported must be a no-op. This is exactly
+        // what a second session does when the UI echoes its state back, so it
+        // is also the property that the reported duration is precisely the
+        // exposure: a lossy report (e.g. 110ms reported as 0.1s) would
+        // re-normalize to 100ms and fail here.
+        let echoed = SessionConfigInput {
+            digits_per_number: i64::from(effective.digits_per_number),
+            number_duration_s: effective.number_duration_s,
+            total_numbers: i64::from(effective.total_numbers),
+            allow_negative_numbers: effective.allow_negative_numbers,
+        };
+        let (config2, effective2) = normalize_session_config(&echoed);
+
+        prop_assert_eq!(config2.digits_per_number, config.digits_per_number);
+        prop_assert_eq!(config2.number_duration_ms, config.number_duration_ms);
+        prop_assert_eq!(config2.total_numbers, config.total_numbers);
+        prop_assert_eq!(config2.allow_negative_numbers, config.allow_negative_numbers);
+        prop_assert_eq!(effective2.number_duration_s, effective.number_duration_s);
     });
 }
 
@@ -172,28 +209,30 @@ fn prop_duration_monotonic() {
 }
 
 #[test]
-fn prop_nan_duration_clamps_to_min() {
-    proptest!(|
-        (digits in 1u32..19,
-         total in 1u32..101)
-    | {
-        let input = SessionConfigInput {
-            digits_per_number: i64::from(digits),
-            number_duration_s: f64::NAN,
-            total_numbers: i64::from(total),
-            allow_negative_numbers: false,
-        };
+fn nan_duration_clamps_to_min() {
+    for digits in 1u32..19 {
+        for total in 1u32..101 {
+            let input = SessionConfigInput {
+                digits_per_number: i64::from(digits),
+                number_duration_s: f64::NAN,
+                total_numbers: i64::from(total),
+                allow_negative_numbers: false,
+            };
 
-        let (config, _) = normalize_session_config(&input);
+            let (config, _) = normalize_session_config(&input);
 
-        // NaN should clamp to minimum 100ms (0.1 seconds)
-        prop_assert_eq!(config.number_duration_ms, 100);
-    });
+            // NaN should clamp to minimum 100ms (0.1 seconds)
+            assert_eq!(
+                config.number_duration_ms, 100,
+                "digits {digits}, total {total}"
+            );
+        }
+    }
 }
 
 #[test]
-fn prop_infinity_duration_clamps_to_max() {
-    proptest!(|(() in Just(()))| {
+fn infinity_duration_clamps_to_max() {
+    {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: f64::INFINITY,
@@ -204,8 +243,8 @@ fn prop_infinity_duration_clamps_to_max() {
         let (config, _) = normalize_session_config(&input);
 
         // Infinity should clamp to maximum 60_000ms
-        prop_assert_eq!(config.number_duration_ms, 60_000);
-    });
+        assert_eq!(config.number_duration_ms, MAX_DURATION_MS);
+    }
 }
 
 #[test]
@@ -228,5 +267,135 @@ fn prop_plan_sum_never_negative() {
         );
         let recomputed: i64 = plan.numbers_generated.iter().sum();
         prop_assert_eq!(plan.expected_sum, recomputed);
+    });
+}
+
+/// A normalized config paired with an arbitrary seed: the shape most
+/// properties below need.
+fn plan_for(digits: u32, total_numbers: i64, seed: u64) -> (SessionConfig, SessionPlan) {
+    let input = SessionConfigInput {
+        digits_per_number: i64::from(digits),
+        number_duration_s: 0.5,
+        total_numbers,
+        allow_negative_numbers: true,
+    };
+    let (config, effective) = normalize_session_config(&input);
+    let plan = build_session_plan(1, &config, effective, Some(seed));
+    (config, plan)
+}
+
+#[test]
+fn prop_plan_total_duration_matches_its_steps() {
+    proptest!(|(digits in 1u32..16, total in 1i64..40, seed in any::<u64>())| {
+        let (_config, plan) = plan_for(digits, total, seed);
+
+        // The advertised total is derived from the steps, so the schedule the
+        // executor runs and the duration reported to callers cannot disagree.
+        let summed: u64 = plan.steps.iter().map(SessionStep::delay_ms).sum();
+        prop_assert_eq!(plan.total_duration_ms, summed);
+    });
+}
+
+// Exactness lock: the snapshot is compared against the value the same
+// rounding produced, so identical inputs must be bit-identical.
+#[allow(clippy::float_cmp)]
+#[test]
+fn prop_plan_snapshot_is_the_reported_config() {
+    proptest!(|(digits in 1u32..16, total in 1i64..40, seed in any::<u64>())| {
+        let (config, plan) = plan_for(digits, total, seed);
+
+        // The plan's snapshot must be the same effective config the caller was
+        // told about, for every field.
+        let effective = effective_from(&config);
+        prop_assert_eq!(
+            plan.config_snapshot.number_duration_s,
+            effective.number_duration_s
+        );
+        prop_assert_eq!(
+            plan.config_snapshot.digits_per_number,
+            effective.digits_per_number
+        );
+        prop_assert_eq!(plan.config_snapshot.total_numbers, effective.total_numbers);
+        prop_assert_eq!(
+            plan.config_snapshot.allow_negative_numbers,
+            effective.allow_negative_numbers
+        );
+    });
+}
+
+#[test]
+fn prop_plan_complete_step_agrees_with_the_plan() {
+    proptest!(|(digits in 1u32..16, total in 1i64..40, seed in any::<u64>())| {
+        let (_config, plan) = plan_for(digits, total, seed);
+
+        let complete = plan
+            .steps
+            .last()
+            .expect("every plan ends with a Complete step");
+        let SessionStep::Complete { numbers, sum, .. } = complete else {
+            prop_assert!(false, "last step must be Complete");
+            return Ok(());
+        };
+
+        prop_assert_eq!(numbers, &plan.numbers_generated);
+        prop_assert_eq!(*sum, plan.expected_sum);
+        prop_assert_eq!(
+            *sum,
+            plan.numbers_generated.iter().sum::<i64>(),
+            "expected_sum must be the sum of the numbers"
+        );
+    });
+}
+
+#[test]
+fn prop_plan_numbers_respect_the_digit_width() {
+    proptest!(|(digits in 1u32..16, total in 1i64..40, seed in any::<u64>())| {
+        let (_config, plan) = plan_for(digits, total, seed);
+        let (min, max) = magnitude_bounds(digits);
+
+        for (index, number) in plan.numbers_generated.iter().enumerate() {
+            let magnitude = number.unsigned_abs();
+            prop_assert!(
+                magnitude >= min && magnitude <= max,
+                "number {number} at {index} is outside the {digits}-digit domain [{min}, {max}]"
+            );
+        }
+    });
+}
+
+#[test]
+fn prop_plan_never_repeats_a_number_consecutively() {
+    proptest!(|(digits in 1u32..16, total in 2i64..60, seed in any::<u64>())| {
+        let (_config, plan) = plan_for(digits, total, seed);
+
+        // True for every seed: duplicates are rejected by retry, and the
+        // deterministic fallback rotates inside the same domain.
+        for pair in plan.numbers_generated.windows(2) {
+            prop_assert_ne!(pair[0], pair[1], "consecutive duplicate {}", pair[0]);
+        }
+    });
+}
+
+#[test]
+fn prop_plan_running_sums_are_consistent() {
+    proptest!(|(digits in 1u32..16, total in 1i64..40, seed in any::<u64>())| {
+        let (_config, plan) = plan_for(digits, total, seed);
+
+        let mut expected: i64 = 0;
+        for step in &plan.steps {
+            if let SessionStep::ShowNumber {
+                value,
+                running_sum,
+                ..
+            } = step
+            {
+                expected += value;
+                prop_assert_eq!(
+                    *running_sum,
+                    expected,
+                    "running_sum must be the running total of the numbers"
+                );
+            }
+        }
     });
 }
