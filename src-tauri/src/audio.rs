@@ -245,7 +245,7 @@ mod tests {
         fn skip_one(&self) {
             self.events.lock().expect("event lock").push(Event::Skip);
             self.queued
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
                     Some(n.saturating_sub(1))
                 })
                 .ok();
