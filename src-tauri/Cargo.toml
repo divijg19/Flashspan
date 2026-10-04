@@ -1,6 +1,6 @@
 [package]
 name = "Flashspan"
-version = "2.5.1"
+version = "2.6.0"
 description = "Mental Maths training simulator"
 authors = ["you"]
 license = ""
@@ -38,3 +38,33 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = "1.4"
+
+# Release tuning applies to both shipped targets: the desktop bundle and the
+# wasm32 bundle. `strip` is the dominant size win (both shipped unstripped
+# before), LTO plus a single codegen unit add ~10-20% on top, and
+# `opt-level = "s"` suits both: the heaviest work is one bounded number
+# generation per session, so size beats speed here.
+#
+# `panic = "abort"` is deliberately not set. Tauri's own template enables it and
+# it would save a little more, but it turns any panic in an audio or UI thread
+# into a hard abort rather than an unwind, which cannot be exercised across all
+# three release platforms from a single machine. Add it deliberately if wanted.
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "s"
+strip = true
+
+# wasm-pack's bundled `wasm-opt` (binaryen 117) validates with the baseline
+# feature set off, but current rustc emits bulk-memory and non-trapping
+# float-to-int instructions (Rust's saturating `as` casts lower to
+# `trunc_sat`), so every release web build otherwise dies in the validator.
+# These flags do not raise the browser baseline: rustc already emits them, they
+# only let the optimizer read its own input. `-Oz` also gives up a little more
+# size than the default `-O`, which is the right trade for a download.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+	"-Oz",
+	"--enable-bulk-memory",
+	"--enable-nontrapping-float-to-int",
+]

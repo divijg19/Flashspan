@@ -1,5 +1,6 @@
 import {
 	createEffect,
+	createMemo,
 	createSignal,
 	For,
 	onCleanup,
@@ -40,73 +41,137 @@ async function setFullscreen(enabled: boolean): Promise<void> {
 	}
 }
 
-async function forceFullscreenBeforeStart(): Promise<void> {
+/**
+ * Best-effort fullscreen entry before a session starts.
+ *
+ * Never throws and never blocks: the Fullscreen API is simply absent on some
+ * targets (iOS Safari has no element `requestFullscreen`, as do cross-origin
+ * iframes and some WebViews) and can be refused by policy. Treating a refusal
+ * as fatal left the Start button permanently dead there. The countdown tick
+ * retries the request, which is the mechanism that actually matters.
+ */
+async function requestFullscreenBestEffort(): Promise<void> {
 	if (typeof document === "undefined") {
 		return;
 	}
 
+	if (document.fullscreenElement) {
+		return;
+	}
+
+	if (typeof document.documentElement.requestFullscreen !== "function") {
+		return;
+	}
+
 	try {
-		await setFullscreen(true);
+		await document.documentElement.requestFullscreen();
 	} catch {
-		// Fall through and verify below.
+		// Best-effort: the countdown retries, and the session runs windowed.
 	}
+}
 
-	for (let i = 0; i < 30; i += 1) {
-		if (document.fullscreenElement) return;
-		await new Promise((r) => setTimeout(r, 25));
-	}
-
-	throw new Error("Unable to enter fullscreen");
+/**
+ * Auto-repeat status strip: countdown label, progress ramp and cancel.
+ *
+ * Rendered in both answer modes, so it lives here rather than being duplicated:
+ * the ramp's duration has to be identical in both places or one of the bars
+ * animates differently.
+ */
+// Exported for its unit test; the app itself only renders it internally.
+export function AutoRepeatBar(props: {
+	secondsLeft: number;
+	remaining: number;
+	fillMs: number;
+	onCancel: () => void;
+}) {
+	return (
+		<div class="autoRepeatBar">
+			<div class="autoRepeatStatus">
+				<div class="autoRepeatStatusText">
+					Next question in {props.secondsLeft}s · {props.remaining + 1}{" "}
+					remaining
+				</div>
+				<div class="autoRepeatProgressBar">
+					<div
+						class="autoRepeatProgressFill"
+						style={{ "animation-duration": `${props.fillMs}ms` }}
+					/>
+				</div>
+				<button class="autoRepeatCancel" type="button" onClick={props.onCancel}>
+					Cancel auto-repeat
+				</button>
+			</div>
+		</div>
+	);
 }
 
 export default function App() {
 	const [showSplash, setShowSplash] = createSignal<boolean>(true);
 	const [splashVisible, setSplashVisible] = createSignal<boolean>(false);
+	const [splashExiting, setSplashExiting] = createSignal<boolean>(false);
 
 	const [colorScheme, setColorScheme] = createSignal<ColorScheme>("midnight");
 	const [themeMode, setThemeMode] = createSignal<ThemeMode>("dark");
 	const themeClass = () => `theme-${colorScheme()}`;
 	const modeClass = () => `theme-${themeMode()}`;
 
-	// Fade durations (ms)
-	const fadeMs = 2000; // 2s fade in/out
-	const holdMs = 800; // visible hold between fades
-
 	onMount(() => {
 		if (!showSplash()) return;
 
-		// trigger fade-in on next tick
+		// The three splash timings are declared once in CSS (see `.splash`) and
+		// read back here, so changing a value there cannot desynchronise the
+		// schedule from the animation.
+		//
+		// Read them off the splash element rather than the document root: custom
+		// properties inherit downwards, so a value declared on `.splash` is not
+		// visible on `<html>`. Reading from there returned nothing and every
+		// timing silently fell back to the constants below, which only looked
+		// right while the two happened to agree.
+		const splashElement = document.querySelector<HTMLElement>(".splash");
+		const style = window.getComputedStyle(
+			splashElement ?? document.documentElement,
+		);
+		const cssMs = (name: string, fallback: number): number => {
+			const parsed = Number.parseFloat(style.getPropertyValue(name).trim());
+			return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+		};
+		const enterMs = cssMs("--splash-enter", 3000);
+		const holdMs = cssMs("--splash-hold", 1000);
+		const exitMs = cssMs("--splash-exit", 3000);
+
+		// Fade in on the next tick, so the transition has a start value to
+		// animate from.
 		const enterTimer = window.setTimeout(() => setSplashVisible(true), 10);
 
-		// schedule fade-out after fade-in + hold
-		const exitTimer = window.setTimeout(
-			() => setSplashVisible(false),
-			fadeMs + holdMs + 10,
-		);
+		// Fade out once the entrance and the hold are done. `exiting` swaps the
+		// transition to the shorter exit duration without touching opacity.
+		const exitTimer = window.setTimeout(() => {
+			setSplashExiting(true);
+			setSplashVisible(false);
+		}, enterMs + holdMs);
 
-		// schedule unmount after fade-out completes
-		const unmountTimer = window.setTimeout(
+		// Preferred unmount point: the fade has actually finished. See
+		// `onSplashTransitionEnd`.
+		const safetyTimer = window.setTimeout(
 			() => setShowSplash(false),
-			fadeMs + holdMs + fadeMs + 20,
+			enterMs + holdMs + exitMs + 200,
 		);
 
-		const onKey = (_e: KeyboardEvent) => {
-			if (!showSplash()) return;
-			// Any key press skips splash: start fade-out immediately if visible
-			if (splashVisible()) {
-				// clear pending timers and start immediate fade-out
-				window.clearTimeout(exitTimer);
-				window.clearTimeout(unmountTimer);
-				setSplashVisible(false);
-				window.setTimeout(() => setShowSplash(false), fadeMs);
-			} else {
-				// If not yet visible, abort and unmount quickly
-				window.clearTimeout(enterTimer);
-				window.clearTimeout(exitTimer);
-				window.clearTimeout(unmountTimer);
-				setSplashVisible(false);
-				setShowSplash(false);
-			}
+		const onKey = (event: KeyboardEvent) => {
+			// Ignore auto-repeat: a held key used to land on the other branch
+			// mid-fade and cut it off, which read as a flicker.
+			if (!showSplash() || event.repeat) return;
+
+			// Any key press dismisses the splash outright. Fading it out was the
+			// source of the skip flicker: the overlay then sat on top of a live UI,
+			// and dropping the `visible` class mid-fade made it click-through while
+			// it was still visible. Unmounting in the same tick removes every one of
+			// those windows, and needs no extra timer.
+			window.clearTimeout(enterTimer);
+			window.clearTimeout(exitTimer);
+			window.clearTimeout(safetyTimer);
+			setSplashVisible(false);
+			setShowSplash(false);
 		};
 
 		window.addEventListener("keydown", onKey);
@@ -114,12 +179,44 @@ export default function App() {
 		onCleanup(() => {
 			window.clearTimeout(enterTimer);
 			window.clearTimeout(exitTimer);
-			window.clearTimeout(unmountTimer);
+			window.clearTimeout(safetyTimer);
 			window.removeEventListener("keydown", onKey);
 		});
 	});
 
+	/**
+	 * Unmount once the opacity fade has genuinely finished, so the last frames
+	 * of the exit can never be cut off. Ignores transitions on other properties,
+	 * and the safety timer in the mount effect covers the case where the
+	 * transition never runs at all.
+	 */
+	const onSplashTransitionEnd = (event: TransitionEvent): void => {
+		if (event.propertyName === "opacity") {
+			setShowSplash(false);
+		}
+	};
+
 	const [displayText, setDisplayText] = createSignal<string>("");
+
+	/**
+	 * Counts in the countdown, mirroring `COUNTDOWN_FROM` in
+	 * `crate::core::engine`.
+	 */
+	const COUNTDOWN_FROM = 3;
+
+	/**
+	 * Which quarter turn the blades rest at: "3" is the first, "1" the third.
+	 *
+	 * Derived from the digit rather than a running tick counter so it is
+	 * inherently per-session. Zero before the first digit shows, which leaves the
+	 * blades at their unrotated base angle.
+	 */
+	const bladeStep = createMemo<number>(() => {
+		const parsed = Number(displayText());
+		return Number.isFinite(parsed) && parsed > 0
+			? COUNTDOWN_FROM + 1 - parsed
+			: 0;
+	});
 	const [currentShown, setCurrentShown] = createSignal<{
 		session_id: number;
 		index: number;
@@ -127,6 +224,14 @@ export default function App() {
 	} | null>(null);
 	const [phase, setPhase] = createSignal<Phase>("idle");
 	const [errorText, setErrorText] = createSignal<string>("");
+
+	// Countdown ticks only. The flashing numbers are aria-hidden, and the end
+	// screen announces its own title, so this deliberately stays the one message
+	// that would otherwise go unheard. It must not repeat text rendered
+	// elsewhere, or duplicate nodes break `getByText` queries.
+	const announcement = createMemo(() =>
+		phase() === "countdown" ? `Starting in ${displayText()}` : "",
+	);
 
 	const [showAnswer, setShowAnswer] = createSignal<boolean>(false);
 	const [answerMode, setAnswerMode] = createSignal<"reveal" | "type">("reveal");
@@ -180,11 +285,17 @@ export default function App() {
 	const [autoRepeatSecondsLeft, setAutoRepeatSecondsLeft] = createSignal<
 		number | null
 	>(null);
+	/**
+	 * Duration of the auto-repeat progress ramp, in milliseconds, captured once
+	 * when the countdown arms. Deliberately not derived from `secondsLeft`: that
+	 * changes every tick, and a changing `animation-duration` restarts the
+	 * animation, which would turn the smooth ramp back into per-second steps.
+	 */
+	const [autoRepeatFillMs, setAutoRepeatFillMs] = createSignal(0);
 
 	const [showAdvanced, setShowAdvanced] = createSignal<boolean>(false);
 	const [soundEnabled, setSoundEnabled] = createSignal<boolean>(true);
 	const [soundStatusText, setSoundStatusText] = createSignal<string>("");
-	const [countdownTickId, setCountdownTickId] = createSignal<number>(0);
 
 	const refreshSoundStatus = async (): Promise<void> => {
 		try {
@@ -228,11 +339,11 @@ export default function App() {
 
 	const applyAutoRepeatWaiting = (payload: AutoRepeatWaitingPayload) => {
 		setAutoRepeatRemaining(payload.remaining);
-		const secondsLeft = Math.max(
-			0,
-			Math.ceil((payload.next_start_at_ms - Date.now()) / 1000),
-		);
-		setAutoRepeatSecondsLeft(secondsLeft);
+		const remainingMs = Math.max(0, payload.next_start_at_ms - Date.now());
+		// Set before the seconds-left value mounts the bar below, so the ramp
+		// already has its final duration on first paint.
+		setAutoRepeatFillMs(remainingMs);
+		setAutoRepeatSecondsLeft(Math.ceil(remainingMs / 1000));
 	};
 
 	createEffect(() => {
@@ -352,9 +463,9 @@ export default function App() {
 			setPhase("countdown");
 			setDisplayText(value);
 			setCurrentShown(null);
-			setCountdownTickId((n) => n + 1);
-			// Enter fullscreen early (start of countdown) to avoid the
-			// fullscreen transition stealing time from the first flash paint.
+			// Retry fullscreen at the start of the countdown, away from the first flash
+			// paint: the transition must not steal time from that paint. This is
+			// the real mechanism now that starting no longer depends on it.
 			if (value === "3") void setFullscreen(true);
 		});
 
@@ -507,7 +618,7 @@ export default function App() {
 				autoRepeatEffective ? Math.trunc(autoRepeatCount()) : 0,
 			);
 
-			await forceFullscreenBeforeStart();
+			await requestFullscreenBestEffort();
 			const resp = await runtime.startSession(
 				config,
 				autoRepeatEffective
@@ -524,6 +635,14 @@ export default function App() {
 			void setFullscreen(false);
 			setErrorText(String(e));
 		}
+	};
+
+	const cancelAutoRepeat = (): void => {
+		setAutoRepeatEnabled(false);
+		setAutoRepeatRemaining(0);
+		setAutoRepeatSecondsLeft(null);
+		setAutoRepeatFillMs(0);
+		void runtime.cancelAutoRepeat();
 	};
 
 	const stop = async () => {
@@ -551,6 +670,15 @@ export default function App() {
 
 	return (
 		<>
+			{/*
+			 * Phase announcements live here rather than on the number region:
+			 * `aria-live` there meant every flashed number was announced, which
+			 * falls arbitrarily behind on long sessions. This announces the
+			 * transitions worth hearing, once each.
+			 */}
+			<div class="srOnly" aria-live="polite" aria-atomic="true">
+				{announcement()}
+			</div>
 			<div
 				classList={{
 					app: true,
@@ -560,11 +688,27 @@ export default function App() {
 				}}
 			>
 				{showSplash() ? (
-					<div classList={{ splash: true, visible: splashVisible() }}>
+					<div
+						classList={{
+							splash: true,
+							visible: splashVisible(),
+							exiting: splashExiting(),
+						}}
+						onTransitionEnd={onSplashTransitionEnd}
+					>
+						{/*
+						 * Decorative: `.splashTitle` below already names the app.
+						 * The intrinsic size lets the browser reserve the correct
+						 * box before the image decodes, which is what stopped the
+						 * splash re-centring mid-fade. `alt=""` also stops the
+						 * placeholder text flashing in its place.
+						 */}
 						<img
 							src="/Ascent_Banner.png"
-							alt="Ascent Banner"
+							alt=""
 							class="splashBanner"
+							width={1080}
+							height={340}
 						/>
 						<div class="splashText">
 							<div class="splashTitle">Ascent Abacus &amp; Brain Gym</div>
@@ -574,6 +718,12 @@ export default function App() {
 						</div>
 					</div>
 				) : null}
+				{errorText() ? (
+					<div class="error" role="alert">
+						{errorText()}
+					</div>
+				) : null}
+
 				{phase() === "idle" ? (
 					<div class="panel">
 						<div class="title">Ascent Flash</div>
@@ -1089,19 +1239,15 @@ export default function App() {
 								Start
 							</button>
 						</div>
-
-						{errorText() ? (
-							<div class="error" role="alert">
-								{errorText()}
-							</div>
-						) : null}
 					</div>
 				) : phase() === "complete" ? (
 					<div class="endScreen">
 						{answerMode() === "reveal" ? (
 							<div class="answerCard">
 								<div class="endHeaderCenter">
-									<div class="endTitle">Session complete</div>
+									<div class="endTitle" role="status">
+										Session complete
+									</div>
 									<div class="endSub">Click to see answer</div>
 								</div>
 
@@ -1155,34 +1301,12 @@ export default function App() {
 								{autoRepeatEnabled() &&
 								hasValidated() &&
 								autoRepeatSecondsLeft() != null ? (
-									<div class="autoRepeatBar">
-										<div class="autoRepeatStatus">
-											<div class="autoRepeatStatusText">
-												Next question in {autoRepeatSecondsLeft() ?? 0}s ·{" "}
-												{autoRepeatRemaining() + 1} remaining
-											</div>
-											<div class="autoRepeatProgressBar">
-												<div
-													class="autoRepeatProgressFill"
-													style={{
-														width: `${autoRepeatDelaySeconds() > 0 ? ((autoRepeatDelaySeconds() - (autoRepeatSecondsLeft() ?? 0)) / autoRepeatDelaySeconds()) * 100 : 0}%`,
-													}}
-												/>
-											</div>
-											<button
-												class="autoRepeatCancel"
-												type="button"
-												onClick={() => {
-													setAutoRepeatEnabled(false);
-													setAutoRepeatRemaining(0);
-													setAutoRepeatSecondsLeft(null);
-													void runtime.cancelAutoRepeat();
-												}}
-											>
-												Cancel auto-repeat
-											</button>
-										</div>
-									</div>
+									<AutoRepeatBar
+										secondsLeft={autoRepeatSecondsLeft() ?? 0}
+										remaining={autoRepeatRemaining()}
+										fillMs={autoRepeatFillMs()}
+										onCancel={cancelAutoRepeat}
+									/>
 								) : null}
 
 								<div class="endFooter">
@@ -1215,7 +1339,9 @@ export default function App() {
 						) : (
 							<div class="answerCard">
 								<div class="endHeaderCenter">
-									<div class="endTitle">Session complete</div>
+									<div class="endTitle" role="status">
+										Session complete
+									</div>
 									<div class="endSub">Type your answer</div>
 								</div>
 
@@ -1263,34 +1389,12 @@ export default function App() {
 								{autoRepeatEnabled() &&
 								hasValidated() &&
 								autoRepeatSecondsLeft() != null ? (
-									<div class="autoRepeatBar">
-										<div class="autoRepeatStatus">
-											<div class="autoRepeatStatusText">
-												Next question in {autoRepeatSecondsLeft() ?? 0}s ·{" "}
-												{autoRepeatRemaining() + 1} remaining
-											</div>
-											<div class="autoRepeatProgressBar">
-												<div
-													class="autoRepeatProgressFill"
-													style={{
-														width: `${autoRepeatDelaySeconds() > 0 ? ((autoRepeatDelaySeconds() - (autoRepeatSecondsLeft() ?? 0)) / autoRepeatDelaySeconds()) * 100 : 0}%`,
-													}}
-												/>
-											</div>
-											<button
-												class="autoRepeatCancel"
-												type="button"
-												onClick={() => {
-													setAutoRepeatEnabled(false);
-													setAutoRepeatRemaining(0);
-													setAutoRepeatSecondsLeft(null);
-													void runtime.cancelAutoRepeat();
-												}}
-											>
-												Cancel auto-repeat
-											</button>
-										</div>
-									</div>
+									<AutoRepeatBar
+										secondsLeft={autoRepeatSecondsLeft() ?? 0}
+										remaining={autoRepeatRemaining()}
+										fillMs={autoRepeatFillMs()}
+										onCancel={cancelAutoRepeat}
+									/>
 								) : null}
 
 								<div class="endFooter">
@@ -1332,7 +1436,7 @@ export default function App() {
 					</div>
 				) : (
 					<div
-						role="status"
+						aria-hidden="true"
 						classList={{ number: true, countdown: phase() === "countdown" }}
 						style={{
 							"--len": Math.max(
@@ -1345,11 +1449,24 @@ export default function App() {
 						}}
 					>
 						<Show when={phase() === "countdown"}>
+							{/*
+							 * Static halo, kept out of the rotating element so the
+							 * countdown never re-rasterizes a filter while it animates.
+							 */}
+							<div class="countdownGlow" aria-hidden="true" />
+
+							{/*
+							 * One angle per count, held until the next digit
+							 * changes: the blades turn once and then sit
+							 * still, rather than sweeping through angles for
+							 * the whole second.
+							 */}
 							<div
 								classList={{
 									countdownShutter: true,
-									shutterA: countdownTickId() % 2 === 0,
-									shutterB: countdownTickId() % 2 === 1,
+									bladeQuarter: bladeStep() === 1,
+									bladeHalf: bladeStep() === 2,
+									bladeThreeQuarter: bladeStep() === 3,
 								}}
 								aria-hidden="true"
 							/>
@@ -1360,16 +1477,13 @@ export default function App() {
 								aria-hidden="true"
 							>
 								<circle class="countdownTrack" cx="50" cy="50" r="44" />
-								<circle
-									classList={{
-										countdownProgress: true,
-										countdownProgressA: countdownTickId() % 2 === 0,
-										countdownProgressB: countdownTickId() % 2 === 1,
-									}}
-									cx="50"
-									cy="50"
-									r="44"
-								/>
+								{/*
+								 * No inline offset and no restart classes: the drain is a
+								 * single CSS animation whose duration is the whole
+								 * countdown, so the ring runs itself from "3" to empty
+								 * and stays in step with the digits.
+								 */}
+								<circle class="countdownProgress" cx="50" cy="50" r="44" />
 							</svg>
 						</Show>
 

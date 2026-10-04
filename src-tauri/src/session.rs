@@ -1,22 +1,24 @@
 use crate::core::types::{
-    AutoRepeatPlan, ClearScreen, SessionComplete, SessionConfig, SessionConfigEffective,
-    SessionPlan, SessionStep, ShowNumber,
+    AutoRepeatPlan, ClearScreen, SessionComplete, SessionConfig, SessionPlan, SessionStep,
+    ShowNumber,
 };
-use crate::core::{engine::build_session_plan, validate::validate_config};
+use crate::core::{
+    engine::build_session_plan,
+    validate::{effective_from, validate_config},
+};
 use log::warn;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     collections::VecDeque,
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    thread,
     thread::JoinHandle,
     time::{Duration, Instant},
 };
 
-fn now_epoch_ms() -> u64 {
+pub(crate) fn now_epoch_ms() -> u64 {
     u64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -43,7 +45,7 @@ pub enum SessionState {
 pub struct SessionManager {
     state: Arc<Mutex<SessionState>>,
     worker: Mutex<Option<JoinHandle<()>>>,
-    stop: Mutex<Option<Arc<AtomicBool>>>,
+    stop: Mutex<Option<Arc<StopSignal>>>,
     next_session_id: AtomicU64,
     recent_results: Arc<Mutex<VecDeque<SessionComplete>>>,
     auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
@@ -74,12 +76,21 @@ pub(crate) fn recover_lock<'a, T>(mutex: &'a Mutex<T>, name: &str) -> std::sync:
 impl SessionManager {
     const MAX_RECENT_RESULTS: usize = 8;
 
+    /// Join a finished worker, if any, and drop its stop flag.
+    ///
+    /// The handle is taken out from under the lock before joining so a caller
+    /// never holds the worker mutex while waiting on a thread.
     fn cleanup_finished_worker(&self) {
-        let mut worker = recover_lock(&self.worker, "worker");
-        if let Some(handle) = worker.as_ref()
-            && handle.is_finished()
-        {
-            let handle = worker.take().expect("just checked Some");
+        let handle = {
+            let mut worker = recover_lock(&self.worker, "worker");
+            if worker.as_ref().is_some_and(JoinHandle::is_finished) {
+                worker.take()
+            } else {
+                None
+            }
+        };
+
+        if let Some(handle) = handle {
             let _ = handle.join();
             *recover_lock(&self.stop, "stop") = None;
         }
@@ -103,8 +114,8 @@ impl SessionManager {
             }
         }
 
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        *recover_lock(&self.stop, "stop") = Some(stop_flag.clone());
+        let stop_signal = Arc::new(StopSignal::new());
+        *recover_lock(&self.stop, "stop") = Some(Arc::clone(&stop_signal));
 
         {
             let mut state = recover_lock(&self.state, "state");
@@ -116,20 +127,32 @@ impl SessionManager {
         let state_arc = Arc::clone(&self.state);
         let recent_results_arc = Arc::clone(&self.recent_results);
         let plan_arc = Arc::clone(&self.auto_repeat_plan);
-        let handle = std::thread::Builder::new()
+        let spawn = std::thread::Builder::new()
             .name("session-worker".into())
             .spawn(move || {
                 run_session_loop(
                     emitter,
                     config,
                     state_arc,
-                    stop_flag,
+                    stop_signal,
                     session_id,
                     recent_results_arc,
                     plan_arc,
                 );
-            })
-            .map_err(|e| format!("failed to spawn session worker: {e}"))?;
+            });
+
+        let handle = match spawn {
+            Ok(handle) => handle,
+            Err(e) => {
+                // Nothing will run: roll the manager back to the state a
+                // caller observes before any session starts, so a failed spawn
+                // cannot leave the manager stuck in "ShowingNumbers" or leave a
+                // stop flag behind for the next session.
+                *recover_lock(&self.stop, "stop") = None;
+                *recover_lock(&self.state, "state") = SessionState::Idle;
+                return Err(format!("failed to spawn session worker: {e}"));
+            }
+        };
 
         *recover_lock(&self.worker, "worker") = Some(handle);
         Ok(session_id)
@@ -140,7 +163,11 @@ impl SessionManager {
             "[auto-repeat] configure_auto_repeat: plan={:?}",
             plan.as_ref().map(|p| (p.remaining, p.delay_ms))
         );
-        *recover_lock(&self.auto_repeat_plan, "auto_repeat_plan") = plan;
+        let mut plan_guard = recover_lock(&self.auto_repeat_plan, "auto_repeat_plan");
+        *plan_guard = plan;
+        // Bumped while still holding the plan lock, so any reader that pairs
+        // the plan with a generation (see `mark_validated_and_schedule_info`)
+        // observes both before or both after this update, never a mix.
         self.auto_repeat_generation.fetch_add(1, Ordering::SeqCst);
     }
 
@@ -150,23 +177,19 @@ impl SessionManager {
 
     pub fn result_for(&self, session_id: u64) -> Result<SessionComplete, String> {
         let guard = recover_lock(&self.recent_results, "recent_results");
-
-        for result in guard.iter().rev() {
-            if result.session_id == session_id {
-                return Ok(result.clone());
-            }
-        }
-
-        Err("session result not found".to_string())
+        guard
+            .iter()
+            .rev()
+            .find(|result| result.session_id == session_id)
+            .cloned()
+            .ok_or_else(|| "session result not found".to_string())
     }
 
     pub fn mark_validated_and_schedule_info(
         &self,
         session_id: u64,
     ) -> Option<(u64, u32, SessionConfig, u64)> {
-        let generation = self.auto_repeat_generation.load(Ordering::SeqCst);
-
-        let (delay_ms, config, remaining_after_decrement) = {
+        let (delay_ms, config, remaining_after_decrement, generation) = {
             let mut plan_guard = recover_lock(&self.auto_repeat_plan, "auto_repeat_plan");
             let Some(plan) = plan_guard.as_mut() else {
                 warn!("[auto-repeat] mark_validated_and_schedule_info: plan is None");
@@ -198,7 +221,18 @@ impl SessionManager {
                 plan.remaining
             );
 
-            (plan.delay_ms, plan.config.clone(), plan.remaining)
+            // Sampled under the plan lock, which `configure_auto_repeat` also
+            // holds while it swaps the plan and bumps the generation. Sampling
+            // it outside the lock could pair a stale generation with this plan,
+            // making the caller abandon a repeat it already consumed.
+            let generation = self.auto_repeat_generation.load(Ordering::SeqCst);
+
+            (
+                plan.delay_ms,
+                plan.config.clone(),
+                plan.remaining,
+                generation,
+            )
         };
 
         Some((delay_ms, remaining_after_decrement, config, generation))
@@ -209,13 +243,19 @@ impl SessionManager {
 
         self.configure_auto_repeat(None);
 
-        let stop_flag = recover_lock(&self.stop, "stop").take();
-        if let Some(flag) = stop_flag {
-            flag.store(true, Ordering::SeqCst);
+        // Take the flag out from under the lock first, so requesting the stop
+        // never runs while the manager's stop mutex is held.
+        let signal = recover_lock(&self.stop, "stop").take();
+        if let Some(signal) = signal {
+            signal.request();
         }
         recover_lock(&self.recent_results, "recent_results").clear();
 
-        if let Some(handle) = recover_lock(&self.worker, "worker").take() {
+        // Take the handle out from under the lock, then join: a concurrent
+        // `stop`/`start_with_emitter` must not queue behind this join. The
+        // stop request above has already woken the worker out of any delay.
+        let handle = recover_lock(&self.worker, "worker").take();
+        if let Some(handle) = handle {
             let _ = handle.join();
         }
 
@@ -228,23 +268,19 @@ impl SessionManager {
 // which would be a style regression for zero measurable gain); each runs
 // once per session. Millisecond values below are exactly representable
 // in f64 (`From` has no u64 impl).
-#[allow(clippy::needless_pass_by_value, clippy::cast_precision_loss)]
+#[allow(clippy::needless_pass_by_value)]
 fn run_session_loop<E: SessionEmitter + Send + 'static>(
     emitter: E,
     config: SessionConfig,
     state: Arc<Mutex<SessionState>>,
-    stop: Arc<AtomicBool>,
+    stop: Arc<StopSignal>,
     session_id: u64,
     recent_results: Arc<Mutex<VecDeque<SessionComplete>>>,
     auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
 ) {
-    // Convert SessionConfig to SessionConfigEffective for plan generation.
-    let config_effective = SessionConfigEffective {
-        digits_per_number: config.digits_per_number,
-        number_duration_s: config.number_duration_ms as f64 / 1000.0,
-        total_numbers: config.total_numbers,
-        allow_negative_numbers: config.allow_negative_numbers,
-    };
+    // Convert SessionConfig to SessionConfigEffective for plan generation,
+    // through the same conversion normalization reported to the UI.
+    let config_effective = effective_from(&config);
 
     // Generate deterministic session plan.
     let plan = build_session_plan(session_id, &config, config_effective, None);
@@ -264,18 +300,66 @@ fn run_session_loop<E: SessionEmitter + Send + 'static>(
     );
 }
 
-fn sleep_until_interruptible(deadline: Instant, stop: &AtomicBool) {
-    while Instant::now() < deadline {
-        if stop.load(Ordering::SeqCst) {
-            return;
-        }
+/// Shared stop signal for one session.
+///
+/// The flag is the single source of truth; the condvar only carries the
+/// wake-up, so a worker waiting out a flash delay can be interrupted at once
+/// instead of polling a clock. The wake-up cannot be lost: `request` sets the
+/// flag while holding the same mutex `wait_until` holds, so a request either
+/// lands before the worker parks (and is seen by its next check) or blocks
+/// until the worker is parked and can be notified. An early wake-up simply
+/// re-checks the flag and the deadline.
+#[derive(Debug, Default)]
+pub(crate) struct StopSignal {
+    requested: AtomicBool,
+    mutex: Mutex<()>,
+    wake: Condvar,
+}
 
-        let current = Instant::now();
-        let remaining = deadline.saturating_duration_since(current);
-        // 1ms steps keep transition jitter far below the 100ms minimum
-        // flash exposure; coarser steps visibly quantize fast sessions.
-        let quantum = remaining.min(Duration::from_millis(1));
-        thread::sleep(quantum);
+impl StopSignal {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Ask the session to stop and wake it if it is waiting.
+    ///
+    /// Takes the mutex so the flag store and the notification cannot interleave
+    /// with a waiter that has checked the flag but not yet parked.
+    fn request(&self) {
+        let _guard = recover_lock(&self.mutex, "stop-signal");
+        self.requested.store(true, Ordering::SeqCst);
+        self.wake.notify_all();
+    }
+
+    fn is_requested(&self) -> bool {
+        self.requested.load(Ordering::SeqCst)
+    }
+
+    /// Wait until `deadline` or until a stop is requested.
+    ///
+    /// Returns `true` when a stop was requested. Costs nothing while waiting:
+    /// the thread sleeps in the kernel until the deadline or the wake-up.
+    fn wait_until(&self, deadline: Instant) -> bool {
+        let mut guard = recover_lock(&self.mutex, "stop-signal");
+        loop {
+            if self.is_requested() {
+                return true;
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+
+            let (next, outcome) = self
+                .wake
+                .wait_timeout(guard, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = next;
+            if outcome.timed_out() {
+                return self.is_requested();
+            }
+        }
     }
 }
 
@@ -291,7 +375,7 @@ fn run_session_plan<E: SessionEmitter>(
     emitter: &E,
     plan: SessionPlan,
     state: Arc<Mutex<SessionState>>,
-    stop: Arc<AtomicBool>,
+    stop: Arc<StopSignal>,
     recent_results: Arc<Mutex<VecDeque<SessionComplete>>>,
     auto_repeat_plan: Arc<Mutex<Option<AutoRepeatPlan>>>,
     beep: impl Fn(),
@@ -299,7 +383,7 @@ fn run_session_plan<E: SessionEmitter>(
     // Iterate through steps and execute them with relative delays
     for step in &plan.steps {
         // Check stop signal before processing each step
-        if stop.load(Ordering::SeqCst) {
+        if stop.is_requested() {
             emitter.clear_screen(ClearScreen {
                 session_id: plan.session_id,
                 index: None,
@@ -317,7 +401,7 @@ fn run_session_plan<E: SessionEmitter>(
             } => {
                 emitter.countdown_tick(value.clone());
                 let delay = Duration::from_millis(*delay_ms_before_next);
-                sleep_until_interruptible(Instant::now() + delay, &stop);
+                stop.wait_until(Instant::now() + delay);
             }
 
             SessionStep::ShowNumber {
@@ -342,7 +426,7 @@ fn run_session_plan<E: SessionEmitter>(
                 // pre-first-flash settle lives in the plan's final
                 // countdown delay, not here.
                 let delay = Duration::from_millis(*delay_ms_before_next);
-                sleep_until_interruptible(Instant::now() + delay, &stop);
+                stop.wait_until(Instant::now() + delay);
 
                 let mut st = recover_lock(&*state, "state");
                 *st = SessionState::ShowingNumbers;
@@ -361,7 +445,7 @@ fn run_session_plan<E: SessionEmitter>(
 
                 let delay = Duration::from_millis(*delay_ms_before_next);
                 if delay > Duration::from_millis(0) {
-                    sleep_until_interruptible(Instant::now() + delay, &stop);
+                    stop.wait_until(Instant::now() + delay);
                 }
             }
 
@@ -378,6 +462,9 @@ fn run_session_plan<E: SessionEmitter>(
 
                 {
                     let mut guard = recover_lock(&*recent_results, "recent_results");
+                    // Keep the newest `MAX_RECENT_RESULTS`; drop from the
+                    // front. (`VecDeque::truncate` would drop from the back,
+                    // i.e. the entry just pushed.)
                     guard.push_back(result.clone());
                     while guard.len() > SessionManager::MAX_RECENT_RESULTS {
                         guard.pop_front();
@@ -408,7 +495,7 @@ fn run_session_plan<E: SessionEmitter>(
         }
 
         // Check for stop signal after each step
-        if stop.load(Ordering::SeqCst) {
+        if stop.is_requested() {
             emitter.clear_screen(ClearScreen {
                 session_id: plan.session_id,
                 index: None,
@@ -427,81 +514,24 @@ fn run_session_plan<E: SessionEmitter>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::generate::{
-        random_fixed_digits_no_leading_zero, random_fixed_digits_no_leading_zero_capped,
-        random_number_with_constraints,
-    };
-    use crate::core::types::{SessionConfig, SessionConfigInput};
+    use crate::core::types::{SessionConfig, SessionConfigEffective, SessionConfigInput};
     use crate::core::validate::normalize_session_config;
-    use rand::rng;
     use std::sync::Arc;
 
-    #[test]
-    fn generator_respects_invariants() {
-        let mut rng = rng();
-        let digits = 3;
-        let allow_neg = true;
-        let mut last: Option<String> = None;
-        let mut running_sum: i128 = 0;
-
-        for i in 0..1000u32 {
-            // Mimic the run_session_loop sampling behavior: retry until we get a different
-            // payload or hit the attempt cap, then apply the deterministic fallback.
-            let mut attempt = 0u32;
-            let (s, val) = loop {
-                let (candidate, candidate_value) =
-                    random_number_with_constraints(&mut rng, digits, allow_neg, i, running_sum);
-                if last.as_deref() != Some(candidate.as_str()) {
-                    break (candidate, candidate_value);
-                }
-                attempt += 1;
-                if attempt >= 256 {
-                    // deterministic fallback similar to run_session_loop
-                    let fallback = if candidate.starts_with('-') {
-                        candidate.trim_start_matches('-').to_string()
-                    } else {
-                        candidate.parse::<u64>().map_or_else(
-                            |_| "1".to_string(),
-                            |mag| {
-                                let max_exclusive =
-                                    if digits <= 1 { 10 } else { 10u64.pow(digits) };
-                                let next = (mag % (max_exclusive - 1)) + 1;
-                                next.to_string()
-                            },
-                        )
-                    };
-                    let fb_val: i128 = fallback.parse::<i128>().unwrap_or(0);
-                    let signed = if candidate.starts_with('-') {
-                        if running_sum - fb_val >= 0 {
-                            -fb_val
-                        } else {
-                            fb_val
-                        }
-                    } else {
-                        fb_val
-                    };
-                    break (fallback, signed);
-                }
-            };
-
-            if let Some(prev) = &last {
-                assert_ne!(prev, &s, "consecutive duplicate at {i}");
-            }
-
-            if i == 0 {
-                assert!(!s.starts_with('-'), "first number negative");
-            }
-
-            running_sum = (running_sum + val).max(0);
-            assert!(running_sum >= 0, "running sum went negative at {i}");
-
-            last = Some(s);
-        }
+    /// A fresh, un-requested stop signal.
+    fn stop_signal() -> Arc<StopSignal> {
+        Arc::new(StopSignal::new())
     }
 
-    // Exactness lock below asserts bit-exact rounding: no epsilon. The
-    // expected value recomputes the same bounded cast, which is exact.
-    #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
+    /// A stop signal that is already requested.
+    fn requested_stop_signal() -> Arc<StopSignal> {
+        let signal = stop_signal();
+        signal.request();
+        signal
+    }
+
+    // Exactness lock below asserts bit-exact rounding: no epsilon.
+    #[allow(clippy::float_cmp)]
     #[test]
     fn normalize_session_config_clamps_and_rounds() {
         let input = SessionConfigInput {
@@ -513,73 +543,12 @@ mod tests {
 
         let (cfg, eff) = normalize_session_config(&input);
         assert_eq!(cfg.digits_per_number, 1);
-        assert!(cfg.number_duration_ms >= 1 && cfg.number_duration_ms <= 60_000);
-        // effective rounds to 1 decimal place (exactness lock: no epsilon).
-        assert_eq!(
-            eff.number_duration_s,
-            (cfg.number_duration_ms as f64 / 1000.0 * 10.0).round() / 10.0
-        );
         assert_eq!(cfg.total_numbers, 1);
         assert!(eff.allow_negative_numbers);
-    }
-
-    #[test]
-    fn random_fixed_digits_no_leading_zero_basic() {
-        let mut rng = rng();
-        // digits=1 should produce 1..=9
-        for _ in 0..50 {
-            let s = random_fixed_digits_no_leading_zero(&mut rng, 1);
-            let v: u32 = s.parse().unwrap();
-            assert!((1..=9).contains(&v));
-        }
-
-        // digits=3 should be in [100,999]
-        for _ in 0..50 {
-            let s = random_fixed_digits_no_leading_zero(&mut rng, 3);
-            let v: u64 = s.parse().unwrap();
-            assert!((100..=999).contains(&v));
-        }
-    }
-
-    #[test]
-    fn random_fixed_digits_no_leading_zero_capped_behaviour() {
-        let mut rng = rng();
-
-        // When max_inclusive < min for digits > 1, expect None
-        let none = random_fixed_digits_no_leading_zero_capped(&mut rng, 3, 50);
-        assert!(none.is_none());
-
-        // For digits=1 with max_inclusive < 1 -> None
-        let maybe = random_fixed_digits_no_leading_zero_capped(&mut rng, 1, 0);
-        assert!(maybe.is_none());
-
-        // For digits=1 with max_inclusive >=1 -> Some within range
-        let some = random_fixed_digits_no_leading_zero_capped(&mut rng, 1, 5).unwrap();
-        let v: u64 = some.parse().unwrap();
-        assert!((1..=5).contains(&v));
-    }
-
-    #[test]
-    fn random_number_with_constraints_first_non_negative_and_respects_running_sum() {
-        let mut rng = rng();
-        let digits = 2;
-        let allow_neg = true;
-        let mut running_sum: i128 = 0;
-
-        for i in 0..200u32 {
-            let (s, val) =
-                random_number_with_constraints(&mut rng, digits, allow_neg, i, running_sum);
-            if i == 0 {
-                assert!(!s.starts_with('-'), "first number negative");
-            }
-            // magnitude should parse
-            let _parsed: i128 = s.trim_start_matches('-').parse().unwrap();
-            // If negative, applying it must not drop running_sum below zero when the function returned it as negative
-            if val < 0 {
-                assert!(running_sum - (-val) >= 0 || running_sum == 0);
-            }
-            running_sum = (running_sum + val).max(0);
-        }
+        // Below the 0.1s floor: the exposure snaps up to the shortest allowed
+        // step and the reported duration is exactly that step.
+        assert_eq!(cfg.number_duration_ms, 100);
+        assert_eq!(eff.number_duration_s, 0.1);
     }
 
     #[test]
@@ -687,7 +656,7 @@ mod tests {
         }));
 
         // set a stop flag and spawn a short-lived thread as worker
-        let stop_flag = Arc::new(AtomicBool::new(false));
+        let stop_flag = stop_signal();
         *recover_lock(&manager.stop, "stop") = Some(stop_flag);
 
         let handle = std::thread::spawn(move || {
@@ -709,46 +678,41 @@ mod tests {
 
         // state should be Idle
         let state_guard = recover_lock(&manager.state, "state");
-        match &*state_guard {
-            SessionState::Idle => {}
-            _ => panic!("expected Idle state"),
-        }
+        assert!(
+            matches!(*state_guard, SessionState::Idle),
+            "expected Idle state"
+        );
     }
 
     #[test]
-    fn random_fixed_digits_edge_cases() {
-        let mut rng = rng();
-
-        // digits = 1, max_inclusive = 1 => must be "1"
-        let s = random_fixed_digits_no_leading_zero_capped(&mut rng, 1, 1).unwrap();
-        assert_eq!(s, "1");
-
-        // digits = 2, max_inclusive = 9 -> None because min for 2 digits is 10
-        assert!(random_fixed_digits_no_leading_zero_capped(&mut rng, 2, 9).is_none());
-    }
-
-    #[test]
-    fn random_number_with_constraints_no_negative() {
-        let mut rng = rng();
-        let mut running_sum: i128 = 0;
-        for i in 0..100u32 {
-            let (s, val) = random_number_with_constraints(&mut rng, 2, false, i, running_sum);
-            assert!(!s.starts_with('-'));
-            assert!(val >= 0);
-            running_sum += val;
-        }
-    }
-
-    #[test]
-    fn sleep_until_interruptible_returns_on_stop() {
-        use std::sync::Arc;
-        use std::sync::atomic::AtomicBool;
-        let stop = Arc::new(AtomicBool::new(true));
-        let deadline = Instant::now() + Duration::from_millis(500);
+    fn wait_until_returns_immediately_when_already_requested() {
+        let stop = requested_stop_signal();
         let start = Instant::now();
-        sleep_until_interruptible(deadline, &stop);
+        assert!(stop.wait_until(Instant::now() + Duration::from_secs(30)));
+        assert!(start.elapsed() < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn wait_until_is_interrupted_by_a_concurrent_request() {
+        // A worker waiting out a long delay must be woken by the request, not
+        // left to poll: 30s of waiting is cut short here.
+        let stop = stop_signal();
+        let signaller = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            signaller.request();
+        });
+
+        let start = Instant::now();
+        let interrupted = stop.wait_until(Instant::now() + Duration::from_secs(30));
         let elapsed = start.elapsed();
-        assert!(elapsed < Duration::from_millis(50));
+        handle.join().expect("signaller thread joins");
+
+        assert!(interrupted, "wait must report the stop request");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "was not woken: {elapsed:?}"
+        );
     }
 
     #[test]
@@ -803,33 +767,16 @@ mod tests {
     }
 
     #[test]
-    fn random_fixed_digits_capped_exact_min() {
-        let mut rng = rng();
-        // digits=2, min = 10, max_inclusive = 10 -> should always produce "10"
-        let res = random_fixed_digits_no_leading_zero_capped(&mut rng, 2, 10).unwrap();
-        // must parse and equal 10
-        let v: u64 = res.parse().unwrap();
-        assert_eq!(v, 10);
-    }
-
-    #[test]
-    fn random_fixed_digits_max_digits_length() {
-        let mut rng = rng();
-        // digits = 18 should produce string length 18
-        let s = random_fixed_digits_no_leading_zero(&mut rng, 18);
-        assert_eq!(s.len(), 18);
-    }
-
-    #[test]
-    fn sleep_until_interruptible_waits_when_not_stopped() {
-        use std::sync::Arc;
-        use std::sync::atomic::AtomicBool;
-        let stop = Arc::new(AtomicBool::new(false));
-        let deadline = Instant::now() + Duration::from_millis(30);
+    fn wait_until_blocks_until_the_deadline_when_not_requested() {
+        let stop = stop_signal();
         let start = Instant::now();
-        sleep_until_interruptible(deadline, &stop);
+        let interrupted = stop.wait_until(Instant::now() + Duration::from_millis(30));
         let elapsed = start.elapsed();
-        assert!(elapsed >= Duration::from_millis(25));
+        assert!(!interrupted, "no stop was requested");
+        assert!(
+            elapsed >= Duration::from_millis(25),
+            "returned early: {elapsed:?}"
+        );
     }
 
     #[test]
@@ -928,16 +875,10 @@ mod tests {
             recover_lock(&self.calls, "calls").push("clear_screen".into());
         }
         fn countdown_tick(&self, value: String) {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(format!("countdown({value})"));
+            recover_lock(&self.calls, "calls").push(format!("countdown({value})"));
         }
         fn show_number(&self, payload: ShowNumber) {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(format!("show_number({})", payload.value));
+            recover_lock(&self.calls, "calls").push(format!("show_number({})", payload.value));
         }
         fn session_complete(&self, _payload: SessionComplete) {
             recover_lock(&self.calls, "calls").push("session_complete".into());
@@ -1018,7 +959,7 @@ mod tests {
     fn run_session_plan_emits_events_in_correct_order() {
         let emitter = TestEmitter::new();
         let state = Arc::new(Mutex::new(SessionState::Idle));
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = stop_signal();
         let recent_results = Arc::new(Mutex::new(VecDeque::new()));
         let auto_repeat_plan = Arc::new(Mutex::new(None));
         let beep_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -1064,7 +1005,7 @@ mod tests {
     fn run_session_plan_stop_before_start() {
         let emitter = TestEmitter::new();
         let state = Arc::new(Mutex::new(SessionState::Idle));
-        let stop = Arc::new(AtomicBool::new(true));
+        let stop = requested_stop_signal();
         let recent_results = Arc::new(Mutex::new(VecDeque::new()));
         let auto_repeat_plan = Arc::new(Mutex::new(None));
 
@@ -1089,7 +1030,7 @@ mod tests {
     fn run_session_plan_stores_results() {
         let emitter = TestEmitter::new();
         let state = Arc::new(Mutex::new(SessionState::Idle));
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = stop_signal();
         let recent_results = Arc::new(Mutex::new(VecDeque::new()));
         let auto_repeat_plan = Arc::new(Mutex::new(None));
 
@@ -1120,7 +1061,7 @@ mod tests {
     fn run_session_plan_sets_awaiting_validation() {
         let emitter = TestEmitter::new();
         let state = Arc::new(Mutex::new(SessionState::Idle));
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = stop_signal();
         let recent_results = Arc::new(Mutex::new(VecDeque::new()));
         let auto_repeat_plan = Arc::new(Mutex::new(Some(AutoRepeatPlan {
             remaining: 3,
@@ -1155,7 +1096,7 @@ mod tests {
     fn run_session_plan_does_not_set_awaiting_when_remaining_zero() {
         let emitter = TestEmitter::new();
         let state = Arc::new(Mutex::new(SessionState::Idle));
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = stop_signal();
         let recent_results = Arc::new(Mutex::new(VecDeque::new()));
         let auto_repeat_plan = Arc::new(Mutex::new(Some(AutoRepeatPlan {
             remaining: 0,
@@ -1191,51 +1132,6 @@ mod tests {
     }
 
     #[test]
-    fn random_fixed_digits_no_leading_zero_capped_max_boundary() {
-        let mut rng = rng();
-        // digits=2, max_inclusive=99 (upper bound for 2 digits)
-        for _ in 0..50 {
-            let res = random_fixed_digits_no_leading_zero_capped(&mut rng, 2, 99).unwrap();
-            let v: u64 = res.parse().unwrap();
-            assert!((10..=99).contains(&v), "value {v} out of range [10, 99]");
-        }
-        // digits=3, max_inclusive=999 (upper bound for 3 digits)
-        for _ in 0..50 {
-            let res = random_fixed_digits_no_leading_zero_capped(&mut rng, 3, 999).unwrap();
-            let v: u64 = res.parse().unwrap();
-            assert!(
-                (100..=999).contains(&v),
-                "value {v} out of range [100, 999]"
-            );
-        }
-    }
-
-    #[test]
-    fn random_number_with_constraints_digits_18() {
-        let mut rng = rng();
-        let mut running_sum: i128 = 0;
-        for i in 0..50u32 {
-            let (s, val) = random_number_with_constraints(&mut rng, 18, true, i, running_sum);
-            // Strip leading '-' for length check (number can be negative)
-            let magnitude_str = s.trim_start_matches('-');
-            assert_eq!(
-                magnitude_str.len(),
-                18,
-                "magnitude string length should be 18 for digits=18, got '{s}'"
-            );
-            let mag: i128 = magnitude_str.parse().unwrap();
-            assert!(mag >= 10i128.pow(17), "magnitude too small for digits=18");
-            assert!(mag < 10i128.pow(18), "magnitude too large for digits=18");
-            let _ = i64::try_from(val).expect("val should fit in i64");
-            if i == 0 {
-                assert!(!s.starts_with('-'), "first number should not be negative");
-            }
-            running_sum = (running_sum + val).max(0);
-            assert!(running_sum >= 0, "running sum went negative");
-        }
-    }
-
-    #[test]
     fn result_for_not_found() {
         let manager = SessionManager::default();
         let err = manager.result_for(999).unwrap_err();
@@ -1249,7 +1145,7 @@ mod tests {
     fn run_session_plan_with_negative_numbers() {
         let emitter = TestEmitter::new();
         let state = Arc::new(Mutex::new(SessionState::Idle));
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = stop_signal();
         let recent_results = Arc::new(Mutex::new(VecDeque::new()));
         let auto_repeat_plan = Arc::new(Mutex::new(None));
         let beep_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -1370,7 +1266,7 @@ mod tests {
     fn run_session_plan_with_zero_numbers() {
         let emitter = TestEmitter::new();
         let state = Arc::new(Mutex::new(SessionState::Idle));
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = stop_signal();
         let recent_results = Arc::new(Mutex::new(VecDeque::new()));
         let auto_repeat_plan = Arc::new(Mutex::new(None));
 
@@ -1446,14 +1342,14 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].session_id, 100);
         assert_eq!(results[0].sum, 0);
-        assert!(results[0].numbers.is_empty());
+        assert_eq!(results[0].numbers, Vec::<i64>::new());
     }
 
     #[test]
     fn run_session_plan_with_total_numbers_1() {
         let emitter = TestEmitter::new();
         let state = Arc::new(Mutex::new(SessionState::Idle));
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = stop_signal();
         let recent_results = Arc::new(Mutex::new(VecDeque::new()));
         let auto_repeat_plan = Arc::new(Mutex::new(None));
 
@@ -1550,7 +1446,7 @@ mod tests {
     fn run_session_plan_stop_after_first_number() {
         let emitter = TestEmitter::new();
         let state = Arc::new(Mutex::new(SessionState::Idle));
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = stop_signal();
         let recent_results = Arc::new(Mutex::new(VecDeque::new()));
         let auto_repeat_plan = Arc::new(Mutex::new(None));
         let beep_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -1559,7 +1455,7 @@ mod tests {
         let bc = Arc::clone(&beep_count);
         let beep = move || {
             bc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            stop_clone.store(true, Ordering::SeqCst);
+            stop_clone.request();
         };
 
         let plan = make_sample_plan(55);
@@ -1595,7 +1491,7 @@ mod tests {
     fn run_session_plan_full_auto_repeat_cycle() {
         let emitter = TestEmitter::new();
         let state = Arc::new(Mutex::new(SessionState::Idle));
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = stop_signal();
         let recent_results = Arc::new(Mutex::new(VecDeque::new()));
 
         let manager = SessionManager::default();
@@ -1706,74 +1602,6 @@ mod tests {
         assert!(result3.is_ok());
 
         manager.stop();
-    }
-
-    #[test]
-    fn generator_stress_10000_iterations() {
-        let mut rng = rng();
-        let digits = 3;
-        let allow_neg = true;
-        let mut last: Option<String> = None;
-        let mut running_sum: i128 = 0;
-        let mut fallback_count: u32 = 0;
-
-        for i in 0..10000u32 {
-            let mut attempt = 0u32;
-            let (s, val) = loop {
-                let (candidate, candidate_value) =
-                    random_number_with_constraints(&mut rng, digits, allow_neg, i, running_sum);
-                if last.as_deref() != Some(candidate.as_str()) {
-                    break (candidate, candidate_value);
-                }
-                attempt += 1;
-                if attempt >= 256 {
-                    fallback_count += 1;
-                    let fallback = if candidate.starts_with('-') {
-                        candidate.trim_start_matches('-').to_string()
-                    } else {
-                        candidate.parse::<u64>().map_or_else(
-                            |_| "1".to_string(),
-                            |mag| {
-                                let max_exclusive =
-                                    if digits <= 1 { 10 } else { 10u64.pow(digits) };
-                                let next = (mag % (max_exclusive - 1)) + 1;
-                                next.to_string()
-                            },
-                        )
-                    };
-                    let fb_val: i128 = fallback.parse::<i128>().unwrap_or(0);
-                    let signed = if candidate.starts_with('-') {
-                        if running_sum - fb_val >= 0 {
-                            -fb_val
-                        } else {
-                            fb_val
-                        }
-                    } else {
-                        fb_val
-                    };
-                    break (fallback, signed);
-                }
-            };
-
-            if let Some(prev) = &last {
-                assert_ne!(prev, &s, "consecutive duplicate at {i}");
-            }
-
-            if i == 0 {
-                assert!(!s.starts_with('-'), "first number negative at {i}");
-            }
-
-            running_sum = (running_sum + val).max(0);
-            assert!(running_sum >= 0, "running sum went negative at {i}");
-
-            last = Some(s);
-        }
-
-        // Fallback should rarely trigger; verify it doesn't dominate
-        assert!(
-            fallback_count < 100,
-            "fallback triggered {fallback_count} times in 10000 iterations (should be rare)"
-        );
     }
 
     #[test]

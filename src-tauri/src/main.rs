@@ -2,6 +2,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod audio;
+#[cfg(not(target_arch = "wasm32"))]
 mod core;
 #[cfg(not(target_arch = "wasm32"))]
 mod session;
@@ -18,13 +19,12 @@ mod native_app {
         },
         validate::normalize_session_config,
     };
-    use crate::session::{SessionEmitter, SessionManager, recover_lock};
+    use crate::session::{SessionEmitter, SessionManager, now_epoch_ms, recover_lock};
     use log::warn;
     use serde::Deserialize;
     use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Instant;
-    use std::time::{SystemTime, UNIX_EPOCH};
     use tauri::Emitter;
 
     struct TauriEmitter {
@@ -79,6 +79,19 @@ mod native_app {
         repeats: u32,
         delay_s: f64,
     }
+
+    /// Auto-repeat policy bounds (repeats, seconds). Defensive: the UI offers
+    /// a narrower range, but IPC inputs are untrusted.
+    const MIN_REPEATS: i64 = 1;
+    const MAX_REPEATS: i64 = 20;
+    const MIN_REPEAT_DELAY_S: f64 = 5.0;
+    const MAX_REPEAT_DELAY_S: f64 = 120.0;
+
+    /// Milliseconds per second (`From` has no f64 conversion).
+    const MS_PER_S: f64 = 1000.0;
+
+    /// How often the auto-repeat countdown re-emits while waiting.
+    const AUTO_REPEAT_POLL_MS: u64 = 120;
 
     #[derive(Debug, Clone, serde::Serialize)]
     struct StartSessionResponse {
@@ -168,7 +181,7 @@ mod native_app {
             guard.color_scheme = color_scheme;
             guard.clone()
         };
-        let _ = app.emit("app_settings_changed", updated.clone());
+        let _ = app.emit("app_settings_changed", &updated);
         updated
     }
 
@@ -184,7 +197,7 @@ mod native_app {
             guard.clone()
         };
 
-        let _ = app.emit("app_settings_changed", updated.clone());
+        let _ = app.emit("app_settings_changed", &updated);
         updated
     }
 
@@ -203,6 +216,13 @@ mod native_app {
         message: String,
     }
 
+    /// Longest accepted answer text, measured after trimming and comma removal, so
+    /// it bounds the digit string only. Purely defensive: the widest `i64` needs 20
+    /// characters, leaving generous room for any real answer.
+    const MAX_ANSWER_CHARS: usize = 64;
+
+    const ANSWER_ERROR: &str = "Enter a single integer answer (e.g. 42 or -17).";
+
     /// Answer delta with verdict. Saturating (not plain) subtraction: the
     /// digit-width bound keeps attainable sums far inside i64 range, but a
     /// user can still *type* `i64::MIN`/`MAX`, and plain subtraction would
@@ -217,18 +237,14 @@ mod native_app {
 
     fn parse_answer_text(input: &str) -> Result<i64, String> {
         let cleaned = input.trim().replace(',', "");
-        if cleaned.is_empty() {
-            return Err("Enter a single integer answer (e.g. 42 or -17).".to_string());
+        // Defensive bound: avoid absurd payload sizes. Anything that is not a
+        // single integer within it gets the same message, so the failure
+        // cannot be used to probe the parser.
+        if cleaned.is_empty() || cleaned.len() > MAX_ANSWER_CHARS {
+            return Err(ANSWER_ERROR.to_string());
         }
 
-        // Defensive bound: avoid absurd payload sizes.
-        if cleaned.len() > 64 {
-            return Err("Enter a single integer answer (e.g. 42 or -17).".to_string());
-        }
-
-        cleaned
-            .parse::<i64>()
-            .map_err(|_| "Enter a single integer answer (e.g. 42 or -17).".to_string())
+        cleaned.parse::<i64>().map_err(|_| ANSWER_ERROR.to_string())
     }
 
     #[cfg(test)]
@@ -324,16 +340,6 @@ mod native_app {
         }
     }
 
-    fn now_ms() -> u64 {
-        u64::try_from(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
-        )
-        .expect("epoch millis fits u64 for hundreds of millions of years")
-    }
-
     fn schedule_auto_repeat_if_needed(
         app: &tauri::AppHandle,
         manager: Arc<SessionManager>,
@@ -344,14 +350,14 @@ mod native_app {
         warn!("[auto-repeat] mark_validated_and_schedule_info returned: {result:?}");
         let (delay_ms, remaining, config, generation) = result?;
 
-        let next_start_at_ms = now_ms().saturating_add(delay_ms);
+        let next_start_at_ms = now_epoch_ms().saturating_add(delay_ms);
         let payload = AutoRepeatWaitingPayload {
             session_id,
             next_start_at_ms,
             remaining,
         };
 
-        let _ = app.emit("auto_repeat_waiting", payload.clone());
+        let _ = app.emit("auto_repeat_waiting", &payload);
 
         let manager_arc = Arc::clone(&manager);
         let app_for_thread = app.clone();
@@ -390,7 +396,8 @@ mod native_app {
                         );
                     }
 
-                    let step = remaining_duration.min(std::time::Duration::from_millis(120));
+                    let step = remaining_duration
+                        .min(std::time::Duration::from_millis(AUTO_REPEAT_POLL_MS));
                     thread::sleep(step);
                 }
 
@@ -448,18 +455,18 @@ mod native_app {
             },
             |ar| {
                 if ar.enabled {
-                    let repeats =
-                        u32::try_from(ar.repeats.clamp(1, 20)).expect("clamped 1..=20 fits u32");
+                    let repeats = u32::try_from(ar.repeats.clamp(MIN_REPEATS, MAX_REPEATS))
+                        .expect("clamped repeats fit u32");
                     let delay_secs = if ar.delay_s.is_finite() {
-                        ar.delay_s.clamp(5.0, 120.0)
+                        ar.delay_s.clamp(MIN_REPEAT_DELAY_S, MAX_REPEAT_DELAY_S)
                     } else {
-                        5.0
+                        MIN_REPEAT_DELAY_S
                     };
                     // `delay_secs` is finite and clamped to 5..=120, so the
-                    // millisecond value is non-negative, exactly representable,
+                    // millisecond value is at least 5000, exactly representable,
                     // and far inside u64 range.
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let delay_ms = ((delay_secs * 1000.0).round() as u64).max(5_000);
+                    let delay_ms = (delay_secs * MS_PER_S).round() as u64;
 
                     manager.configure_auto_repeat(Some(AutoRepeatPlan {
                         remaining: repeats,
@@ -469,7 +476,7 @@ mod native_app {
                     }));
 
                     // `delay_ms <= 120_000` is exactly representable in f64.
-                    let effective_delay_s = delay_ms as f64 / 1000.0;
+                    let effective_delay_s = delay_ms as f64 / MS_PER_S;
                     Some(AutoRepeatEffective {
                         enabled: true,
                         repeats,
@@ -510,25 +517,15 @@ mod native_app {
         ))
     }
 
-    #[tauri::command]
-    fn submit_answer(
-        app: tauri::AppHandle,
-        manager: tauri::State<'_, Arc<SessionManager>>,
-        args: serde_json::Value,
+    /// Shared body of `submit_answer` / `submit_answer_text`: the two commands
+    /// differ only in how the answer arrives (typed sum vs. text), so grading
+    /// and auto-repeat scheduling live here exactly once.
+    fn submit_answer_inner(
+        app: &tauri::AppHandle,
+        manager: &Arc<SessionManager>,
+        session_id: u64,
+        provided_sum: i64,
     ) -> Result<SubmitAnswerResponse, String> {
-        #[derive(serde::Deserialize)]
-        struct SubmitAnswerArgs {
-            #[serde(alias = "sessionId")]
-            session_id: u64,
-            #[serde(alias = "providedSum")]
-            provided_sum: i64,
-        }
-
-        let parsed: SubmitAnswerArgs =
-            serde_json::from_value(args).map_err(|e| format!("invalid args: {e}"))?;
-        let session_id = parsed.session_id;
-        let provided_sum = parsed.provided_sum;
-
         let result = manager.result_for(session_id)?;
         let expected_sum = result.sum;
 
@@ -544,7 +541,7 @@ mod native_app {
         // Play feedback sound based on validation result (Rust owns playback).
         let _ = crate::audio::play_kind(if correct { "applause" } else { "buzzer" });
 
-        let waiting = schedule_auto_repeat_if_needed(&app, Arc::clone(&*manager), session_id);
+        let waiting = schedule_auto_repeat_if_needed(app, Arc::clone(manager), session_id);
         let message = {
             let mut lines: Vec<String> = Vec::new();
             if correct {
@@ -584,11 +581,26 @@ mod native_app {
         let parsed: SubmitAnswerTextArgs =
             serde_json::from_value(args).map_err(|e| format!("invalid args: {e}"))?;
         let provided_sum = parse_answer_text(&parsed.provided_text)?;
-        let args_for_submit = serde_json::json!({
-            "session_id": parsed.session_id,
-            "provided_sum": provided_sum,
-        });
-        submit_answer(app, manager, args_for_submit)
+        submit_answer_inner(&app, &manager, parsed.session_id, provided_sum)
+    }
+
+    #[tauri::command]
+    fn submit_answer(
+        app: tauri::AppHandle,
+        manager: tauri::State<'_, Arc<SessionManager>>,
+        args: serde_json::Value,
+    ) -> Result<SubmitAnswerResponse, String> {
+        #[derive(serde::Deserialize)]
+        struct SubmitAnswerArgs {
+            #[serde(alias = "sessionId")]
+            session_id: u64,
+            #[serde(alias = "providedSum")]
+            provided_sum: i64,
+        }
+
+        let parsed: SubmitAnswerArgs =
+            serde_json::from_value(args).map_err(|e| format!("invalid args: {e}"))?;
+        submit_answer_inner(&app, &manager, parsed.session_id, parsed.provided_sum)
     }
 
     pub fn run() {

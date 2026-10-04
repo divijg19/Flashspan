@@ -1,11 +1,31 @@
 #[cfg(all(test, target_arch = "wasm32"))]
 mod wasm_tests {
-    use crate::core::types::SessionConfigInput;
+    use crate::core::types::{SessionConfigEffective, SessionConfigInput, SessionPlan};
     use crate::{build_session_plan_wasm, normalize_session_config_wasm, ping, wasm_version};
-    use serde_wasm_bindgen::to_value;
+    use serde::Deserialize;
+    use serde_wasm_bindgen::{from_value, to_value};
     use wasm_bindgen_test::*;
 
-    wasm_bindgen_test_configure!(run_in_browser);
+    /// The normalized-config shape the bridge returns to JS.
+    #[derive(Debug, Deserialize)]
+    struct NormalizedConfig {
+        effective: SessionConfigEffective,
+    }
+
+    fn normalize(input: &SessionConfigInput) -> Result<SessionConfigEffective, ()> {
+        let value = normalize_session_config_wasm(to_value(input).expect("encode input"))
+            .map_err(|_| ())?;
+        from_value::<NormalizedConfig>(value)
+            .map(|decoded| decoded.effective)
+            .map_err(|_| ())
+    }
+
+    fn plan(session_id: u64, input: &SessionConfigInput, seed: Option<u64>) -> SessionPlan {
+        let value =
+            build_session_plan_wasm(session_id, to_value(input).expect("encode input"), seed)
+                .expect("plan generation should succeed");
+        from_value::<SessionPlan>(value).expect("plan should decode")
+    }
 
     #[wasm_bindgen_test]
     fn test_ping() {
@@ -16,15 +36,16 @@ mod wasm_tests {
     #[wasm_bindgen_test]
     fn test_wasm_version() {
         let version = wasm_version();
-        // Version should be in format "major.minor.patch"
-        let parts: Vec<&str> = version.split('.').collect();
-        assert!(
-            parts.len() >= 2,
-            "Version should have at least major.minor format"
+        assert_eq!(
+            version,
+            env!("CARGO_PKG_VERSION"),
+            "the bridge must report the crate version the JS bundle was built from"
         );
-
-        // All parts should be numeric or pre-release identifiers
-        assert!(!version.is_empty(), "Version should not be empty");
+        // Reported as at least major.minor.
+        assert!(
+            version.split('.').count() >= 2,
+            "version {version} should have a major.minor shape"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -36,42 +57,68 @@ mod wasm_tests {
             allow_negative_numbers: false,
         };
 
-        let input_value = to_value(&input).unwrap();
-        let result = normalize_session_config_wasm(input_value);
-
-        assert!(result.is_ok(), "Valid config should not error");
-        let config_value = result.unwrap();
-        assert!(!config_value.is_null(), "Config should not be null");
+        let effective = normalize(&input).expect("valid config should normalize");
+        assert_eq!(effective.digits_per_number, 2);
+        assert_eq!(effective.number_duration_s, 1.5);
+        assert_eq!(effective.total_numbers, 10);
+        assert!(!effective.allow_negative_numbers);
     }
 
     #[wasm_bindgen_test]
     fn test_normalize_session_config_wasm_boundary_digits() {
-        // Test with 0 digits (should clamp to 1)
-        let input = SessionConfigInput {
+        // Zero digits must clamp up to the minimum, not pass through.
+        let effective = normalize(&SessionConfigInput {
             digits_per_number: 0,
             number_duration_s: 1.0,
             total_numbers: 5,
             allow_negative_numbers: false,
-        };
-
-        let input_value = to_value(&input).unwrap();
-        let result = normalize_session_config_wasm(input_value);
-        assert!(result.is_ok(), "Should handle edge case digits");
+        })
+        .expect("zero digits should normalize");
+        assert_eq!(effective.digits_per_number, 1);
     }
 
     #[wasm_bindgen_test]
     fn test_normalize_session_config_wasm_large_digits() {
-        // Test with large digits (should clamp to 18)
-        let input = SessionConfigInput {
+        // Absurd widths clamp to the exact-integer policy cap of 15.
+        let effective = normalize(&SessionConfigInput {
             digits_per_number: 100,
             number_duration_s: 1.0,
             total_numbers: 5,
             allow_negative_numbers: false,
-        };
+        })
+        .expect("large digits should clamp");
+        assert_eq!(effective.digits_per_number, 15);
+        // 5 is inside the bound for width 15, so the total is untouched.
+        assert_eq!(effective.total_numbers, 5);
 
-        let input_value = to_value(&input).unwrap();
-        let result = normalize_session_config_wasm(input_value);
-        assert!(result.is_ok(), "Should clamp large digits");
+        // A total past the bound for the clamped width is capped to it.
+        let capped = normalize(&SessionConfigInput {
+            digits_per_number: 100,
+            number_duration_s: 1.0,
+            total_numbers: 5_000,
+            allow_negative_numbers: false,
+        })
+        .expect("an oversized total should clamp");
+        assert_eq!(capped.digits_per_number, 15);
+        assert_eq!(
+            capped.total_numbers,
+            crate::core::validate::max_total_for_digits(15),
+            "total must be capped by the clamped width's exact-integer bound"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn test_normalize_session_config_wasm_duration_is_grid_aligned() {
+        // The reported duration is exactly the exposure, on the 0.1s grid the
+        // UI exposes (see the fixed-point property in core::prop_tests).
+        let effective = normalize(&SessionConfigInput {
+            digits_per_number: 2,
+            number_duration_s: 0.25,
+            total_numbers: 4,
+            allow_negative_numbers: false,
+        })
+        .expect("duration should normalize");
+        assert_eq!(effective.number_duration_s, 0.3);
     }
 
     #[wasm_bindgen_test]
@@ -83,16 +130,22 @@ mod wasm_tests {
             allow_negative_numbers: false,
         };
 
-        let input_value = to_value(&input).unwrap();
-        let result = build_session_plan_wasm(12345, input_value, None);
-
-        assert!(result.is_ok(), "Plan generation should not error");
-        let plan_value = result.unwrap();
-        assert!(!plan_value.is_null(), "Plan should not be null");
+        let plan = plan(12345, &input, None);
+        assert_eq!(plan.session_id, 12345);
+        assert_eq!(plan.numbers_generated.len(), 5);
+        assert_eq!(
+            plan.expected_sum,
+            plan.numbers_generated.iter().sum::<i64>(),
+            "the plan must report the sum of its own numbers"
+        );
+        assert_eq!(
+            plan.config_snapshot.digits_per_number, 2,
+            "the plan carries the normalized config"
+        );
     }
 
     #[wasm_bindgen_test]
-    fn test_build_session_plan_wasm_with_seed() {
+    fn test_build_session_plan_wasm_with_seed_is_reproducible() {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
@@ -100,20 +153,17 @@ mod wasm_tests {
             allow_negative_numbers: false,
         };
 
-        let input_value = to_value(&input).unwrap();
+        let first = plan(11111, &input, Some(42));
+        let second = plan(11111, &input, Some(42));
 
-        // Generate two plans with the same seed - should be identical
-        let result1 = build_session_plan_wasm(11111, input_value.clone(), Some(42));
-        let result2 = build_session_plan_wasm(11111, input_value.clone(), Some(42));
-
-        assert!(result1.is_ok());
-        assert!(result2.is_ok());
-
-        let plan1_str = format!("{:?}", result1.unwrap());
-        let plan2_str = format!("{:?}", result2.unwrap());
         assert_eq!(
-            plan1_str, plan2_str,
-            "Same seed should produce identical plans"
+            first.numbers_generated, second.numbers_generated,
+            "same seed must produce the same numbers"
+        );
+        assert_eq!(first.expected_sum, second.expected_sum);
+        assert_eq!(
+            first.total_duration_ms, second.total_duration_ms,
+            "same seed must produce the same schedule"
         );
     }
 
@@ -126,32 +176,14 @@ mod wasm_tests {
             allow_negative_numbers: true,
         };
 
-        let input_value = to_value(&input).unwrap();
+        // Three independent calls with the same config and seed.
+        let first = plan(99999, &input, Some(999));
+        let second = plan(99999, &input, Some(999));
+        let third = plan(99999, &input, Some(999));
 
-        // Generate three plans with same config and seed
-        let result1 = build_session_plan_wasm(99999, input_value.clone(), Some(999));
-        let result2 = build_session_plan_wasm(99999, input_value.clone(), Some(999));
-        let result3 = build_session_plan_wasm(99999, input_value, Some(999));
-
-        assert!(result1.is_ok());
-        assert!(result2.is_ok());
-        assert!(result3.is_ok());
-
-        let plan1 = result1.unwrap();
-        let plan2 = result2.unwrap();
-        let plan3 = result3.unwrap();
-
-        // All three should produce identical results
-        assert_eq!(
-            format!("{:?}", plan1),
-            format!("{:?}", plan2),
-            "Determinism check 1"
-        );
-        assert_eq!(
-            format!("{:?}", plan2),
-            format!("{:?}", plan3),
-            "Determinism check 2"
-        );
+        assert_eq!(first.numbers_generated, second.numbers_generated);
+        assert_eq!(second.numbers_generated, third.numbers_generated);
+        assert_eq!(first.expected_sum, third.expected_sum);
     }
 
     #[wasm_bindgen_test]
@@ -163,25 +195,17 @@ mod wasm_tests {
             allow_negative_numbers: false,
         };
 
-        let input_value = to_value(&input).unwrap();
+        let first = plan(55555, &input, Some(1));
+        let second = plan(55555, &input, Some(2));
 
-        // Generate plans with different seeds - should produce different results
-        let result_seed1 = build_session_plan_wasm(55555, input_value.clone(), Some(1));
-        let result_seed2 = build_session_plan_wasm(55555, input_value, Some(2));
-
-        assert!(result_seed1.is_ok());
-        assert!(result_seed2.is_ok());
-
-        let plan1_str = format!("{:?}", result_seed1.unwrap());
-        let plan2_str = format!("{:?}", result_seed2.unwrap());
         assert_ne!(
-            plan1_str, plan2_str,
-            "Different seeds should produce different plans"
+            first.numbers_generated, second.numbers_generated,
+            "different seeds should produce different plans"
         );
     }
 
     #[wasm_bindgen_test]
-    fn test_session_plan_step_count() {
+    fn test_session_plan_step_count_and_timing() {
         let input = SessionConfigInput {
             digits_per_number: 1,
             number_duration_s: 1.0,
@@ -189,13 +213,11 @@ mod wasm_tests {
             allow_negative_numbers: false,
         };
 
-        let input_value = to_value(&input).unwrap();
-        let result = build_session_plan_wasm(77777, input_value, None);
+        let plan = plan(77777, &input, None);
 
-        assert!(result.is_ok());
-        let plan_value = result.unwrap();
-
-        // Convert back to check structure - plan should have steps property
-        assert!(!plan_value.is_null());
+        // 1 initial clear + 3 countdown ticks + 2 per number + 1 final clear
+        // + 1 complete.
+        assert_eq!(plan.steps.len(), 1 + 3 + (2 * 5) + 1 + 1);
+        assert_eq!(plan.total_duration_ms, 3_000 + 100 + 5 * (1_000 + 100));
     }
 }
