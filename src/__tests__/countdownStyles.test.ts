@@ -82,6 +82,37 @@ describe("countdown stylesheet covers the countdown surface", () => {
 		expect(withoutKeyframes).toEqual([]);
 	});
 
+	/**
+	 * The sign must reserve its slot in flow, so toggling opacity never moves
+	 * the digits.
+	 *
+	 * It used to be parked outside the box (`position: absolute; right: 100%`),
+	 * which drew every negative number about half a character left of centre.
+	 * Reserving a fixed-width in-flow slot centres the group, and because the
+	 * slot always exists, a positive and a negative flash put the digits at the
+	 * same place.
+	 */
+	it("keeps the sign slot in flow so the digits never move", () => {
+		const rule = (selector: string): string | null => {
+			const match = new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(
+				stylesheet,
+			);
+			return match ? match[1] : null;
+		};
+
+		const sign = rule(".signOverlay");
+		expect(sign, "expected a .signOverlay rule").toBeTruthy();
+		expect(sign).toMatch(/flex:\s*0\s+0\s+auto/);
+		expect(sign).toMatch(/width:\s*1ch/);
+		// Outside-the-box positioning is what displaced negatives.
+		expect(sign).not.toMatch(/position:\s*absolute/);
+		expect(sign).not.toMatch(/right:\s*100%/);
+
+		const group = rule(".signedNumber");
+		expect(group, "expected a .signedNumber rule").toBeTruthy();
+		expect(group).toMatch(/display:\s*inline-flex/);
+	});
+
 	it("drains the ring with a single animation over the countdown", () => {
 		// The ring's drain is one animation for all three counts. A per-count
 		// animation would need a restart class to be re-triggered, which is the

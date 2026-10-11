@@ -6,7 +6,7 @@
 
 	/*
 	 * Length of the countdown, as the ring animation sees it: `COUNTDOWN_FROM`
-	 * counts of `COUNTDOWN_TICK_MS` from `crate::core::engine`, pinned at
+	 * counts of `COUNTDOWN_TICK_MS` from `crate::core::timing`, pinned at
 	 * 3 x 1000ms by the cross-runtime timeline tests. The ring's drain is a
 	 * single animation over exactly this span, so nothing in JS drives it.
 	 */
@@ -1291,7 +1291,7 @@
  * a frame and cannot skip a beat when a tick arrives late.
  *
  * The duration is `COUNTDOWN_FROM` counts of `COUNTDOWN_TICK_MS` from
- * `crate::core::engine`, which the cross-runtime timeline tests pin at 3 x 1000.
+ * `crate::core::timing`, which the cross-runtime timeline tests pin at 3 x 1000.
  * The final tick also carries `PRE_FLASH_SETTLE_MS`, so the drain completes just
  * before the flashing rather than being cut short by it.
  *
@@ -1322,9 +1322,25 @@
 	}
 }
 
+/*
+ * Sign and digits laid out in flow, as one group.
+ *
+ * The sign used to be parked outside the box (`position: absolute;
+ * right: 100%`), which centred the digits but left the negative's whole group
+ * half a character left of centre. Reserving its slot in flow centres the
+ * group, and because the slot is fixed-width the digits never move when the
+ * sign toggles: only its opacity changes, and opacity cannot affect layout.
+ *
+ * The cost is that with "allow negatives" enabled, every number in the session
+ * (positive included, since the slot is always reserved) sits a constant half a
+ * character right of centre. That is deliberate: a consistent offset is far
+ * better than digits jumping sideways between a positive and a negative flash.
+ * With negatives off no slot is rendered at all and the digits are centred.
+ */
 .signedNumber {
 	position: relative;
-	display: inline-block;
+	display: inline-flex;
+	align-items: center;
 	z-index: 2;
 }
 
@@ -1339,11 +1355,9 @@
 }
 
 .signOverlay {
-	position: absolute;
-	top: 0;
-	right: 100%;
+	/* Reserved, always: toggling opacity must not move the digits. */
+	flex: 0 0 auto;
 	width: 1ch;
-	text-align: left;
 	pointer-events: none;
 }
 

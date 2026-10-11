@@ -1,9 +1,9 @@
 //! Authoritative flash-timing budget.
 //!
 //! Every executor (native session worker, browser scheduler) must realize
-//! exactly this schedule. The browser runtime mirrors these values in
-//! `src/runtime/browser.ts` (`PRE_FLASH_SETTLE_MS`, `INTER_NUMBER_GAP_MS`);
-//! changing any value here requires changing the mirror and updating the
+//! exactly this schedule. The browser mirrors these values in `src/timing.ts`
+//! (a single module imported by both `src/runtime/browser.ts` and `src/App.tsx`);
+//! changing any value here requires changing that module and updating the
 //! schedule tests on both sides (`engine.rs` timing tests,
 //! `src/__tests__/flashTiming.test.ts`).
 //!
@@ -22,6 +22,12 @@
 //!   two events share a timestamp and a blank frame always separates numbers.
 //! - I3: the pre-first-flash settle is a pause *before* exposure, never an
 //!   extension of it.
+
+/// Number of countdown ticks ("3", "2", "1").
+pub const COUNTDOWN_FROM: u32 = 3;
+
+/// Gap between consecutive countdown ticks (ms).
+pub const COUNTDOWN_TICK_MS: u64 = 1000;
 
 /// Pause after the final countdown tick, before the first flash (ms).
 /// Absorbs the fullscreen-transition grace so the first number paints late

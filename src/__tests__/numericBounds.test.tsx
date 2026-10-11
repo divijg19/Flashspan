@@ -49,6 +49,9 @@ describe("browser session config bounds", () => {
 			total_numbers: 100,
 			allow_negative_numbers: false,
 		});
+
+		// No case here supersedes the start, so null would be a contract break.
+		if (!resp) throw new Error("startSession unexpectedly returned null");
 		try {
 			expect(resp.effective_config.digits_per_number).toBe(15);
 			expect(resp.effective_config.total_numbers).toBe(9);
@@ -89,6 +92,9 @@ describe("browser session config bounds", () => {
 			},
 			{ enabled: true, repeats: 0, delay_s: 0 },
 		);
+
+		// No case here supersedes the start, so null would be a contract break.
+		if (!resp) throw new Error("startSession unexpectedly returned null");
 		try {
 			expect(resp.effective_auto_repeat?.repeats).toBe(1);
 			expect(resp.effective_auto_repeat?.delay_s).toBe(5);
@@ -105,6 +111,9 @@ describe("browser session config bounds", () => {
 			total_numbers: 500,
 			allow_negative_numbers: false,
 		});
+
+		// No case here supersedes the start, so null would be a contract break.
+		if (!resp) throw new Error("startSession unexpectedly returned null");
 		try {
 			expect(resp.effective_config.total_numbers).toBe(500);
 		} finally {

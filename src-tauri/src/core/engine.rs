@@ -1,14 +1,11 @@
 use crate::core::generate::{magnitude_bounds, random_number_with_constraints};
-use crate::core::timing::{INTER_NUMBER_GAP_MS, PRE_FLASH_SETTLE_MS};
+use crate::core::timing::{
+    COUNTDOWN_FROM, COUNTDOWN_TICK_MS, INTER_NUMBER_GAP_MS, PRE_FLASH_SETTLE_MS,
+};
 use crate::core::types::{SessionConfig, SessionConfigEffective, SessionPlan, SessionStep};
 use crate::core::validate::effective_from;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-
-/// Countdown ticks ("3", "2", "1") and the gap between them (ms). Mirrors the
-/// schedule documented in `crate::core::timing`.
-const COUNTDOWN_TICK_MS: u64 = 1000;
-const COUNTDOWN_FROM: u32 = 3;
 
 /// Random draws spent trying to avoid two identical numbers in a row before
 /// falling back to [`next_distinct_value`]. Two consecutive duplicates become

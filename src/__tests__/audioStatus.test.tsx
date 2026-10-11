@@ -6,18 +6,18 @@ import { browserRuntime } from "../runtime/browser";
 import { createMockRuntime } from "./__mocks__/mockRuntime";
 
 describe("browser getAudioStatus", () => {
-	it("reports ready when wav playback is supported", async () => {
+	it("reports not-started before any playback attempt", async () => {
 		await browserRuntime.setSoundEnabled(true);
 		const canPlay = vi
 			.spyOn(window.HTMLMediaElement.prototype, "canPlayType")
 			.mockReturnValue("probably");
 		try {
+			// Capable but never played: honest web equivalent of native's
+			// "not-started", not a claim of availability that a dead device would
+			// also satisfy.
 			const status = await browserRuntime.getAudioStatus();
-			expect(status).toEqual({
-				enabled: true,
-				available: true,
-				detail: "ready",
-			});
+			expect(status.available).toBe(true);
+			expect(status.detail).toBe("not-started");
 		} finally {
 			canPlay.mockRestore();
 		}

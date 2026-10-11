@@ -67,7 +67,7 @@ export const nativeRuntime: Runtime = {
 	async startSession(
 		config: SessionConfigInput,
 		autoRepeat?: AutoRepeatConfig | null,
-	): Promise<StartSessionResponse> {
+	): Promise<StartSessionResponse | null> {
 		if (autoRepeat) {
 			return invoke<StartSessionResponse>("start_session", {
 				config,

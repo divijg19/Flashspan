@@ -7,6 +7,7 @@ import {
 	onMount,
 	Show,
 } from "solid-js";
+import { COUNTDOWN_FROM } from "./timing";
 import "./App.css";
 import {
 	type AutoRepeatWaitingPayload,
@@ -199,12 +200,6 @@ export default function App() {
 	const [displayText, setDisplayText] = createSignal<string>("");
 
 	/**
-	 * Counts in the countdown, mirroring `COUNTDOWN_FROM` in
-	 * `crate::core::engine`.
-	 */
-	const COUNTDOWN_FROM = 3;
-
-	/**
 	 * Which quarter turn the blades rest at: "3" is the first, "1" the third.
 	 *
 	 * Derived from the digit rather than a running tick counter so it is
@@ -302,10 +297,15 @@ export default function App() {
 			const status = await runtime.getAudioStatus();
 			if (!status.enabled) {
 				setSoundStatusText("");
-			} else if (status.available) {
-				setSoundStatusText("Sound ready");
-			} else {
+			} else if (!status.available) {
 				setSoundStatusText(`Sound unavailable (${status.detail})`);
+			} else {
+				// `detail` is left to the unavailable branch. It is "not-started"
+				// until something has actually played, on *both* runtimes — native
+				// reports the same before the first clip — so spelling that out
+				// here only diverged from the desktop and produced a label too long
+				// for the single reserved line.
+				setSoundStatusText("Sound ready");
 			}
 		} catch {
 			setSoundStatusText("");
@@ -532,6 +532,16 @@ export default function App() {
 			setThemeMode(payload.theme_mode === "light" ? "light" : "dark");
 		});
 
+		const unlistenInterrupted = await runtime.onSessionInterrupted(() => {
+			// The runtime has already torn the session down; report it rather than
+			// leaving a screen that looks stuck. There is no result to grade.
+			resetForIncomingSessionIfComplete();
+			setPhase("idle");
+			setErrorText(
+				"Session interrupted while the browser tab was in the background.",
+			);
+		});
+
 		const unlistenComplete = await runtime.onSessionComplete((payload) => {
 			setPhase("complete");
 			setDisplayText("");
@@ -570,6 +580,7 @@ export default function App() {
 			unlistenAutoRepeatTick();
 			unlistenSettings();
 			unlistenComplete();
+			unlistenInterrupted();
 		});
 	});
 
@@ -629,7 +640,12 @@ export default function App() {
 						}
 					: null,
 			);
-			applyStartSessionResponse(resp);
+			// Null: the start was superseded by a stop while the plan was still
+			// building. The stop has already restored idle, so there is nothing to
+			// apply and no error worth showing for a cancelled start.
+			if (resp) {
+				applyStartSessionResponse(resp);
+			}
 		} catch (e) {
 			setPhase("idle");
 			void setFullscreen(false);
@@ -1491,11 +1507,11 @@ export default function App() {
 							<span class="countdownDigit">{displayText()}</span>
 						) : (
 							<span class="signedNumber">
-								<span class="magnitude">
-									{displayText().startsWith("-")
-										? displayText().slice(1)
-										: displayText()}
-								</span>
+								{/*
+								 * The sign precedes the digits in the DOM as well as on
+								 * screen: matching the two avoids an `order` rule in
+								 * CSS purely to undo the markup's order.
+								 */}
 								{allowNegativeNumbers() ? (
 									<span
 										class="signOverlay"
@@ -1505,6 +1521,11 @@ export default function App() {
 										-
 									</span>
 								) : null}
+								<span class="magnitude">
+									{displayText().startsWith("-")
+										? displayText().slice(1)
+										: displayText()}
+								</span>
 							</span>
 						)}
 					</div>
