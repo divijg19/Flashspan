@@ -109,6 +109,23 @@ jobs:
       - name: Run Rust tests
         run: cargo test --locked
 
+      # `cargo test --locked` reports pass/fail, which on a two-target crate says
+      # nothing about the wasm side: a plain `#[test]` compiles for wasm32 but is
+      # never run there. Coverage turns that into a number.
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Measure Rust coverage
+        run: cargo llvm-cov --locked --lcov --output-path lcov.info
+
+      - name: Upload Rust coverage
+        uses: codecov/codecov-action@v7
+        with:
+          files: ./src-tauri/lcov.info
+          flags: rust
+          fail_ci_if_error: false
+          continue-on-error: true
+
       - name: Run Rust lints
         run: cargo clippy --locked --all-targets -- -D warnings -D clippy::pedantic
 
@@ -169,6 +186,26 @@ jobs:
       - name: Run WASM tests
         working-directory: src-tauri
         run: wasm-pack test --node
+
+      # A plain `#[test]` compiles under wasm32 but is silently skipped by the
+      # wasm-bindgen test runner, so the only symptom of a regression here is a
+      # smaller count. Assert the count matches the source instead: this is how
+      # the wire-format tests went unrunning on the one target that needs them.
+      - name: Guard against silently skipped WASM tests
+        working-directory: src-tauri
+        run: |
+          set -euo pipefail
+          # Two decoration forms exist: the literal attribute and the
+          # cfg_attr form used by tests that must run on both targets.
+          decorated=$(( $(grep -rho '#\[wasm_bindgen_test\]' --include='*.rs' . | wc -l) + $(grep -rho 'cfg_attr(target_arch' --include='*.rs' . | wc -l) ))
+          actual=$(wasm-pack test --node 2>&1 \
+            | grep -oE 'running [0-9]+ tests' | head -1 | grep -oE '[0-9]+')
+          echo "decorated #[wasm_bindgen_test] functions: $decorated"
+          echo "tests wasm-pack actually ran: $actual"
+          if [ "$actual" != "$decorated" ]; then
+            echo "::error::wasm-pack ran $actual tests but $decorated are decorated #[wasm_bindgen_test]. A plain #[test] was silently skipped."
+            exit 1
+          fi
 
       # Also run the frontend suite here rather than only in the frontend job:
       # this is the one job where src/wasm/pkg exists, so it is the only place the

@@ -56,6 +56,8 @@ describe("flash timing: uniform exposure with fixed 100ms gap", () => {
 		expect(shows).toEqual([{ index: 1, at: 3100 }]);
 
 		// Uniform 500ms exposure for the first flash (no first-flash bonus).
+		// This pins the *plan*; `flashExposure.test.tsx` pins the same property at
+		// the driver level, under injected delivery lateness.
 		await vi.advanceTimersByTimeAsync(500);
 		expect(indexedClears).toEqual([{ index: 1, at: 3600 }]);
 
@@ -93,16 +95,19 @@ describe("flash timing: uniform exposure with fixed 100ms gap", () => {
 			completion.current = { numbers: payload.numbers, sum: payload.sum };
 		});
 
-		// 500 numbers schedule instantly: startSession returns before any
-		// event fires (no upfront generation or timer fan-out).
+		// startSession returns before any event fires: the chain is armed but
+		// nothing is scheduled beyond the single next timer. The local planner
+		// *does* generate its 500 numbers eagerly here, so what this pins is the
+		// absence of a timer fan-out rather than an absence of upfront work.
 		const started = await browserRuntime.startSession({
 			digits_per_number: 1,
 			number_duration_s: 0.1,
 			total_numbers: 500,
 			allow_negative_numbers: false,
 		});
+		expect(started).not.toBeNull();
 		expect(shows).toEqual([]);
-		expect(started.effective_config.total_numbers).toBe(500);
+		expect(started?.effective_config.total_numbers).toBe(500);
 
 		// Early events keep exact golden times.
 		await vi.advanceTimersByTimeAsync(3100);

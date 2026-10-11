@@ -48,10 +48,12 @@ export interface Runtime {
 	getAppSettings(): Promise<AppSettings>;
 	setColorScheme(scheme: ColorScheme): Promise<AppSettings>;
 	setThemeMode(mode: ThemeMode): Promise<AppSettings>;
+	// Null means no session was started: the browser runtime bails when a stop
+	// supersedes the start while its plan was still building.
 	startSession(
 		config: SessionConfigInput,
 		autoRepeat?: AutoRepeatConfig | null,
-	): Promise<StartSessionResponse>;
+	): Promise<StartSessionResponse | null>;
 	stopSession(): Promise<void>;
 	cancelAutoRepeat(): Promise<void>;
 	acknowledgeComplete(
@@ -80,6 +82,12 @@ export interface Runtime {
 	onAutoRepeatTick(
 		handler: (payload: AutoRepeatTickPayload) => void,
 	): Promise<UnlistenFn>;
+	/**
+	 * A running session was abandoned while the tab was hidden and had to be
+	 * interrupted. Optional: only the browser runtime has a hidden-tab case worth
+	 * reporting, so a runtime that does not implement it simply never calls it.
+	 */
+	onSessionInterrupted?(handler: () => void): Promise<UnlistenFn>;
 	onAppSettingsChanged(
 		handler: (payload: AppSettings) => void,
 	): Promise<UnlistenFn>;
@@ -205,6 +213,14 @@ export const runtime = {
 	get onAutoRepeatWaiting() {
 		return (handler: (payload: AutoRepeatWaitingPayload) => void) =>
 			getRuntime().onAutoRepeatWaiting(handler);
+	},
+	get onSessionInterrupted() {
+		return (handler: () => void) => {
+			const runtime = getRuntime();
+			return runtime.onSessionInterrupted
+				? runtime.onSessionInterrupted(handler)
+				: Promise.resolve(() => {});
+		};
 	},
 	get onAutoRepeatTick() {
 		return (handler: (payload: AutoRepeatTickPayload) => void) =>

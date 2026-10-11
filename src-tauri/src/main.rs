@@ -338,6 +338,75 @@ mod native_app {
             assert!(parse_answer_text("12abc34").is_err());
             assert!(parse_answer_text("   ").is_err());
         }
+
+        /**
+         * The remaining parity corpus. Both parsers were verified to agree on
+         * every one of these, but the agreement is incidental — nothing pinned
+         * it, so either side drifting would silently grade differently.
+         */
+        #[test]
+        fn parse_answer_text_agrees_with_the_browser_on_the_rest() {
+            // Accepted by both, with the values both produce.
+            for (input, expected) in [
+                ("+0", 0),
+                ("-0", 0),
+                ("+1,000", 1000),
+                (",42", 42),
+                ("42,", 42),
+                ("12,3,4", 1234),
+                ("1,,2", 12),
+                // Tabs are whitespace on both sides, not separators.
+                ("\t42\t", 42),
+            ] {
+                assert_eq!(
+                    parse_answer_text(input).unwrap_or(i64::MIN),
+                    expected,
+                    "{input:?} should parse to {expected}"
+                );
+            }
+
+            // Rejected by both, for the same reason: an internal separator is
+            // not a valid integer on either side.
+            for bad in [
+                "+ +1",
+                "+",
+                "-",
+                "   ",
+                "٤٢",
+                "１２３",
+                "１２３４５６７８９０",
+            ] {
+                assert!(
+                    parse_answer_text(bad).is_err(),
+                    "{bad:?} should be rejected"
+                );
+            }
+        }
+
+        /// The 64-char cap counts BYTES, while the browser counts UTF-16 code
+        /// units. No input the browser accepts can expose the difference (its
+        /// regex admits ASCII only), so pin the Rust side so any change to this
+        /// is a reviewed decision rather than an accident.
+        #[test]
+        fn parse_answer_text_cap_counts_bytes() {
+            // 21 full-width characters = 63 bytes: passes the cap, fails to parse.
+            assert!(parse_answer_text(&"１".repeat(21)).is_err());
+            // 22 = 66 bytes: rejected by the cap itself.
+            assert!(parse_answer_text(&"１".repeat(22)).is_err());
+        }
+
+        /// `String::trim` and JS `trim()` disagree on exactly one character:
+        /// `U+FEFF` is in JS's `WhiteSpace` set but is `Cf` (format) in Unicode, so
+        /// Rust keeps it and the parse fails. Every other whitespace character
+        /// tested agrees. A pasted answer carrying a BOM therefore grades on
+        /// the web and errors on the desktop.
+        #[test]
+        fn parse_answer_text_bom_diverges_from_the_browser() {
+            assert_eq!(parse_answer_text("42").unwrap(), 42);
+            // Lock the current desktop behaviour; fixing Rust to strip it would
+            // make both agree and this assertion would be updated alongside.
+            assert!(parse_answer_text("\u{feff}42").is_err());
+        }
     }
 
     fn schedule_auto_repeat_if_needed(

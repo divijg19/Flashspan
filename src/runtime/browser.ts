@@ -8,6 +8,12 @@
 import applauseUrl from "../assets/applause.wav?url";
 import beepUrl from "../assets/beep.wav?url";
 import buzzerUrl from "../assets/buzzer.wav?url";
+import {
+	COUNTDOWN_TICK_MS,
+	COUNTDOWN_TICKS,
+	INTER_NUMBER_GAP_MS,
+	PRE_FLASH_SETTLE_MS,
+} from "../timing";
 import { getWasmCoreBridge, type WasmSessionStep } from "../wasm/coreBridge";
 import type { Runtime, UnlistenFn } from "./index";
 import type {
@@ -44,12 +50,17 @@ interface BrowserSession {
 	sessionId: number;
 	config: SessionConfigEffective;
 	autoRepeat: AutoRepeatEffective | null;
-	plannedSum: number | null;
-	numbers: number[];
-	sum: number;
-	runningSum: number;
-	lastPayload: string | null;
+	/**
+	 * The full intended plan. Always present after session start: it comes from
+	 * the Rust plan on the WASM path, and from eagerly generated values on the
+	 * JS fallback path, so grading and the answer reveal never depend on the
+	 * partial subset that a throttled tab happened to show.
+	 */
+	plannedSum: number;
+	plannedNumbers: number[];
 	completed: boolean;
+	/** The auto-repeat countdown has already been armed for this session. */
+	autoRepeatArmed: boolean;
 	/** At most one pending driver timeout (the driver is a single chain). */
 	timerId: number | null;
 }
@@ -60,15 +71,6 @@ const DEFAULT_SETTINGS: AppSettings = {
 	color_scheme: "midnight",
 	theme_mode: "dark",
 };
-const COUNTDOWN_TICKS = [3, 2, 1] as const;
-// Flash-timing budget mirror. The authoritative schedule lives in
-// src-tauri/src/core/timing.rs; these values must match it exactly.
-// Changing either side requires updating the schedule tests on both sides
-// (engine.rs timing tests, src/__tests__/flashTiming.test.ts).
-// Pre-flash pause only; it must not extend the first number's exposure.
-const PRE_FLASH_SETTLE_MS = 100;
-// Fixed blank gap between numbers. Not user-configurable.
-const INTER_NUMBER_GAP_MS = 100;
 
 const listeners = {
 	countdownTick: new Set<Listener<string>>(),
@@ -81,6 +83,14 @@ const listeners = {
 };
 
 let nextSessionId = 1;
+/**
+ * Bumped whenever a session is stopped or superseded. `startSessionImpl`
+ * captures it before its await and re-checks after, so a stop that lands during
+ * the plan build cannot start a session the user already dismissed. Without it
+ * the teardown cleared the *outgoing* session only, and the *incoming* one
+ * armed anyway.
+ */
+let sessionEpoch = 0;
 let currentSession: BrowserSession | null = null;
 let pendingAutoRepeat: PendingAutoRepeat | null = null;
 let sessionStarting = false;
@@ -88,6 +98,12 @@ let appSettings = loadAppSettings();
 let soundEnabled = loadSoundEnabled();
 let hasLoggedWasmPlannerReady = false;
 let hasLoggedWasmPlannerFallback = false;
+/**
+ * What audio has actually done so far: nothing yet, a clip played, or a
+ * playback attempt failed. `getAudioStatus` reports this instead of a static
+ * capability guess, so it can never claim "ready" for a dead device.
+ */
+let audioState: "not-started" | "ready" | "failed" = "not-started";
 
 const audio = {
 	beep: new Audio(beepUrl),
@@ -116,20 +132,16 @@ function round1(value: number): number {
 	return Math.round(value * 10) / 10;
 }
 
+/**
+ * Wall-clock time, used only for the payload fields the UI compares against
+ * `Date.now()` (`emitted_at_ms`, `next_start_at_ms`).
+ *
+ * The driver deliberately does not schedule against this clock: it chains
+ * `setTimeout` delays of fixed interval, so a clock step cannot retroactively
+ * invalidate pending work.
+ */
 function nowMs(): number {
 	return Date.now();
-}
-
-/**
- * Monotonic clock for scheduling only.
- *
- * `Date.now()` is wall-clock time, so an NTP step or a manual clock change
- * would retroactively invalidate every pending delay (a forward jump fires the
- * whole session at once). It stays in use for the `emitted_at_ms` /
- * `next_start_at_ms` payload fields, which the UI compares against `Date.now()`.
- */
-function schedulerNowMs(): number {
-	return performance.now();
 }
 
 function toMs(seconds: number): number {
@@ -268,11 +280,16 @@ function normalizeAutoRepeat(
 	}
 
 	// Mirrors the native start_session clamps: at least 1 repeat and a
-	// 5s minimum gap so API callers get identical behavior on both runtimes.
+	// 5s..120s gap, so API callers get identical behavior on both runtimes.
+	//
+	// `delay_s` is deliberately NOT rounded here. Native clamps then rounds to
+	// the nearest millisecond (`(secs * 1000).round()`), so rounding to one
+	// decimal first would turn a typed `12.34` into 12,300 ms on the web and
+	// 12,340 ms on the desktop.
 	return {
 		enabled: true,
 		repeats: clamp(safeInt(autoRepeat.repeats), 1, 20),
-		delay_s: round1(clamp(autoRepeat.delay_s, 5, 120)),
+		delay_s: clamp(autoRepeat.delay_s, 5, 120),
 	};
 }
 
@@ -284,9 +301,12 @@ function clearSessionTimers(session: BrowserSession): void {
 }
 
 /**
- * Schedule the next driver step. The chained driver keeps at most one pending
- * timeout, so a single handle replaces the list this used to re-filter on every
- * one of up to 20,000 events.
+ * Schedule the next driver step, the fixed interval after the previous one.
+ *
+ * One pending handle at a time keeps teardown O(1): stopping a 20,000-event
+ * session clears a single timer. The callback also re-checks that this session
+ * is still the current one, so a timer armed by a superseded session cannot
+ * flash a stale number.
  */
 function queueTimer(
 	session: BrowserSession,
@@ -333,14 +353,39 @@ function playAudio(kind: "beep" | "applause" | "buzzer"): void {
 
 	try {
 		clip.currentTime = 0;
-		// Rapid restarts can reject with AbortError; normalize to a promise
-		// so rejections are always observed and swallowed here.
-		void Promise.resolve(clip.play()).catch(() => {
-			// Best-effort only.
-		});
-	} catch {
-		// Best-effort only (e.g. playback unsupported in this environment).
+		// Rapid restarts reject with AbortError, which the runtime itself causes
+		// by rewinding for the next beep. Treating that as a device failure would
+		// latch "Sound unavailable" for the rest of the page on a single clip, so
+		// a rewind-cancelled play must not downgrade a device that has already
+		// successfully played.
+		void Promise.resolve(clip.play())
+			.then(() => {
+				audioState = "ready";
+			})
+			.catch((error: unknown) => {
+				recordAudioFailure(error);
+			});
+	} catch (error) {
+		recordAudioFailure(error);
 	}
+}
+
+/** Records a playback failure unless a working device was already proven. */
+function recordAudioFailure(error: unknown): void {
+	if (audioState === "ready") {
+		return;
+	}
+	// NotAllowedError is the autoplay policy asking for a gesture, not a missing
+	// device: it resolves on the next user-initiated play, so it must not count
+	// as a permanent failure either.
+	const name =
+		error != null && typeof (error as { name?: unknown }).name === "string"
+			? (error as { name: string }).name
+			: "";
+	if (name === "AbortError" || name === "NotAllowedError") {
+		return;
+	}
+	audioState = "failed";
 }
 
 /** Silence all clips; used when a session stops or (re)starts. */
@@ -372,6 +417,7 @@ function warmupAudio(): void {
 			clip.muted = true;
 			void Promise.resolve(clip.play())
 				.then(() => {
+					audioState = "ready";
 					try {
 						clip.pause();
 						clip.currentTime = 0;
@@ -380,13 +426,17 @@ function warmupAudio(): void {
 					}
 				})
 				.catch(() => {
-					// Best-effort only.
+					if (audioState !== "ready") {
+						audioState = "failed";
+					}
 				})
 				.finally(() => {
 					clip.muted = wasMuted;
 				});
 		} catch {
-			// Best-effort only.
+			if (audioState !== "ready") {
+				audioState = "failed";
+			}
 		}
 	}
 }
@@ -545,15 +595,19 @@ async function resolvePlannedSessionData(
 	};
 }
 
-/** Driver event with a planned show value (null = generate locally). */
+/**
+ * Driver event. A show always carries its value and running sum: the WASM plan
+ * supplies them and the local planner generates the whole sequence up front, so
+ * there is no fire-time generation left and no null case to handle.
+ */
 export type PlannedDriverEvent =
 	| { at: number; kind: "countdown"; value: string }
 	| {
 			at: number;
 			kind: "show";
 			index: number;
-			value: number | null;
-			runningSum: number | null;
+			value: number;
+			runningSum: number;
 	  }
 	| { at: number; kind: "clear"; index: number }
 	| { at: number; kind: "finish" };
@@ -582,6 +636,30 @@ function asFiniteNumber(value: unknown): number | null {
 		return null;
 	}
 	return value;
+}
+
+/**
+ * Append an event, refusing a timestamp that would collide with the previous
+ * one.
+ *
+ * The driver chains fixed intervals, so two events sharing an `at` would fire in
+ * the same turn of the event loop and a flashed number would never be seen.
+ * Rust's schedule guarantees a minimum spacing (invariant I2 in `core/timing.rs`),
+ * but nothing in TypeScript enforced it, and a zero-delay step from a foreign or
+ * corrupt module would otherwise slip through. Rejecting the plan here falls
+ * back to the local planner, which cannot produce a collision.
+ */
+function pushEvent(
+	events: PlannedDriverEvent[],
+	at: number,
+	event: PlannedDriverEvent,
+): boolean {
+	const last = events[events.length - 1];
+	if (last !== undefined && at <= last.at) {
+		return false;
+	}
+	events.push(event);
+	return true;
 }
 
 /**
@@ -636,7 +714,11 @@ export function planStepsToEvents(
 			if (typeof body.value !== "string") {
 				return null;
 			}
-			events.push({ at, kind: "countdown", value: body.value });
+			if (
+				!pushEvent(events, at, { at, kind: "countdown", value: body.value })
+			) {
+				return null;
+			}
 		} else if (tag === "ShowNumber") {
 			const index = asNonNegativeInt(body.index);
 			const value = asFiniteNumber(body.value);
@@ -644,7 +726,20 @@ export function planStepsToEvents(
 			if (index == null || index < 1 || value == null || runningSum == null) {
 				return null;
 			}
-			events.push({ at, kind: "show", index, value, runningSum });
+			// Rust reports 1-based indices; the driver event carries the plan's
+			// position, which the emitter adds one back to. Keeping the event
+			// 0-based is what makes the WASM and JS-planner paths agree.
+			if (
+				!pushEvent(events, at, {
+					at,
+					kind: "show",
+					index: index - 1,
+					value,
+					runningSum,
+				})
+			) {
+				return null;
+			}
 			shows += 1;
 		} else if (tag === "ClearScreen") {
 			if (body.index == null) {
@@ -655,7 +750,9 @@ export function planStepsToEvents(
 			if (index == null || index < 1) {
 				return null;
 			}
-			events.push({ at, kind: "clear", index });
+			if (!pushEvent(events, at, { at, kind: "clear", index: index - 1 })) {
+				return null;
+			}
 		}
 
 		at += delay ?? 0;
@@ -664,7 +761,9 @@ export function planStepsToEvents(
 	if (shows === 0) {
 		return null;
 	}
-	events.push({ at, kind: "finish" });
+	if (!pushEvent(events, at, { at, kind: "finish" })) {
+		return null;
+	}
 	return events;
 }
 
@@ -782,11 +881,49 @@ function finishSession(session: BrowserSession): void {
 	session.completed = true;
 	clearSessionTimers(session);
 	emitClearScreen(session.sessionId, null);
+	// The reveal reflects the session's plan, matching native: the full
+	// sequence and its total, not a subset of what was actually painted.
 	emit(listeners.sessionComplete, {
 		session_id: session.sessionId,
-		numbers: session.numbers.slice(),
-		sum: session.plannedSum ?? session.sum,
+		numbers: session.plannedNumbers.slice(),
+		sum: session.plannedSum,
 	});
+}
+
+/**
+ * The session's numbers and total, decided once, up front.
+ *
+ * The Rust plan already carries them, so a validated plan is used verbatim.
+ * When there is no usable Rust plan the values are generated eagerly here rather
+ * than lazily at fire time: the driver's fixed-interval chaining means nothing
+ * is ever dropped, so the full sequence is always shown, and grading plus the
+ * answer reveal must both be able to see it. Generating lazily could only ever
+ * know a partial sum.
+ */
+function buildDriverPlan(
+	plannedSession: { numbers: number[]; sum: number } | null,
+	config: SessionConfigEffective,
+): { numbers: number[]; sum: number } {
+	if (plannedSession) {
+		return { numbers: plannedSession.numbers, sum: plannedSession.sum };
+	}
+
+	const numbers: number[] = [];
+	let running = 0;
+	let lastPayload: string | null = null;
+	for (let index = 0; index < config.total_numbers; index += 1) {
+		const generated = generateNumber(
+			config.digits_per_number,
+			config.allow_negative_numbers,
+			index,
+			running,
+			lastPayload,
+		);
+		lastPayload = generated.payload;
+		running += generated.value;
+		numbers.push(generated.value);
+	}
+	return { numbers, sum: running };
 }
 
 async function startSessionImpl(
@@ -798,7 +935,7 @@ async function startSessionImpl(
 	// the chain forever. Native never re-normalizes: it reuses the stored
 	// `AutoRepeatPlan` with its decremented `remaining`.
 	alreadyNormalized = false,
-): Promise<StartSessionResponse> {
+): Promise<StartSessionResponse | null> {
 	if (sessionStarting) {
 		throw new Error("A session is already starting");
 	}
@@ -826,26 +963,48 @@ async function startSessionImpl(
 			pendingAutoRepeat = null;
 		}
 
+		const epochAtStart = sessionEpoch;
 		const plannedSession = await resolvePlannedSessionData(
 			nextSessionId,
 			config,
 		);
+		if (epochAtStart !== sessionEpoch) {
+			// Stopped (or superseded) while the plan was building. Baling out here
+			// is what keeps Escape during the "starting" phase from landing a full
+			// session anyway.
+			return null;
+		}
 		const effectiveConfig =
 			plannedSession?.config ?? normalizeSessionConfig(config);
+
+		// Defence against a plan that disagrees with the config it was built from.
+		// Rust always produces exactly `total_numbers` values, so this is only
+		// reachable through a lying or corrupt bridge — but it must fail the
+		// session rather than flash a different count than the payload says.
+		if (
+			plannedSession != null &&
+			plannedSession.numbers.length !== effectiveConfig.total_numbers
+		) {
+			throw new Error("planned session disagrees with its config");
+		}
 
 		const sessionId = nextSessionId;
 		nextSessionId += 1;
 
+		// Decided once, here, so grading and the reveal read a value that cannot
+		// depend on how much of the session actually painted.
+		const { numbers: plannedNumbers, sum: plannedSum } = buildDriverPlan(
+			plannedSession,
+			effectiveConfig,
+		);
 		const session: BrowserSession = {
 			sessionId,
 			config: effectiveConfig,
 			autoRepeat: effectiveAutoRepeat,
-			plannedSum: plannedSession?.sum ?? null,
-			numbers: [],
-			sum: 0,
-			runningSum: 0,
-			lastPayload: null,
+			plannedSum,
+			plannedNumbers,
 			completed: false,
+			autoRepeatArmed: false,
 			timerId: null,
 		};
 
@@ -858,78 +1017,84 @@ async function startSessionImpl(
 
 		// Single-source execution when the WASM planner yields valid steps:
 		// times, values, and running sums come straight from the Rust plan.
-		// Otherwise the local JS planner builds the same schedule shape
-		// (times are pure arithmetic, values generate lazily at fire time),
-		// so startup stays instant for large totals either way.
+		// Otherwise the local JS planner builds the same schedule shape, but it
+		// still produces a full intended plan — values are generated eagerly here
+		// rather than at fire time, so grading and the answer reveal always have
+		// the complete sum even if the tab is throttled mid-session.
 		const numberDurationMs = toMs(effectiveConfig.number_duration_s);
 		let events: PlannedDriverEvent[] | null = plannedSession?.steps
 			? planStepsToEvents(plannedSession.steps)
 			: null;
 		if (events == null) {
+			const planned = buildDriverPlan(plannedSession, effectiveConfig);
+
 			const local: PlannedDriverEvent[] = [];
+			// `pushEvent` refuses colliding timestamps, so a plan that would fire
+			// two stimuli in one turn of the event loop fails the whole session
+			// rather than silently showing an unseeable number.
+			const push = (event: PlannedDriverEvent): void => {
+				if (!pushEvent(local, event.at, event)) {
+					clearSessionTimers(session);
+					currentSession = null;
+					throw new Error("session plan would overlap two events");
+				}
+			};
+
 			let at = 0;
 			for (const value of COUNTDOWN_TICKS) {
-				local.push({ at, kind: "countdown", value: String(value) });
-				at += 1000;
+				push({ at, kind: "countdown", value: String(value) });
+				at += COUNTDOWN_TICK_MS;
 			}
 			at += PRE_FLASH_SETTLE_MS;
-			for (let index = 0; index < effectiveConfig.total_numbers; index += 1) {
-				local.push({ at, kind: "show", index, value: null, runningSum: null });
+
+			let running = 0;
+			for (let index = 0; index < planned.numbers.length; index += 1) {
+				const value = planned.numbers[index];
+				running += value;
+				push({ at, kind: "show", index, value, runningSum: running });
 				at += numberDurationMs;
-				local.push({ at, kind: "clear", index });
+				push({ at, kind: "clear", index });
 				at += INTER_NUMBER_GAP_MS;
 			}
-			local.push({ at, kind: "finish" });
+			push({ at, kind: "finish" });
 			events = local;
 		}
 
 		// Chained single-timer driver: at most one pending timeout, so timer
-		// bookkeeping stays O(1) and stopping clears a single handle. Each
-		// delay is recomputed against the wall clock, preserving the
-		// absolute golden timeline (late events fire ASAP via clamping).
-		const startedAtMs = schedulerNowMs();
+		// bookkeeping stays O(1) and stopping clears a single handle.
+		//
+		// Each event is scheduled the fixed interval after the previous one,
+		// *not* against an absolute grid. Anchoring to absolute times makes the
+		// previous event's delivery lateness eat into this one's window: the
+		// countdown's paint tail and the countdown->flashing view transition
+		// delay the first show, which then shortened the first number's exposure
+		// by the same amount, so it visibly flashed for less than the rest.
+		// Fixed intervals make exposure exact by construction: a late callback
+		// can only delay when an event lands, never shorten how long the
+		// previous one stays on screen.
+		const previousAtMs = (pos: number): number =>
+			pos === 0 ? 0 : events[pos - 1].at;
 		const fireEvent = (pos: number): void => {
 			if (pos >= events.length) {
 				return;
 			}
 			const event = events[pos];
-			queueTimer(session, startedAtMs + event.at - schedulerNowMs(), () => {
+			queueTimer(session, event.at - previousAtMs(pos), () => {
 				switch (event.kind) {
 					case "countdown": {
 						emit(listeners.countdownTick, event.value);
 						break;
 					}
 					case "show": {
-						let payload: string;
-						let value: number;
-						let newRunningSum: number;
-						if (event.value != null && event.runningSum != null) {
-							// Planned step: values come straight from the Rust plan.
-							payload = String(event.value);
-							value = event.value;
-							newRunningSum = event.runningSum;
-						} else {
-							const generated = generateNumber(
-								effectiveConfig.digits_per_number,
-								effectiveConfig.allow_negative_numbers,
-								event.index,
-								session.runningSum,
-								session.lastPayload,
-							);
-							payload = generated.payload;
-							value = generated.value;
-							newRunningSum = Math.max(0, session.runningSum + value);
-						}
-						session.lastPayload = payload;
-						session.runningSum = newRunningSum;
-						session.numbers.push(value);
-						session.sum += value;
+						// Values come straight from the plan, whether that is the
+						// Rust plan or the local planner's eager sequence.
+						const value = event.value;
 						emit(listeners.showNumber, {
 							session_id: sessionId,
 							index: event.index + 1,
 							total: effectiveConfig.total_numbers,
 							value,
-							running_sum: newRunningSum,
+							running_sum: event.runningSum,
 							emitted_at_ms: nowMs(),
 						});
 						playAudio("beep");
@@ -944,18 +1109,13 @@ async function startSessionImpl(
 						break;
 					}
 				}
-				// Skip stimulus whose moment has already passed. A backgrounded
-				// tab has its timers throttled, so without this the whole backlog
-				// would fire back to back as an unreadable strobe (with a beep per
-				// number). Dropping the unseen numbers keeps the intended cadence
-				// and keeps the "shown total" honest: a flash trainer must not
-				// count numbers the user never saw.
-				let next = pos + 1;
-				const now = schedulerNowMs();
-				while (next < events.length && startedAtMs + events[next].at <= now) {
-					next += 1;
-				}
-				fireEvent(next);
+				// Always the next event, in order and in full. With fixed
+				// intervals a backlog cannot strobe: the next event is always at
+				// least one spacing after *this* delivery, so events that were
+				// merely late fire once each rather than back to back. A
+				// backgrounded tab therefore stretches the session rather than
+				// dropping stimulus the user never saw.
+				fireEvent(pos + 1);
 			});
 		};
 		fireEvent(0);
@@ -1038,7 +1198,10 @@ function validateAnswer(
 		throw new Error("No completed session available to validate");
 	}
 
-	const expected = currentSession.sum;
+	// Grade the intended plan's total, matching native. A late delivery delays
+	// the whole session rather than shortening it, so the target is always the
+	// complete plan.
+	const expected = currentSession.plannedSum;
 	const delta = provided - expected;
 	const correct = delta === 0;
 	const validation = {
@@ -1050,8 +1213,10 @@ function validateAnswer(
 
 	let message: string;
 	if (correct) {
+		playAudio("applause");
 		message = `Correct ✅\nExpected answer: ${expected}`;
 	} else {
+		playAudio("buzzer");
 		message = `Incorrect\nExpected answer: ${expected}\nDifference: ${delta > 0 ? "+" : ""}${delta}`;
 	}
 
@@ -1084,11 +1249,9 @@ export function __test_setCompletedSession(
 		},
 		autoRepeat: null,
 		plannedSum: sum,
-		numbers: numbers.slice(),
-		sum,
-		runningSum: sum,
-		lastPayload: null,
+		plannedNumbers: numbers.slice(),
 		completed: true,
+		autoRepeatArmed: false,
 		timerId: null,
 	};
 }
@@ -1096,9 +1259,69 @@ export function __test_setCompletedSession(
 // Export internal helpers for unit testing
 export { parseProvidedAnswerText, validateAnswer };
 
+/**
+ * A session abandoned while the tab is hidden must not run on forever.
+ *
+ * The driver chains fixed intervals, so a late delivery stretches the session
+ * rather than dropping stimulus. Chrome throttles a deeply-nested chained timer
+ * to one wake per minute once a page has been hidden past five minutes, which
+ * would leave a 10,000-number session crawling for hours with nothing to show
+ * for it. Interrupting the session at the boundary keeps that case finite and
+ * tells the user what happened, instead of a screen that appears stuck.
+ *
+ * The threshold is a product decision, not a correctness one: the schedule
+ * itself never needed it.
+ */
+const MAX_HIDDEN_SESSION_MS = 30_000;
+let hiddenAtMs: number | null = null;
+let hiddenAbortArmed = false;
+let interruptionListener: (() => void) | null = null;
+
+function armHiddenAbort(listener: () => void): void {
+	// Always take the newest handler, whether or not the DOM listener is already
+	// installed: the first caller registers it, later ones just swap who is
+	// notified.
+	interruptionListener = listener;
+	if (hiddenAbortArmed || typeof document === "undefined") {
+		return;
+	}
+	hiddenAbortArmed = true;
+	document.addEventListener("visibilitychange", () => {
+		if (document.visibilityState === "hidden") {
+			hiddenAtMs = Date.now();
+			return;
+		}
+		const hiddenSince = hiddenAtMs;
+		hiddenAtMs = null;
+		if (hiddenSince == null || !currentSession || currentSession.completed) {
+			return;
+		}
+		if (Date.now() - hiddenSince >= MAX_HIDDEN_SESSION_MS) {
+			clearSessionTimers(currentSession);
+			if (pendingAutoRepeat) {
+				pendingAutoRepeat.cancelled = true;
+				if (pendingAutoRepeat.tickId != null) {
+					window.clearTimeout(pendingAutoRepeat.tickId);
+				}
+				pendingAutoRepeat = null;
+			}
+			currentSession = null;
+			sessionEpoch += 1;
+			interruptionListener?.();
+		}
+	});
+}
+
 export const browserRuntime: Runtime = {
 	async ping(): Promise<string> {
 		return "pong (browser)";
+	},
+
+	async onSessionInterrupted(handler: () => void): Promise<UnlistenFn> {
+		armHiddenAbort(handler);
+		// Keep a stable unlisten for the lifetime of the page; the listener is
+		// registered once and reads the handler through the closure.
+		return () => {};
 	},
 
 	async getAppSettings(): Promise<AppSettings> {
@@ -1138,6 +1361,7 @@ export const browserRuntime: Runtime = {
 		}
 
 		currentSession = null;
+		sessionEpoch += 1;
 	},
 
 	async cancelAutoRepeat(): Promise<void> {
@@ -1155,6 +1379,17 @@ export const browserRuntime: Runtime = {
 	async acknowledgeComplete(
 		sessionId: number,
 	): Promise<AutoRepeatWaitingPayload | null> {
+		const session = currentSession;
+		if (!session || session.sessionId !== sessionId || !session.completed) {
+			return null;
+		}
+		// The auto-repeat countdown is armed once per completed session; a
+		// duplicate acknowledge reports null, matching native, instead of
+		// replaying the cached payload.
+		if (session.autoRepeatArmed) {
+			return null;
+		}
+		session.autoRepeatArmed = true;
 		return armAutoRepeatForSession(sessionId);
 	},
 
@@ -1189,10 +1424,18 @@ export const browserRuntime: Runtime = {
 		const supported =
 			typeof window.Audio === "function" &&
 			audio.beep.canPlayType("audio/wav") !== "";
+		const available = supported && audioState !== "failed";
+		const detail = !supported
+			? "wav-playback-unsupported"
+			: audioState === "ready"
+				? "ready"
+				: audioState === "failed"
+					? "playback-failed"
+					: "not-started";
 		return {
 			enabled: soundEnabled,
-			available: supported,
-			detail: supported ? "ready" : "wav-playback-unsupported",
+			available,
+			detail,
 		};
 	},
 
@@ -1204,11 +1447,18 @@ export const browserRuntime: Runtime = {
 		const clip = audio[kind];
 		try {
 			clip.currentTime = 0;
-			await Promise.resolve(clip.play()).catch(() => {
-				// Best-effort only.
-			});
-		} catch {
-			// Best-effort only.
+			// Same state machine as `playAudio`, so a UI-initiated probe and a
+			// flash beep cannot disagree about whether the device works.
+			await Promise.resolve(clip.play()).then(
+				() => {
+					audioState = "ready";
+				},
+				(error: unknown) => {
+					recordAudioFailure(error);
+				},
+			);
+		} catch (error) {
+			recordAudioFailure(error);
 		}
 	},
 

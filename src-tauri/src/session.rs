@@ -789,6 +789,89 @@ mod tests {
     }
 
     #[test]
+    fn stop_twice_is_idempotent_and_leaves_a_startable_manager() {
+        let manager = SessionManager::default();
+        manager.stop();
+        manager.stop();
+        assert!(matches!(
+            *recover_lock(&manager.state, "state"),
+            SessionState::Idle
+        ));
+
+        // A manager that has been stopped twice must still accept a session.
+        let (config, _eff) = normalize_session_config(&SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        });
+        let start = manager.start_with_emitter(TestEmitter::new(), config);
+        assert!(start.is_ok(), "start after a double stop should still work");
+        manager.stop();
+    }
+
+    /**
+     * The eviction branch never executes in any existing test. It is the only
+     * non-trivial logic in that block, and its own comment warns the obvious
+     * `VecDeque::truncate` would drop the entry just pushed — breaking
+     * `result_for` for the session the user has just finished.
+     */
+    #[test]
+    fn recent_results_evicts_the_oldest_not_the_newest() {
+        /// Blocks the test on each completion so the deque is seen settled.
+        struct BarrierEmitter {
+            done: std::sync::mpsc::Sender<u64>,
+        }
+
+        impl SessionEmitter for BarrierEmitter {
+            fn clear_screen(&self, _payload: ClearScreen) {}
+            fn countdown_tick(&self, _value: String) {}
+            fn show_number(&self, _payload: ShowNumber) {}
+            fn session_complete(&self, payload: SessionComplete) {
+                let _ = self.done.send(payload.session_id);
+            }
+        }
+
+        let manager = SessionManager::default();
+        let (config, _eff) = normalize_session_config(&SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.1,
+            total_numbers: 1,
+            allow_negative_numbers: false,
+        });
+
+        // One more than the deque holds, so the eviction loop runs.
+        let total = SessionManager::MAX_RECENT_RESULTS + 3;
+        let (tx, rx) = std::sync::mpsc::channel();
+        for _ in 0..total {
+            manager
+                .start_with_emitter(BarrierEmitter { done: tx.clone() }, config.clone())
+                .expect("start");
+            rx.recv_timeout(std::time::Duration::from_secs(10))
+                .expect("session should have completed");
+        }
+
+        let survivors: Vec<u64> = (1..=total as u64)
+            .filter(|id| manager.result_for(*id).is_ok())
+            .collect();
+
+        assert_eq!(
+            survivors.len(),
+            SessionManager::MAX_RECENT_RESULTS,
+            "the deque must hold exactly MAX_RECENT_RESULTS"
+        );
+        assert_eq!(
+            *survivors.first().expect("oldest survivor"),
+            total as u64 - SessionManager::MAX_RECENT_RESULTS as u64 + 1,
+            "the survivors should be the newest window, not the first entries"
+        );
+        assert_eq!(
+            *survivors.last().expect("newest"),
+            total as u64,
+            "the newest result must survive eviction"
+        );
+    }
+    #[test]
     fn configure_auto_repeat_resets_generation_multiple_times() {
         let manager = SessionManager::default();
         let (config, _eff) = normalize_session_config(&SessionConfigInput {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { browserRuntime } from "../runtime/browser";
+import type { StartSessionResponse } from "../runtime/types";
 
 /**
  * Auto-repeat must terminate after the requested number of repeats.
@@ -24,6 +25,20 @@ const BASE_CONFIG = {
 const SESSION_MS = 6000;
 
 describe("auto-repeat", () => {
+	/**
+	 * None of these cases exercise the superseded-stop path, so a null response
+	 * here would mean the runtime broke its own contract rather than declined.
+	 */
+	function startedOrFail(
+		response: Awaited<ReturnType<typeof browserRuntime.startSession>>,
+	): StartSessionResponse {
+		expect(response).not.toBeNull();
+		if (!response) {
+			throw new Error("startSession unexpectedly returned null");
+		}
+		return response;
+	}
+
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.setSystemTime(0);
@@ -43,11 +58,13 @@ describe("auto-repeat", () => {
 			completed.push(payload.session_id);
 		});
 
-		const started = await browserRuntime.startSession(BASE_CONFIG, {
-			enabled: true,
-			repeats: 1,
-			delay_s: 5,
-		});
+		const started = startedOrFail(
+			await browserRuntime.startSession(BASE_CONFIG, {
+				enabled: true,
+				repeats: 1,
+				delay_s: 5,
+			}),
+		);
 
 		await vi.advanceTimersByTimeAsync(SESSION_MS);
 		expect(completed).toEqual([started.session_id]);
@@ -79,11 +96,13 @@ describe("auto-repeat", () => {
 			completed.push(payload.session_id);
 		});
 
-		const started = await browserRuntime.startSession(BASE_CONFIG, {
-			enabled: true,
-			repeats: 2,
-			delay_s: 5,
-		});
+		const started = startedOrFail(
+			await browserRuntime.startSession(BASE_CONFIG, {
+				enabled: true,
+				repeats: 2,
+				delay_s: 5,
+			}),
+		);
 		await vi.advanceTimersByTimeAsync(SESSION_MS);
 
 		const first = await browserRuntime.acknowledgeComplete(started.session_id);
@@ -113,11 +132,13 @@ describe("auto-repeat", () => {
 			completed.push(payload.session_id);
 		});
 
-		const started = await browserRuntime.startSession(BASE_CONFIG, {
-			enabled: true,
-			repeats: 0,
-			delay_s: 5,
-		});
+		const started = startedOrFail(
+			await browserRuntime.startSession(BASE_CONFIG, {
+				enabled: true,
+				repeats: 0,
+				delay_s: 5,
+			}),
+		);
 		await vi.advanceTimersByTimeAsync(SESSION_MS);
 
 		const waiting = await browserRuntime.acknowledgeComplete(
