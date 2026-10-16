@@ -189,3 +189,302 @@ pub fn validate_config(config: &SessionConfig) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    // These pin the contract the whole app leans on: normalization output must
+    // always validate, the reported duration must be *exactly* the exposure the
+    // executor runs, and the digit-width bound must stay correct for widths the
+    // UI cannot reach (`max_total_for_digits` remains `pub` and is the floor
+    // `normalize` applies, so a wrong value silently truncates long sessions).
+    //
+    // They run on wasm too: the browser calls `normalize_session_config_wasm`
+    // on every session start, so a plain `#[test]` would be silently skipped on
+    // the one platform that depends on it.
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::{
+        MAX_DURATION_MS, MAX_EXACT_INTEGER, MAX_TOTAL_NUMBERS, effective_from, max_total_for_digits,
+        normalize_session_config, validate_config,
+    };
+    use crate::core::types::{SessionConfig, SessionConfigInput};
+
+    /// A session input; tests vary the one field under test.
+    fn input(digits: i64, duration_s: f64, total: i64, negatives: bool) -> SessionConfigInput {
+        SessionConfigInput {
+            digits_per_number: digits,
+            number_duration_s: duration_s,
+            total_numbers: total,
+            allow_negative_numbers: negatives,
+        }
+    }
+
+    /// The floor of the exact-integer budget for a width, without the `10_000` cap.
+    fn exact_budget(digits: u32) -> u128 {
+        let max_magnitude = if digits <= 1 {
+            9
+        } else {
+            10u128.pow(digits) - 1
+        };
+        u128::from(MAX_EXACT_INTEGER) / max_magnitude
+    }
+
+    /// The bound is `10_000` for every width whose worst case fits the budget, and
+    /// collapses toward 1 once the width's maximum magnitude alone exceeds it.
+    /// The first half of that range (12..=15) is inside the UI's reach; the rest
+    /// is not, which is exactly why it went untested.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn digit_width_bound_collapses_to_one_once_the_width_leaves_the_exact_budget() {
+        for digits in 16u32..=38 {
+            assert_eq!(
+                max_total_for_digits(digits),
+                1,
+                "a {digits}-digit magnitude is larger than the f64-exact budget, \
+                 so even one number can overflow it",
+            );
+        }
+    }
+
+    /// Past 38 digits `10^digits` no longer fits `u128` at all. The
+    /// `checked_pow` fallback maps that to `u128::MAX`, and the bound must still
+    /// come out as the floor of 1 rather than panicking or wrapping.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn digit_width_bound_collapses_to_one_when_the_power_leaves_u128() {
+        // 10^39 is the first power past `u128::MAX`, so this is the boundary
+        // between the two collapse paths.
+        assert!(10u128.checked_pow(38).is_some());
+        assert!(10u128.checked_pow(39).is_none());
+        for digits in [39u32, 40, 64, 100, u32::MAX] {
+            assert_eq!(max_total_for_digits(digits), 1, "width {digits}");
+        }
+    }
+
+    /// A wider number can never permit *more* of them: the bound is a
+    /// non-increasing function of the digit width. This is the property that
+    /// makes clamping to it monotone, so a session can never be truncated more
+    /// than a session one digit wider.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn digit_width_bound_is_monotonic_non_increasing() {
+        let mut previous = u32::MAX;
+        for digits in 1u32..=64 {
+            let bound = max_total_for_digits(digits);
+            assert!(
+                bound <= previous,
+                "bound rose from {previous} to {bound} at width {digits}",
+            );
+            previous = bound;
+        }
+    }
+
+    /// The bound is a *permission*, never an obligation: it is always at least
+    /// 1 (so every normalized config admits a session) and never exceeds the
+    /// global ceiling.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn digit_width_bound_stays_inside_the_global_ceiling() {
+        for digits in 1u32..=64 {
+            let bound = max_total_for_digits(digits);
+            assert!((1..=MAX_TOTAL_NUMBERS).contains(&bound), "width {digits} -> {bound}");
+        }
+    }
+
+    /// Where the width bound actually bites (12..=15) it must equal the floor of
+    /// the exact-integer budget, derived here from the constants rather than
+    /// copied from a literal table — so this cannot drift alongside a bug in
+    /// `max_total_for_digits` the way a hardcoded table would.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn digit_width_bound_equals_the_floor_of_the_exact_budget() {
+        for digits in 1u32..=15 {
+            let expected = exact_budget(digits).min(u128::from(MAX_TOTAL_NUMBERS));
+            let expected = u32::try_from(expected).expect("budget floor fits u32");
+            assert_eq!(max_total_for_digits(digits), expected, "width {digits}");
+        }
+    }
+
+    /// The reason `normalize` snaps to the grid before quantizing: every step of
+    /// the UI's duration control must yield `number_duration_ms` exactly equal
+    /// to `number_duration_s * 1000`. If they could disagree, the app would
+    /// report one exposure and flash another — the class of bug this project has
+    /// already shipped once.
+    #[allow(clippy::float_cmp)] // Exactness lock: the relation is bit-exact by construction.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn reported_seconds_are_exactly_the_executed_milliseconds_on_every_grid_step() {
+        for tenths in 1u32..=600 {
+            let duration_s = f64::from(tenths) / 10.0;
+            let (config, effective) = normalize_session_config(&input(2, duration_s, 5, false));
+
+            assert_eq!(
+                config.number_duration_ms,
+                u64::from(tenths) * 100,
+                "duration {duration_s}s must execute as {}ms",
+                u64::from(tenths) * 100,
+            );
+            assert_eq!(
+                effective.number_duration_s, duration_s,
+                "the reported seconds must round-trip for {duration_s}s",
+            );
+        }
+    }
+
+    /// Duration clamping and snapping at and around the edges. The half-way
+    /// values pin the rounding *direction*: `round_1_decimal` uses `f64::round`
+    /// (half away from zero), which is also JS `Math.round`, so the browser and
+    /// desktop snap `0.15` to the same `0.2`.
+    #[allow(clippy::float_cmp)] // Exactness lock on the snapped seconds.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn duration_snaps_to_the_nearest_tenth_and_clamps_at_the_edges() {
+        for (requested, expected_ms) in [
+            (0.0, 100),      // below the 0.1s floor -> shortest allowed step
+            (0.05, 100),     // still below the floor
+            (0.1, 100),      // exactly the floor
+            (0.15, 200),     // half-way: rounds away from zero
+            (0.25, 300),     // half-way again
+            (0.99, 1000),    // just under a whole second
+            (1.0, 1000),
+            (1.04, 1000),    // rounds down
+            (1.06, 1100),    // rounds up
+            (59.94, 59_900), // rounds down at the top
+            (60.0, 60_000),  // exactly the ceiling
+            (60.1, 60_000),  // above the ceiling -> clamped
+            (1_000.0, 60_000),
+        ] {
+            let (config, effective) = normalize_session_config(&input(1, requested, 5, false));
+            assert_eq!(
+                config.number_duration_ms, expected_ms,
+                "requested {requested}s should execute as {expected_ms}ms",
+            );
+            assert_eq!(
+                effective.number_duration_s,
+                f64::from(u32::try_from(expected_ms / 100).expect("tenths")) / 10.0,
+                "the reported seconds must be the snapped step for {requested}s",
+            );
+        }
+        // The ceiling above is the same value `validate_config` enforces.
+        assert_eq!(MAX_DURATION_MS, 60_000);
+    }
+
+    /// The worker validates the *normalized* config before it starts. If
+    /// normalization could ever produce something `validate_config` rejects, a
+    /// perfectly reasonable request would fail with an internal error. Sweep the
+    /// clamp boundaries so the two functions cannot disagree.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn normalize_always_produces_a_config_that_validates() {
+        for (digits, duration_s, total, negatives) in [
+            (1i64, 0.1, 1i64, false),
+            (15, 60.0, 100, true),
+            (0, 0.0, 0, false),
+            (99, f64::NAN, 99_999, true),
+            (12, 1.234, 100_000, false),
+            (-5, f64::INFINITY, -3, true),
+            (i64::MIN, f64::NEG_INFINITY, i64::MAX, false),
+        ] {
+            let (config, _effective) = normalize_session_config(&input(digits, duration_s, total, negatives));
+            assert!(
+                validate_config(&config).is_ok(),
+                "normalized {config:?} (from {digits}/{duration_s}/{total}/{negatives}) must validate",
+            );
+        }
+    }
+
+    /// The two total-related rejections name different things. A total past the
+    /// *width* bound is a session that would overflow the f64-exact budget; a
+    /// total past the *hard cap* is merely absurd. The messages must stay
+    /// distinct so a caller can tell them apart.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn validate_names_the_digit_width_bound_when_the_total_exceeds_it() {
+        // 12 digits caps the total at 9007, comfortably below the 10_000 hard
+        // cap, so the width bound is the one that fires.
+        let bound = max_total_for_digits(12);
+        assert!(bound < MAX_TOTAL_NUMBERS, "the test needs the width bound to bite");
+
+        let over = SessionConfig {
+            digits_per_number: 12,
+            number_duration_ms: 500,
+            total_numbers: bound + 1,
+            allow_negative_numbers: false,
+        };
+        assert_eq!(
+            validate_config(&over).expect_err("one past the width bound must be rejected"),
+            "total_numbers too large for the digit width",
+        );
+
+        // Exactly at the bound is accepted.
+        let at = SessionConfig {
+            total_numbers: bound,
+            ..over
+        };
+        assert!(validate_config(&at).is_ok(), "the bound itself is inclusive");
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn validate_names_the_hard_cap_when_only_it_is_exceeded() {
+        // A single digit admits the whole 10_000, so the hard cap is the only
+        // bound in play for one past it.
+        let config = SessionConfig {
+            digits_per_number: 1,
+            number_duration_ms: 500,
+            total_numbers: MAX_TOTAL_NUMBERS + 1,
+            allow_negative_numbers: false,
+        };
+        assert_eq!(
+            validate_config(&config).expect_err("past the hard cap"),
+            format!("total_numbers must be <= {MAX_TOTAL_NUMBERS}"),
+        );
+    }
+
+    /// `effective_from` is the single place the seconds view is derived, shared
+    /// by normalization and the session worker. It must copy the discrete
+    /// fields verbatim and only translate the duration.
+    #[allow(clippy::float_cmp)] // Exactness lock on the tenths conversion.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn effective_from_reports_the_configured_fields_verbatim() {
+        let config = SessionConfig {
+            digits_per_number: 4,
+            number_duration_ms: 2300,
+            total_numbers: 12,
+            allow_negative_numbers: true,
+        };
+        let effective = effective_from(&config);
+
+        assert_eq!(effective.digits_per_number, 4);
+        assert_eq!(effective.total_numbers, 12);
+        assert!(effective.allow_negative_numbers);
+        assert_eq!(effective.number_duration_s, 2.3);
+    }
+
+    /// Every duration the executor can actually hold (a whole number of
+    /// deciseconds, 0.1s..=60s) must survive the trip through the reported
+    /// seconds unchanged. This is the inverse direction of the grid-step test
+    /// above, and it is what lets the UI echo `number_duration_s` straight back.
+    #[allow(clippy::float_cmp)] // Exactness lock on the tenths conversion.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn every_executable_duration_round_trips_through_the_reported_seconds() {
+        for ms in (100u64..=60_000).step_by(100) {
+            let config = SessionConfig {
+                digits_per_number: 2,
+                number_duration_ms: ms,
+                total_numbers: 5,
+                allow_negative_numbers: false,
+            };
+            assert_eq!(
+                effective_from(&config).number_duration_s,
+                f64::from(u32::try_from(ms / 100).expect("tenths fit u32")) / 10.0,
+                "{ms}ms must report as {}.{}s",
+                ms / 1000,
+                (ms / 100) % 10,
+            );
+        }
+    }
+}

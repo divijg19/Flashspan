@@ -1,37 +1,31 @@
-import { render, screen } from "@solidjs/testing-library";
+import { screen } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
-import App from "../App";
-import { initializeRuntime } from "../runtime";
 import type { SubmitAnswerResponse } from "../runtime/types";
-import { createMockRuntime } from "./__mocks__/mockRuntime";
+import { mountApp } from "./helpers";
 
 describe("session race conditions", () => {
 	it("ignores validation result if session changed while awaiting", async () => {
-		const mock = createMockRuntime();
-		// override submitAnswerText to delay
+		// Override submitAnswerText to delay, so the test can resolve it by hand
+		// and control exactly when the validation lands.
 		let resolveFn: () => void = () => {};
-		mock.submitAnswerText = async (_sid, _text) => {
-			await new Promise<void>((r) => {
-				resolveFn = r;
-			});
-			const response: SubmitAnswerResponse = {
-				validation: {
-					expected_sum: 1,
-					provided_sum: 1,
-					correct: true,
-					delta: 0,
-				},
-				auto_repeat_waiting: null,
-				message: "",
+		const { mock } = await mountApp((runtime) => {
+			runtime.submitAnswerText = async (_sid, _text) => {
+				await new Promise<void>((r) => {
+					resolveFn = r;
+				});
+				const response: SubmitAnswerResponse = {
+					validation: {
+						expected_sum: 1,
+						provided_sum: 1,
+						correct: true,
+						delta: 0,
+					},
+					auto_repeat_waiting: null,
+					message: "",
+				};
+				return response;
 			};
-			return response;
-		};
-
-		initializeRuntime(mock);
-		render(() => <App />);
-
-		// allow mount effects to run and listeners to register, then skip splash
-		await new Promise((r) => setTimeout(r, 0));
+		});
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: " " }));
 
 		// Start session 1 and show number

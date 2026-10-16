@@ -363,6 +363,29 @@ fn prop_plan_numbers_respect_the_digit_width() {
     });
 }
 
+proptest! {
+    /// First-number non-negativity is a hard invariant, but the three existing
+    /// plan-level checks each use a single fixed seed. This sweeps the accepted
+    /// domain, so a regression in the `index > 0` guard fires at some seed rather
+    /// than only the ones already pinned.
+    #[test]
+    fn prop_plan_first_number_is_never_negative(
+        digits in 1u32..=15,
+        total in 1u32..=60,
+        seed in any::<u64>(),
+    ) {
+        let (config, effective) = normalize_session_config(&SessionConfigInput {
+            digits_per_number: i64::from(digits),
+            number_duration_s: 0.3,
+            total_numbers: i64::from(total),
+            allow_negative_numbers: true,
+        });
+        let plan = build_session_plan(9, &config, effective, Some(seed));
+        let first = plan.numbers_generated.first().copied().unwrap_or(0);
+        prop_assert!(first >= 0, "first number was {first} (digits={digits}, total={total})");
+    }
+}
+
 #[test]
 fn prop_plan_never_repeats_a_number_consecutively() {
     proptest!(|(digits in 1u32..16, total in 2i64..60, seed in any::<u64>())| {
@@ -397,5 +420,126 @@ fn prop_plan_running_sums_are_consistent() {
                 );
             }
         }
+    });
+}
+
+/// The `ShowNumber` steps are what the UI renders a row per index for (the
+/// negatives grid and the reveal list). Nothing else pins that the indices are
+/// 1-based, dense and in order, or that each step carries the plan's own value
+/// and running sum — a gap or a duplicate would leave a row blank or count a
+/// number twice, and no other assertion here would notice.
+#[test]
+fn prop_plan_show_number_steps_are_dense_and_carry_the_sequence() {
+    proptest!(|(digits in 1u32..=15, total in 1u32..=40, seed in any::<u64>())| {
+        let (config, plan) = plan_for(digits, i64::from(total), seed);
+
+        let shows: Vec<&SessionStep> = plan
+            .steps
+            .iter()
+            .filter(|step| matches!(step, SessionStep::ShowNumber { .. }))
+            .collect();
+        // Compare against the *normalized* total: a width whose bound is below
+        // the request (e.g. 15 digits caps at 9) clamps it before the plan runs.
+        prop_assert_eq!(
+            shows.len(),
+            usize::try_from(config.total_numbers).expect("total fits usize")
+        );
+
+        let mut running: i64 = 0;
+        for (i, step) in shows.iter().enumerate() {
+            let SessionStep::ShowNumber {
+                index,
+                total: step_total,
+                value,
+                running_sum,
+                ..
+            } = step
+            else {
+                prop_assert!(false, "the list was filtered to ShowNumber steps");
+                return Ok(());
+            };
+            prop_assert_eq!(
+                *index,
+                u32::try_from(i + 1).expect("index fits u32"),
+                "show steps must be indexed 1..=total in order"
+            );
+            prop_assert_eq!(*step_total, config.total_numbers);
+            prop_assert_eq!(*value, plan.numbers_generated[i]);
+            running += *value;
+            prop_assert_eq!(*running_sum, running);
+        }
+    });
+}
+
+/// This project has shipped a bug where the duration it reported was not the
+/// exposure it flashed. The plan is where that relation is realised, so pin it
+/// end to end: every `ShowNumber` window equals the configured exposure, and
+/// the snapshot handed to the UI describes that same window — for a duration
+/// swept across the whole accepted range, not one hardcoded value.
+#[allow(clippy::float_cmp)] // Exactness lock: reported seconds and executed ms are bit-exact.
+#[test]
+fn prop_plan_flash_window_is_exactly_the_reported_duration() {
+    proptest!(|(
+        digits in 1u32..=15,
+        total in 1u32..=40,
+        duration_s in 0.1_f64..=60.0,
+        seed in any::<u64>(),
+    )| {
+        let (config, effective) = normalize_session_config(&SessionConfigInput {
+            digits_per_number: i64::from(digits),
+            number_duration_s: duration_s,
+            total_numbers: i64::from(total),
+            allow_negative_numbers: true,
+        });
+        let plan = build_session_plan(1, &config, effective, Some(seed));
+
+        for step in &plan.steps {
+            if let SessionStep::ShowNumber {
+                delay_ms_before_next,
+                ..
+            } = step
+            {
+                prop_assert_eq!(
+                    *delay_ms_before_next,
+                    config.number_duration_ms,
+                    "a flash window must be exactly the configured exposure"
+                );
+            }
+        }
+        prop_assert_eq!(
+            plan.config_snapshot.number_duration_s,
+            f64::from(u32::try_from(config.number_duration_ms / 100).expect("tenths")) / 10.0,
+            "the snapshot's reported seconds must be the window that is executed"
+        );
+    });
+}
+
+/// The session worker validates the *normalized* config before it starts. This
+/// sweeps arbitrary IPC input — including `i64::MIN`/`MAX`, `NaN`, infinities
+/// and negatives — and asserts normalization never yields something
+/// `validate_config` would reject, so a reasonable request can never fail with
+/// an internal "invalid config".
+#[test]
+fn prop_normalize_then_validate_is_always_ok() {
+    proptest!(|(
+        digits in any::<i64>(),
+        total in any::<i64>(),
+        duration_s in any::<f64>(),
+        negatives in any::<bool>(),
+    )| {
+        let input = SessionConfigInput {
+            digits_per_number: digits,
+            number_duration_s: duration_s,
+            total_numbers: total,
+            allow_negative_numbers: negatives,
+        };
+        let (config, _effective) = normalize_session_config(&input);
+
+        prop_assert!(
+            validate_config(&config).is_ok(),
+            "normalized {:?} (from {:?}) must validate",
+            config,
+            input,
+        );
     });
 }

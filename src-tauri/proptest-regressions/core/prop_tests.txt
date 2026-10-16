@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 1e9ffba93c1b67d2602a56b76523ddd669306a01a1b968bd1afe6fd5c5d9e2a0 # shrinks to digits = 1, total = 1
+cc 50ccb0a47137fc707a104c0a3b2bcfc5c51ba75f875d1b6574efdf48ace8ddbb # shrinks to digits = 15, total = 10, seed = 0

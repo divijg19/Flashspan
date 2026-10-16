@@ -190,9 +190,17 @@ pub struct AudioStatus {
 /// Read-only audio health for the sound status indicator. Never initializes
 /// the device: an untouched worker reports available with detail
 /// "not-started" (assume usable until proven otherwise).
-pub fn status() -> AudioStatus {
-    let enabled = is_enabled();
-    let (available, detail) = match AUDIO_SENDER.get() {
+/// The status derivation, separated from the process-global sender so the
+/// "has anything tried to start audio yet" branch is testable.
+///
+/// `AUDIO_SENDER` is a `OnceLock`, and cargo runs tests in parallel: once any
+/// other test has initialised it the `None` branch is unreachable for the rest
+/// of the process, so the real state machine needs this seam to be covered.
+fn status_with_state(
+    sender: Option<&Result<Sender<AudioCommand>, String>>,
+    enabled: bool,
+) -> AudioStatus {
+    let (available, detail) = match sender {
         None => (true, "not-started".to_string()),
         Some(Ok(_)) => (true, "ready".to_string()),
         Some(Err(e)) => (false, e.clone()),
@@ -204,9 +212,83 @@ pub fn status() -> AudioStatus {
     }
 }
 
+pub fn status() -> AudioStatus {
+    status_with_state(AUDIO_SENDER.get(), is_enabled())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// All three branches of the status state machine, plus the enabled flag.
+    /// These run against the extracted derivation rather than the global, so the
+    /// "nothing has tried audio yet" branch is reachable despite cargo running
+    /// tests in parallel against a shared `AUDIO_SENDER`.
+    #[test]
+    fn status_reports_not_started_before_any_playback_attempt() {
+        let status = status_with_state(None, true);
+        assert!(status.enabled);
+        assert!(status.available, "not-started is not a failure");
+        assert_eq!(status.detail, "not-started");
+    }
+
+    #[test]
+    fn status_reports_ready_once_a_device_has_played() {
+        let sender = Ok(placeholder_sender());
+        let status = status_with_state(Some(&sender), true);
+        assert_eq!(status.detail, "ready");
+        assert!(status.available);
+    }
+
+    #[test]
+    fn status_reports_the_device_failure_when_open_failed() {
+        let sender = Err("no output device".to_string());
+        let status = status_with_state(Some(&sender), true);
+        assert!(!status.available, "a dead device is not 'available'");
+        assert_eq!(status.detail, "no output device");
+    }
+
+    /// Muting must not be mistaken for a device failure, and a device failure
+    /// must not be mistaken for a mute: the two flags are orthogonal.
+    #[test]
+    fn status_keeps_the_enabled_flag_and_the_device_independent() {
+        let none: Option<&Result<Sender<AudioCommand>, String>> = None;
+        let ready = Ok(placeholder_sender());
+        let dead = Err("no output device".to_string());
+
+        for (sender, expected_available, expected_detail) in [
+            (none, true, "not-started"),
+            (Some(&ready), true, "ready"),
+            (Some(&dead), false, "no output device"),
+        ] {
+            for enabled in [true, false] {
+                let status = status_with_state(sender, enabled);
+                assert_eq!(status.enabled, enabled);
+                assert_eq!(status.available, expected_available);
+                assert_eq!(status.detail, expected_detail);
+            }
+        }
+    }
+
+    /// Muting is a user-visible feature: the enabled gate must short-circuit
+    /// before anything reaches the device. A gate regression would play audio
+    /// during a session the user had muted.
+    #[test]
+    fn play_kind_short_circuits_while_disabled() {
+        let was_enabled = is_enabled();
+        set_enabled(false);
+        let result = play_kind("beep");
+        set_enabled(was_enabled);
+
+        assert!(result.is_ok(), "a disabled gate is a no-op, not a failure");
+    }
+
+    /// A sender ordinary enough that the branch under test never inspects it.
+    fn placeholder_sender() -> Sender<AudioCommand> {
+        use std::sync::mpsc;
+        mpsc::channel::<AudioCommand>().0
+    }
+
     use rodio::Decoder;
     use std::io::Cursor;
     use std::sync::Mutex;
@@ -383,5 +465,38 @@ mod tests {
         let cur = Cursor::new(data);
         let dec = Decoder::try_from(cur);
         assert!(dec.is_ok(), "buzzer.wav should decode as audio");
+    }
+
+    /// The sound indicator reads `enabled`/`available`/`detail` off
+    /// `get_audio_status`; a renamed field would leave the status line blank.
+    #[test]
+    fn audio_status_serializes_with_the_frontend_keys() {
+        let status = AudioStatus {
+            enabled: true,
+            available: false,
+            detail: "no output device".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_value(&status).expect("serialize status"),
+            serde_json::json!({
+                "enabled": true,
+                "available": false,
+                "detail": "no output device",
+            }),
+        );
+    }
+
+    /// The kind tokens are lower-case and exact; the UI sends these three, so a
+    /// case change or a typo must be rejected rather than silently mapped, and
+    /// the mapping must never touch the audio device.
+    #[test]
+    fn command_for_kind_rejects_everything_but_the_lower_case_tokens() {
+        for kind in ["", "Beep", "BEEP", "Applause", "buzzer ", "buzz", "noise"] {
+            assert_eq!(
+                command_for_kind(kind).unwrap_err(),
+                "unknown sound kind",
+                "kind {kind:?} must be rejected",
+            );
+        }
     }
 }

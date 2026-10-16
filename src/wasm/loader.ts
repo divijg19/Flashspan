@@ -38,6 +38,12 @@ export async function loadWasmCoreBridge(): Promise<boolean> {
 		>;
 
 		const init = asFunction<[string], Promise<unknown>>(wasmModule.default);
+		// Probed but not exposed. Nothing calls the bridge's normalizer — the app
+		// normalizes on the Rust side regardless of which planner runs — yet its
+		// presence is a cheap ABI check: a wasm artifact built from a stale or
+		// partial toolchain is missing exports, and requiring the full set here
+		// makes the bridge refuse to load rather than half-work. Keep it in the
+		// completeness gate below even though `WasmCoreBridge` does not declare it.
 		const normalizeSessionConfigWasm = asFunction<
 			[SessionConfigInput],
 			WasmNormalizedSessionConfig
@@ -65,9 +71,6 @@ export async function loadWasmCoreBridge(): Promise<boolean> {
 		wasmVersionFn = wasmVersion;
 
 		const bridge: WasmCoreBridge = {
-			async normalizeSessionConfig(input: SessionConfigInput) {
-				return normalizeSessionConfigWasm(input);
-			},
 			async buildSessionPlan(
 				sessionId: number,
 				input: SessionConfigInput,

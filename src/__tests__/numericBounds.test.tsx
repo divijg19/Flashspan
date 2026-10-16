@@ -1,9 +1,8 @@
-import { render, screen } from "@solidjs/testing-library";
+import { screen } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
-import App from "../App";
-import { initializeRuntime } from "../runtime";
-import { browserRuntime, maxTotalForDigits } from "../runtime/browser";
-import { createMockRuntime } from "./__mocks__/mockRuntime";
+import { browserRuntime } from "../runtime/browser";
+import { maxTotalForDigits } from "../runtime/localPlanner";
+import { mountApp, startedOrFail } from "./helpers";
 
 describe("maxTotalForDigits bound table", () => {
 	it("matches the exact-integer budget min(10000, floor((2^53-1)/(10^d-1)))", () => {
@@ -50,22 +49,18 @@ describe("browser session config bounds", () => {
 			allow_negative_numbers: false,
 		});
 
-		// No case here supersedes the start, so null would be a contract break.
-		if (!resp) throw new Error("startSession unexpectedly returned null");
+		const started = startedOrFail(resp);
 		try {
-			expect(resp.effective_config.digits_per_number).toBe(15);
-			expect(resp.effective_config.total_numbers).toBe(9);
-			expect("delay_between_numbers_s" in resp.effective_config).toBe(false);
+			expect(started.effective_config.digits_per_number).toBe(15);
+			expect(started.effective_config.total_numbers).toBe(9);
+			expect("delay_between_numbers_s" in started.effective_config).toBe(false);
 		} finally {
 			await browserRuntime.stopSession();
 		}
 	});
 
 	it("caps the digits inputs at 15 in the UI", async () => {
-		const mock = createMockRuntime();
-		initializeRuntime(mock);
-		const { container } = render(() => <App />);
-		await new Promise((r) => setTimeout(r, 0));
+		const { container } = await mountApp();
 
 		const digitsLabel = screen.getByText("Digits per number");
 		expect(digitsLabel).toBeTruthy();
@@ -93,11 +88,10 @@ describe("browser session config bounds", () => {
 			{ enabled: true, repeats: 0, delay_s: 0 },
 		);
 
-		// No case here supersedes the start, so null would be a contract break.
-		if (!resp) throw new Error("startSession unexpectedly returned null");
+		const started = startedOrFail(resp);
 		try {
-			expect(resp.effective_auto_repeat?.repeats).toBe(1);
-			expect(resp.effective_auto_repeat?.delay_s).toBe(5);
+			expect(started.effective_auto_repeat?.repeats).toBe(1);
+			expect(started.effective_auto_repeat?.delay_s).toBe(5);
 		} finally {
 			await browserRuntime.stopSession();
 		}
@@ -112,10 +106,9 @@ describe("browser session config bounds", () => {
 			allow_negative_numbers: false,
 		});
 
-		// No case here supersedes the start, so null would be a contract break.
-		if (!resp) throw new Error("startSession unexpectedly returned null");
+		const started = startedOrFail(resp);
 		try {
-			expect(resp.effective_config.total_numbers).toBe(500);
+			expect(started.effective_config.total_numbers).toBe(500);
 		} finally {
 			await browserRuntime.stopSession();
 		}

@@ -56,9 +56,6 @@ export interface WasmSessionPlan {
 }
 
 export interface WasmCoreBridge {
-	normalizeSessionConfig(
-		input: SessionConfigInput,
-	): Promise<WasmNormalizedSessionConfig>;
 	buildSessionPlan(
 		sessionId: number,
 		input: SessionConfigInput,

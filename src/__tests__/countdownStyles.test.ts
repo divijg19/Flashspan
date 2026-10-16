@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+	COUNTDOWN_FROM,
+	COUNTDOWN_TICK_MS,
+	COUNTDOWN_TICKS,
+	INTER_NUMBER_GAP_MS,
+	PRE_FLASH_SETTLE_MS,
+} from "../timing";
 
 /**
  * Every class the countdown surface uses must have a rule in the stylesheet.
@@ -121,5 +128,50 @@ describe("countdown stylesheet covers the countdown surface", () => {
 		expect(stylesheet).toContain("animation: ringDrain");
 		expect(stylesheet).toContain("@keyframes ringDrain");
 		expect(stylesheet).not.toMatch(/\.countdownProgress[AB]\b/);
+	});
+
+	/**
+	 * The ring's drain duration is declared in CSS as a custom property, so it
+	 * is invisible to every other test and to the TS module that mirrors the
+	 * timing budget. Nothing drove it in JS, which means a mismatch here shows up
+	 * only as a ring that empties a beat before or after the last count — the
+	 * clock reads 1 while the ring is already gone.
+	 *
+	 * The stylesheet comment claims this value is "pinned at 3 x 1000ms by the
+	 * cross-runtime timeline tests", but no TS test pinned it: the Rust suite
+	 * pins `COUNTDOWN_FROM`/`COUNTDOWN_TICK_MS`, and this asserts the CSS value
+	 * is derived from the same numbers rather than restating them by hand.
+	 */
+	it("derives the ring drain from the countdown constants", () => {
+		// The TS mirror of `core/timing.rs`. Rust pins these in
+		// `timing_budget_constants_pin_the_whole_budget`; pinning them here too
+		// means a one-sided edit fails on the side that moved rather than silently
+		// splitting the budget across runtimes.
+		expect(COUNTDOWN_FROM).toBe(3);
+		expect(COUNTDOWN_TICK_MS).toBe(1000);
+		expect(PRE_FLASH_SETTLE_MS).toBe(100);
+		expect(INTER_NUMBER_GAP_MS).toBe(100);
+
+		// The displayed sequence must be exactly one value per count, descending.
+		expect(COUNTDOWN_TICKS).toHaveLength(COUNTDOWN_FROM);
+		expect([...COUNTDOWN_TICKS]).toEqual(
+			Array.from({ length: COUNTDOWN_FROM }, (_, i) => COUNTDOWN_FROM - i),
+		);
+
+		// The stylesheet must express the total, not a literal that can drift.
+		const expectedTotalMs = COUNTDOWN_FROM * COUNTDOWN_TICK_MS;
+		const declared = /--countdown-total:\s*(\d+)ms/.exec(stylesheet);
+		expect(
+			declared,
+			"expected a --countdown-total declaration in ms",
+		).toBeTruthy();
+		expect(Number(declared?.[1])).toBe(expectedTotalMs);
+
+		// And the ring must actually consume the variable, so the pinned number
+		// cannot become decorative while the animation hardcodes its own length.
+		expect(stylesheet).toMatch(
+			/animation:\s*ringDrain\s+var\(--countdown-total\)/,
+		);
+		expect(stylesheet).not.toMatch(/animation:\s*ringDrain\s+\d/);
 	});
 });

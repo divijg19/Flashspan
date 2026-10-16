@@ -15,7 +15,14 @@ import {
 	PRE_FLASH_SETTLE_MS,
 } from "../timing";
 import { getWasmCoreBridge, type WasmSessionStep } from "../wasm/coreBridge";
+import { formatValidationMessage } from "./grading";
 import type { Runtime, UnlistenFn } from "./index";
+import {
+	generateLocalPlan,
+	normalizeAutoRepeat,
+	normalizeSessionConfig,
+	parseProvidedAnswerText,
+} from "./localPlanner";
 import type {
 	AppSettings,
 	AudioStatus,
@@ -25,16 +32,17 @@ import type {
 	AutoRepeatWaitingPayload,
 	ClearScreen,
 	ColorScheme,
+	Listener,
 	SessionComplete,
 	SessionConfigEffective,
 	SessionConfigInput,
 	ShowNumber,
+	SoundKind,
 	StartSessionResponse,
 	SubmitAnswerResponse,
 	ThemeMode,
 } from "./types";
-
-type Listener<T> = (payload: T) => void;
+import { COLOR_SCHEMES } from "./types";
 
 interface PendingAutoRepeat {
 	sessionId: number;
@@ -42,7 +50,6 @@ interface PendingAutoRepeat {
 	delayMs: number;
 	nextStartAtMs: number;
 	config: SessionConfigEffective;
-	cancelled: boolean;
 	tickId: number | null;
 }
 
@@ -120,18 +127,6 @@ Object.values(audio).forEach((clip) => {
 	clip.volume = 0.9;
 });
 
-function clamp(value: number, min: number, max: number): number {
-	if (Number.isNaN(value)) {
-		return min;
-	}
-
-	return Math.min(max, Math.max(min, value));
-}
-
-function round1(value: number): number {
-	return Math.round(value * 10) / 10;
-}
-
 /**
  * Wall-clock time, used only for the payload fields the UI compares against
  * `Date.now()` (`emitted_at_ms`, `next_start_at_ms`).
@@ -148,14 +143,6 @@ function toMs(seconds: number): number {
 	return Math.max(0, Math.round(seconds * 1000));
 }
 
-function safeInt(value: number): number {
-	if (!Number.isFinite(value)) {
-		return 0;
-	}
-
-	return Math.trunc(value);
-}
-
 function loadAppSettings(): AppSettings {
 	try {
 		const raw = window.localStorage.getItem(SETTINGS_KEY);
@@ -164,18 +151,19 @@ function loadAppSettings(): AppSettings {
 		}
 
 		const parsed = JSON.parse(raw) as Partial<AppSettings>;
-		const validColorScheme =
-			parsed.color_scheme === "midnight" ||
-			parsed.color_scheme === "ivory" ||
-			parsed.color_scheme === "crimson" ||
-			parsed.color_scheme === "aqua" ||
-			parsed.color_scheme === "violet" ||
-			parsed.color_scheme === "amber"
+
+		// Validated against the single list in `runtime/types.ts` rather than a
+		// second copy of the six schemes: a scheme added to the type but not here
+		// would be silently discarded, so a saved preference would reset to the
+		// default with no error and no way to tell from the UI.
+		const colorScheme: ColorScheme =
+			parsed.color_scheme != null &&
+			(COLOR_SCHEMES as readonly string[]).includes(parsed.color_scheme)
 				? parsed.color_scheme
 				: DEFAULT_SETTINGS.color_scheme;
 
 		return {
-			color_scheme: validColorScheme,
+			color_scheme: colorScheme,
 			theme_mode: parsed.theme_mode === "light" ? "light" : "dark",
 		};
 	} catch {
@@ -189,6 +177,20 @@ function persistAppSettings(): void {
 	} catch {
 		// Best-effort only.
 	}
+}
+
+/**
+ * Apply a settings patch, persist it, and notify listeners.
+ *
+ * `setColorScheme` and `setThemeMode` were the same function with a different
+ * key, down to the copy-and-emit tail, so any change to how settings are saved
+ * or announced had to be made twice.
+ */
+function applyAppSettings(patch: Partial<AppSettings>): AppSettings {
+	appSettings = { ...appSettings, ...patch };
+	persistAppSettings();
+	emit(listeners.appSettingsChanged, { ...appSettings });
+	return { ...appSettings };
 }
 
 function loadSoundEnabled(): boolean {
@@ -227,73 +229,46 @@ function addListener<T>(
 }
 
 /**
- * Largest integer exactly representable in an f64 (2^53 - 1). The browser
- * accumulates sums in f64, so the worst-case session sum must stay below
- * this for grading to be exact. Must mirror Rust `MAX_EXACT_INTEGER`.
- */
-const MAX_EXACT_INTEGER = 2 ** 53 - 1;
-const MAX_TOTAL_NUMBERS = 10000;
-
-/**
- * Maximum numbers for a digit width such that even the worst case (every
- * number at maximum magnitude) sums below MAX_EXACT_INTEGER. Must mirror
- * Rust `max_total_for_digits`.
- */
-export function maxTotalForDigits(digits: number): number {
-	const maxMagnitude = digits <= 1 ? 9 : 10 ** digits - 1;
-	return Math.max(
-		1,
-		Math.min(MAX_TOTAL_NUMBERS, Math.floor(MAX_EXACT_INTEGER / maxMagnitude)),
-	);
-}
-
-/**
- * Normalize a session config for the browser.
+ * Abandon any pending auto-repeat restart.
  *
- * Exported for the JS/WASM parity test, which asserts this agrees with the Rust
- * normalizer on an adversarial input table. The comment-based protocol between
- * the two is not sufficient on its own: the auto-repeat decrement and the
- * duplicate-value fallback both drifted without any test failing.
+ * Four call sites need this exact teardown — starting a new session, the
+ * hidden-tab abort, stopping, and the explicit cancel control — and each had
+ * its own copy of the block. They have to stay in step, which is the same
+ * "one algorithm, several copies, no test between them" shape as the planner
+ * sign divergence this file used to have.
+ *
+ * Clearing the handle *is* the cancellation. The block used to set a separate
+ * `cancelled` flag first, but it was written in the same breath as the nulling,
+ * so every reader's `pendingAutoRepeat?.cancelled` was already false by the
+ * time it could be observed — dead state that read as if a timer callback had
+ * some other way of surviving. Nulling makes every existing guard see the
+ * teardown, so the flag bought nothing.
+ *
+ * A no-op when nothing is pending, so callers do not need to guard.
  */
-export function normalizeSessionConfig(
-	input: SessionConfigInput,
-): SessionConfigEffective {
-	// Policy cap: 15 digits keeps every value exactly representable in f64.
-	const digits = clamp(safeInt(input.digits_per_number), 1, 15);
-	return {
-		digits_per_number: digits,
-		number_duration_s: round1(clamp(input.number_duration_s, 0.1, 60)),
-		// No inter-number gap field: the gap is fixed (INTER_NUMBER_GAP_MS).
-		total_numbers: Math.min(
-			clamp(safeInt(input.total_numbers), 1, 10000),
-			maxTotalForDigits(digits),
-		),
-		allow_negative_numbers: Boolean(input.allow_negative_numbers),
-	};
-}
-
-function normalizeAutoRepeat(
-	autoRepeat?: AutoRepeatConfig | null,
-): AutoRepeatEffective | null {
-	if (!autoRepeat?.enabled) {
-		return null;
+function cancelPendingAutoRepeat(): void {
+	if (!pendingAutoRepeat) {
+		return;
 	}
-
-	// Mirrors the native start_session clamps: at least 1 repeat and a
-	// 5s..120s gap, so API callers get identical behavior on both runtimes.
-	//
-	// `delay_s` is deliberately NOT rounded here. Native clamps then rounds to
-	// the nearest millisecond (`(secs * 1000).round()`), so rounding to one
-	// decimal first would turn a typed `12.34` into 12,300 ms on the web and
-	// 12,340 ms on the desktop.
-	return {
-		enabled: true,
-		repeats: clamp(safeInt(autoRepeat.repeats), 1, 20),
-		delay_s: clamp(autoRepeat.delay_s, 5, 120),
-	};
+	if (pendingAutoRepeat.tickId != null) {
+		window.clearTimeout(pendingAutoRepeat.tickId);
+	}
+	pendingAutoRepeat = null;
 }
 
-function clearSessionTimers(session: BrowserSession): void {
+/**
+ * The part of a session the driver needs to cancel its pending work.
+ *
+ * `clearSessionTimers` takes this rather than the whole `BrowserSession`, so the
+ * type says what the function touches. `BrowserSession` satisfies it
+ * structurally, so every caller is unaffected — and the test seam no longer has
+ * to cast a bare `{ timerId }` through `unknown` to reach it.
+ */
+interface TimerHandle {
+	timerId: number | null;
+}
+
+function clearSessionTimers(session: TimerHandle): void {
 	if (session.timerId != null) {
 		window.clearTimeout(session.timerId);
 		session.timerId = null;
@@ -344,9 +319,9 @@ function emitClearScreen(sessionId: number, index: number | null): void {
  * whatever it was playing, so rapid flash ticks stay in sync with the
  * visuals instead of queueing behind them.
  */
-function playAudio(kind: "beep" | "applause" | "buzzer"): void {
+function playAudio(kind: SoundKind): Promise<void> {
 	if (!soundEnabled) {
-		return;
+		return Promise.resolve();
 	}
 
 	const clip = audio[kind];
@@ -358,7 +333,11 @@ function playAudio(kind: "beep" | "applause" | "buzzer"): void {
 		// latch "Sound unavailable" for the rest of the page on a single clip, so
 		// a rewind-cancelled play must not downgrade a device that has already
 		// successfully played.
-		void Promise.resolve(clip.play())
+		//
+		// Resolves once playback settles rather than when it finishes; callers on
+		// the flash path ignore it, and `playSound` awaits it to match the native
+		// runtime, which also resolves once the backend has acknowledged.
+		return Promise.resolve(clip.play())
 			.then(() => {
 				audioState = "ready";
 			})
@@ -367,6 +346,7 @@ function playAudio(kind: "beep" | "applause" | "buzzer"): void {
 			});
 	} catch (error) {
 		recordAudioFailure(error);
+		return Promise.resolve();
 	}
 }
 
@@ -388,15 +368,28 @@ function recordAudioFailure(error: unknown): void {
 	audioState = "failed";
 }
 
+/**
+ * Stop a clip and rewind it to the start.
+ *
+ * Two callers need this exact teardown — silencing everything on session stop,
+ * and putting a clip back after the muted warm-up play-through — and both wrote
+ * it out. `pause()` throws in some engines when the clip has never started
+ * playing, so the error is swallowed rather than allowed to escape into a
+ * teardown path where there is nothing useful to do with it.
+ */
+function rewind(clip: HTMLAudioElement): void {
+	try {
+		clip.pause();
+		clip.currentTime = 0;
+	} catch {
+		// Best-effort only.
+	}
+}
+
 /** Silence all clips; used when a session stops or (re)starts. */
 function silenceAudio(): void {
 	for (const clip of Object.values(audio)) {
-		try {
-			clip.pause();
-			clip.currentTime = 0;
-		} catch {
-			// Best-effort only.
-		}
+		rewind(clip);
 	}
 }
 
@@ -418,12 +411,7 @@ function warmupAudio(): void {
 			void Promise.resolve(clip.play())
 				.then(() => {
 					audioState = "ready";
-					try {
-						clip.pause();
-						clip.currentTime = 0;
-					} catch {
-						// Best-effort only.
-					}
+					rewind(clip);
 				})
 				.catch(() => {
 					if (audioState !== "ready") {
@@ -439,97 +427,6 @@ function warmupAudio(): void {
 			}
 		}
 	}
-}
-
-function randomInt(maxExclusive: number): number {
-	if (maxExclusive <= 1) {
-		return 0;
-	}
-
-	return Math.floor(Math.random() * maxExclusive);
-}
-
-function randomMagnitude(digits: number): number {
-	if (digits <= 1) {
-		// No leading zero: 1..=9, mirroring the native generator.
-		return 1 + randomInt(9);
-	}
-
-	const min = 10 ** (digits - 1);
-	const span = 10 ** digits - min;
-	return min + randomInt(span);
-}
-
-export function generateNumber(
-	digits: number,
-	allowNegative: boolean,
-	index: number,
-	runningSum: number,
-	lastPayload: string | null,
-): { payload: string; value: number } {
-	let attempt = 0;
-
-	while (attempt < 256) {
-		const magnitude = randomMagnitude(digits);
-		const negativeAllowed = allowNegative && index > 0;
-		const signedValue =
-			negativeAllowed && randomInt(2) === 1 ? -magnitude : magnitude;
-
-		if (index === 0 && signedValue < 0) {
-			attempt += 1;
-			continue;
-		}
-
-		if (runningSum + signedValue < 0) {
-			attempt += 1;
-			continue;
-		}
-
-		const payload = String(signedValue);
-		if (payload === lastPayload) {
-			attempt += 1;
-			continue;
-		}
-
-		return { payload, value: signedValue };
-	}
-
-	return deterministicFallback(lastPayload, digits, runningSum, allowNegative);
-}
-
-export function deterministicFallback(
-	lastPayload: string | null,
-	digits: number,
-	runningSum: number,
-	allowNegative: boolean,
-): { payload: string; value: number } {
-	if (lastPayload == null) {
-		// No previous value to rotate from. Unreachable from the generator (the
-		// fallback only runs on a repeat), but keep it inside the digit width
-		// rather than hard-coding a one-digit value.
-		const min = digits <= 1 ? 1 : 10 ** (digits - 1);
-		return { payload: String(min), value: min };
-	}
-
-	const lastVal = Number(lastPayload);
-	if (lastVal < 0) {
-		const positive = Math.abs(lastVal);
-		return { payload: String(positive), value: positive };
-	}
-
-	// Rotate the magnitude one step inside its own digit-width domain, mirroring
-	// `next_distinct_value` in the Rust core. The previous form wrapped to
-	// `(max - 1) + 1 = 1`, which put a one-digit value in a three-digit session
-	// and silently dropped the configured digit width.
-	const min = digits <= 1 ? 1 : 10 ** (digits - 1);
-	const max = digits <= 1 ? 9 : 10 ** digits - 1;
-	const next = min + ((Math.abs(lastVal) - min + 1) % (max - min + 1));
-
-	// Never invent a negative when negatives are disabled (mirrors native).
-	if (allowNegative && runningSum - next >= 0) {
-		return { payload: String(-next), value: -next };
-	}
-	return { payload: String(next), value: next };
 }
 
 function buildBridgeSeed(): number {
@@ -600,7 +497,7 @@ async function resolvePlannedSessionData(
  * supplies them and the local planner generates the whole sequence up front, so
  * there is no fire-time generation left and no null case to handle.
  */
-export type PlannedDriverEvent =
+type PlannedDriverEvent =
 	| { at: number; kind: "countdown"; value: string }
 	| {
 			at: number;
@@ -619,6 +516,33 @@ const STEP_TAGS = [
 	"ClearScreen",
 	"Complete",
 ] as const;
+
+/**
+ * The tag union every `WasmSessionStep` member is keyed by, distributed over
+ * the union so it is the union of each member's key rather than the (empty)
+ * intersection `keyof` would give on a union of unrelated objects.
+ */
+type WasmSessionStepTag = WasmSessionStep extends infer Step
+	? Step extends object
+		? keyof Step
+		: never
+	: never;
+
+type _ExpectTrue<T extends true> = T;
+
+/**
+ * Compile-time proof that `STEP_TAGS` names every tag the wire union declares.
+ *
+ * The tags are spelled twice — once in the `WasmSessionStep` type, once in the
+ * list above — and a rename that updated only the type would leave
+ * `planStepsToEvents` unable to match that tag, silently degrading every
+ * browser session to the JS planner. `keyof` alone cannot catch it: a union of
+ * single-key objects has an empty key intersection, so this compares the
+ * distributed tag union instead. Type-only, so nothing is emitted.
+ */
+type _AllStepTagsListed = _ExpectTrue<
+	WasmSessionStepTag extends (typeof STEP_TAGS)[number] ? true : false
+>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -768,12 +692,12 @@ export function planStepsToEvents(
 }
 
 function scheduleAutoRepeatCountdown(): void {
-	if (!pendingAutoRepeat || pendingAutoRepeat.cancelled) {
+	if (!pendingAutoRepeat) {
 		return;
 	}
 
 	const tick = (): void => {
-		if (!pendingAutoRepeat || pendingAutoRepeat.cancelled) {
+		if (!pendingAutoRepeat) {
 			return;
 		}
 
@@ -811,6 +735,25 @@ function scheduleAutoRepeatCountdown(): void {
 	tick();
 }
 
+/**
+ * The payload for a pending restart, from the `pendingAutoRepeat` it belongs to.
+ *
+ * Built in two places inside `armAutoRepeatForSession` — the cached path that
+ * reports an already-armed countdown, and the fresh path that has just armed one
+ * — and the two literals had to agree field for field for the UI to treat them
+ * the same.
+ */
+function waitingPayload(
+	sessionId: number,
+	pending: NonNullable<typeof pendingAutoRepeat>,
+): AutoRepeatWaitingPayload {
+	return {
+		session_id: sessionId,
+		next_start_at_ms: pending.nextStartAtMs,
+		remaining: pending.remaining,
+	};
+}
+
 function armAutoRepeatForSession(
 	sessionId: number,
 ): AutoRepeatWaitingPayload | null {
@@ -828,15 +771,11 @@ function armAutoRepeatForSession(
 		return null;
 	}
 
-	if (
-		pendingAutoRepeat?.sessionId === sessionId &&
-		!pendingAutoRepeat.cancelled
-	) {
-		return {
-			session_id: sessionId,
-			next_start_at_ms: pendingAutoRepeat.nextStartAtMs,
-			remaining: pendingAutoRepeat.remaining,
-		};
+	// Already armed for this session: report the pending countdown rather than
+	// re-arming it. Optional chaining makes this false when nothing is pending,
+	// and anything non-null is by definition not cancelled.
+	if (pendingAutoRepeat?.sessionId === sessionId) {
+		return waitingPayload(sessionId, pendingAutoRepeat);
 	}
 
 	// `repeats` counts the sessions still to run. Decrementing to zero still means
@@ -858,15 +797,10 @@ function armAutoRepeatForSession(
 		delayMs: toMs(session.autoRepeat.delay_s),
 		nextStartAtMs: nowMs() + toMs(session.autoRepeat.delay_s),
 		config: session.config,
-		cancelled: false,
 		tickId: null,
 	};
 
-	const payload: AutoRepeatWaitingPayload = {
-		session_id: sessionId,
-		next_start_at_ms: pendingAutoRepeat.nextStartAtMs,
-		remaining: pendingAutoRepeat.remaining,
-	};
+	const payload = waitingPayload(sessionId, pendingAutoRepeat);
 
 	emit(listeners.autoRepeatWaiting, payload);
 	scheduleAutoRepeatCountdown();
@@ -888,42 +822,6 @@ function finishSession(session: BrowserSession): void {
 		numbers: session.plannedNumbers.slice(),
 		sum: session.plannedSum,
 	});
-}
-
-/**
- * The session's numbers and total, decided once, up front.
- *
- * The Rust plan already carries them, so a validated plan is used verbatim.
- * When there is no usable Rust plan the values are generated eagerly here rather
- * than lazily at fire time: the driver's fixed-interval chaining means nothing
- * is ever dropped, so the full sequence is always shown, and grading plus the
- * answer reveal must both be able to see it. Generating lazily could only ever
- * know a partial sum.
- */
-function buildDriverPlan(
-	plannedSession: { numbers: number[]; sum: number } | null,
-	config: SessionConfigEffective,
-): { numbers: number[]; sum: number } {
-	if (plannedSession) {
-		return { numbers: plannedSession.numbers, sum: plannedSession.sum };
-	}
-
-	const numbers: number[] = [];
-	let running = 0;
-	let lastPayload: string | null = null;
-	for (let index = 0; index < config.total_numbers; index += 1) {
-		const generated = generateNumber(
-			config.digits_per_number,
-			config.allow_negative_numbers,
-			index,
-			running,
-			lastPayload,
-		);
-		lastPayload = generated.payload;
-		running += generated.value;
-		numbers.push(generated.value);
-	}
-	return { numbers, sum: running };
 }
 
 async function startSessionImpl(
@@ -955,13 +853,7 @@ async function startSessionImpl(
 			currentSession = null;
 		}
 
-		if (pendingAutoRepeat) {
-			pendingAutoRepeat.cancelled = true;
-			if (pendingAutoRepeat.tickId != null) {
-				window.clearTimeout(pendingAutoRepeat.tickId);
-			}
-			pendingAutoRepeat = null;
-		}
+		cancelPendingAutoRepeat();
 
 		const epochAtStart = sessionEpoch;
 		const plannedSession = await resolvePlannedSessionData(
@@ -992,11 +884,11 @@ async function startSessionImpl(
 		nextSessionId += 1;
 
 		// Decided once, here, so grading and the reveal read a value that cannot
-		// depend on how much of the session actually painted.
-		const { numbers: plannedNumbers, sum: plannedSum } = buildDriverPlan(
-			plannedSession,
-			effectiveConfig,
-		);
+		// depend on how much of the session actually painted. When there is no
+		// Rust plan this generates the sequence a single time; the flash events
+		// below reuse these same numbers rather than generating again.
+		const { numbers: plannedNumbers, sum: plannedSum } =
+			plannedSession ?? generateLocalPlan(effectiveConfig);
 		const session: BrowserSession = {
 			sessionId,
 			config: effectiveConfig,
@@ -1017,17 +909,14 @@ async function startSessionImpl(
 
 		// Single-source execution when the WASM planner yields valid steps:
 		// times, values, and running sums come straight from the Rust plan.
-		// Otherwise the local JS planner builds the same schedule shape, but it
-		// still produces a full intended plan — values are generated eagerly here
-		// rather than at fire time, so grading and the answer reveal always have
-		// the complete sum even if the tab is throttled mid-session.
+		// Otherwise the local JS planner builds the same schedule shape around
+		// `plannedNumbers` — the one sequence generated above, not a fresh draw —
+		// so the events, the stored answer key, and the reveal cannot disagree.
 		const numberDurationMs = toMs(effectiveConfig.number_duration_s);
 		let events: PlannedDriverEvent[] | null = plannedSession?.steps
 			? planStepsToEvents(plannedSession.steps)
 			: null;
 		if (events == null) {
-			const planned = buildDriverPlan(plannedSession, effectiveConfig);
-
 			const local: PlannedDriverEvent[] = [];
 			// `pushEvent` refuses colliding timestamps, so a plan that would fire
 			// two stimuli in one turn of the event loop fails the whole session
@@ -1048,8 +937,8 @@ async function startSessionImpl(
 			at += PRE_FLASH_SETTLE_MS;
 
 			let running = 0;
-			for (let index = 0; index < planned.numbers.length; index += 1) {
-				const value = planned.numbers[index];
+			for (let index = 0; index < plannedNumbers.length; index += 1) {
+				const value = plannedNumbers[index];
 				running += value;
 				push({ at, kind: "show", index, value, runningSum: running });
 				at += numberDurationMs;
@@ -1097,7 +986,7 @@ async function startSessionImpl(
 							running_sum: event.runningSum,
 							emitted_at_ms: nowMs(),
 						});
-						playAudio("beep");
+						void playAudio("beep");
 						break;
 					}
 					case "clear": {
@@ -1130,63 +1019,7 @@ async function startSessionImpl(
 	}
 }
 
-/**
- * Strict answer rule, mirroring Rust `parse_answer_text` in
- * `src-tauri/src/main.rs` exactly: trim ends, strip commas everywhere,
- * optional single sign, ASCII digits only, 64-char cap, i64 range.
- * `BigInt` keeps accept/reject identical to Rust on every input (including
- * beyond f64 precision); the return is exact for every attainable session
- * sum, which the digit-width bound keeps below 2^53.
- */
-const INVALID_ANSWER_MESSAGE =
-	"Enter a single integer answer (e.g. 42 or -17).";
-const I64_MIN = -(2n ** 63n);
-const I64_MAX = 2n ** 63n - 1n;
-
-function hasBigInt(): boolean {
-	try {
-		return typeof BigInt === "function";
-	} catch {
-		return false;
-	}
-}
-
-/**
- * Pre-BigInt fallback: exact for inputs up to 15 digits (every attainable
- * session sum), since those fit f64 exactly. Longer inputs are rejected
- * here while native would grade them incorrect — a documented deviation
- * confined to obsolete browsers and unanswerable inputs.
- */
-export function parseWithNumberFallback(cleaned: string): number {
-	if (cleaned.replace(/^[+-]/, "").length > 15) {
-		throw new Error(INVALID_ANSWER_MESSAGE);
-	}
-	const parsed = Number(cleaned);
-	if (!Number.isSafeInteger(parsed)) {
-		throw new Error(INVALID_ANSWER_MESSAGE);
-	}
-	return parsed;
-}
-
-function parseProvidedAnswerText(value: string): number {
-	const cleaned = value.trim().replace(/,/g, "");
-	if (!cleaned || cleaned.length > 64) {
-		throw new Error(INVALID_ANSWER_MESSAGE);
-	}
-	if (!/^[+-]?[0-9]+$/.test(cleaned)) {
-		throw new Error(INVALID_ANSWER_MESSAGE);
-	}
-	if (!hasBigInt()) {
-		return parseWithNumberFallback(cleaned);
-	}
-	const big = BigInt(cleaned);
-	if (big < I64_MIN || big > I64_MAX) {
-		throw new Error(INVALID_ANSWER_MESSAGE);
-	}
-	return Number(big);
-}
-
-function validateAnswer(
+export function validateAnswer(
 	sessionId: number,
 	provided: number,
 ): SubmitAnswerResponse {
@@ -1211,14 +1044,12 @@ function validateAnswer(
 		delta,
 	};
 
-	let message: string;
 	if (correct) {
-		playAudio("applause");
-		message = `Correct ✅\nExpected answer: ${expected}`;
+		void playAudio("applause");
 	} else {
-		playAudio("buzzer");
-		message = `Incorrect\nExpected answer: ${expected}\nDifference: ${delta > 0 ? "+" : ""}${delta}`;
+		void playAudio("buzzer");
 	}
+	const message = formatValidationMessage(correct, expected, delta);
 
 	return {
 		validation,
@@ -1226,38 +1057,6 @@ function validateAnswer(
 		message,
 	};
 }
-
-// Testing helpers (internal). Exported to enable deterministic unit tests.
-export function __test_clearSessionTimers(session: {
-	timerId: number | null;
-}): void {
-	clearSessionTimers(session as unknown as BrowserSession);
-}
-
-export function __test_setCompletedSession(
-	sessionId: number,
-	numbers: number[],
-) {
-	const sum = numbers.reduce((s, n) => s + n, 0);
-	currentSession = {
-		sessionId,
-		config: {
-			digits_per_number: 1,
-			number_duration_s: 0.1,
-			total_numbers: numbers.length,
-			allow_negative_numbers: false,
-		},
-		autoRepeat: null,
-		plannedSum: sum,
-		plannedNumbers: numbers.slice(),
-		completed: true,
-		autoRepeatArmed: false,
-		timerId: null,
-	};
-}
-
-// Export internal helpers for unit testing
-export { parseProvidedAnswerText, validateAnswer };
 
 /**
  * A session abandoned while the tab is hidden must not run on forever.
@@ -1298,13 +1097,7 @@ function armHiddenAbort(listener: () => void): void {
 		}
 		if (Date.now() - hiddenSince >= MAX_HIDDEN_SESSION_MS) {
 			clearSessionTimers(currentSession);
-			if (pendingAutoRepeat) {
-				pendingAutoRepeat.cancelled = true;
-				if (pendingAutoRepeat.tickId != null) {
-					window.clearTimeout(pendingAutoRepeat.tickId);
-				}
-				pendingAutoRepeat = null;
-			}
+			cancelPendingAutoRepeat();
 			currentSession = null;
 			sessionEpoch += 1;
 			interruptionListener?.();
@@ -1329,17 +1122,11 @@ export const browserRuntime: Runtime = {
 	},
 
 	async setColorScheme(scheme: ColorScheme): Promise<AppSettings> {
-		appSettings = { ...appSettings, color_scheme: scheme };
-		persistAppSettings();
-		emit(listeners.appSettingsChanged, { ...appSettings });
-		return { ...appSettings };
+		return applyAppSettings({ color_scheme: scheme });
 	},
 
 	async setThemeMode(mode: ThemeMode): Promise<AppSettings> {
-		appSettings = { ...appSettings, theme_mode: mode };
-		persistAppSettings();
-		emit(listeners.appSettingsChanged, { ...appSettings });
-		return { ...appSettings };
+		return applyAppSettings({ theme_mode: mode });
 	},
 
 	startSession: startSessionImpl,
@@ -1352,28 +1139,14 @@ export const browserRuntime: Runtime = {
 			emitClearScreen(currentSession.sessionId, null);
 		}
 
-		if (pendingAutoRepeat) {
-			pendingAutoRepeat.cancelled = true;
-			if (pendingAutoRepeat.tickId != null) {
-				window.clearTimeout(pendingAutoRepeat.tickId);
-			}
-			pendingAutoRepeat = null;
-		}
+		cancelPendingAutoRepeat();
 
 		currentSession = null;
 		sessionEpoch += 1;
 	},
 
 	async cancelAutoRepeat(): Promise<void> {
-		if (!pendingAutoRepeat) {
-			return;
-		}
-
-		pendingAutoRepeat.cancelled = true;
-		if (pendingAutoRepeat.tickId != null) {
-			window.clearTimeout(pendingAutoRepeat.tickId);
-		}
-		pendingAutoRepeat = null;
+		cancelPendingAutoRepeat();
 	},
 
 	async acknowledgeComplete(
@@ -1439,27 +1212,12 @@ export const browserRuntime: Runtime = {
 		};
 	},
 
-	async playSound(kind: "beep" | "applause" | "buzzer"): Promise<void> {
-		if (!soundEnabled) {
-			return;
-		}
-
-		const clip = audio[kind];
-		try {
-			clip.currentTime = 0;
-			// Same state machine as `playAudio`, so a UI-initiated probe and a
-			// flash beep cannot disagree about whether the device works.
-			await Promise.resolve(clip.play()).then(
-				() => {
-					audioState = "ready";
-				},
-				(error: unknown) => {
-					recordAudioFailure(error);
-				},
-			);
-		} catch (error) {
-			recordAudioFailure(error);
-		}
+	async playSound(kind: SoundKind): Promise<void> {
+		// `playAudio` already runs the full state machine — gate, rewind,
+		// success/failure classification — so a UI-initiated probe and a flash
+		// beep cannot disagree about whether the device works. This is a thin
+		// awaitable wrapper rather than a second copy of that logic.
+		return playAudio(kind);
 	},
 
 	async onCountdownTick(handler: (value: string) => void): Promise<UnlistenFn> {
@@ -1502,3 +1260,60 @@ export const browserRuntime: Runtime = {
 		return addListener(listeners.sessionComplete, handler);
 	},
 };
+
+// ---------------------------------------------------------------------------
+// Test seams
+//
+// Internals exported purely so tests can drive them without a full session.
+// They are not part of the app's API: nothing in `src/` outside this module and
+// the test suite reads them.
+//
+//   `planStepsToEvents` — the WASM-plan-to-driver-event converter, a pure
+//   function with no ambient state, declared `export` where it is defined.
+//
+//   `validateAnswer` — the answer-grading entry point, exercised directly
+//   because it is where the answer key comes from.
+//
+//   `__test_clearSessionTimers` / `__test_setCompletedSession` — thin wrappers
+//   around module-private state. Named with the `__test_` prefix so it is
+//   obvious at the call site that this is a seam, not API.
+//
+// The pure planner that mirrors the Rust core — `normalizeSessionConfig`,
+// `normalizeAutoRepeat`, `maxTotalForDigits`, `generateNumber`,
+// `deterministicFallback`, `generateLocalPlan`, `parseProvidedAnswerText` and
+// `parseWithNumberFallback` — now lives in `./localPlanner`, which is where the
+// wasm-parity suites reach it.
+// ---------------------------------------------------------------------------
+
+/** Simulate a driver timer firing, so `clearSessionTimers` can be unit-tested. */
+export function __test_clearSessionTimers(session: {
+	timerId: number | null;
+}): void {
+	clearSessionTimers(session);
+}
+
+/**
+ * Install a completed session, so answer grading can be tested without running
+ * a whole session to completion.
+ */
+export function __test_setCompletedSession(
+	sessionId: number,
+	numbers: number[],
+): void {
+	const sum = numbers.reduce((s, n) => s + n, 0);
+	currentSession = {
+		sessionId,
+		config: {
+			digits_per_number: 1,
+			number_duration_s: 0.1,
+			total_numbers: numbers.length,
+			allow_negative_numbers: false,
+		},
+		autoRepeat: null,
+		plannedSum: sum,
+		plannedNumbers: numbers.slice(),
+		completed: true,
+		autoRepeatArmed: false,
+		timerId: null,
+	};
+}

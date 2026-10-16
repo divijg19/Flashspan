@@ -26,6 +26,7 @@ import type {
 	SessionComplete,
 	SessionConfigInput,
 	ShowNumber,
+	SoundKind,
 	StartSessionResponse,
 	SubmitAnswerResponse,
 	ThemeMode,
@@ -41,6 +42,22 @@ Object.values(audioFallback).forEach((a) => {
 	a.preload = "auto";
 	a.volume = 0.9;
 });
+
+/**
+ * Subscribe to a Tauri event, forwarding its payload to `handler`.
+ *
+ * Every listener below is the same `listen` call with a different event name
+ * and payload type, so they share this helper rather than repeating the
+ * subscribe boilerplate eight times. The cast is needed because Tauri's
+ * `UnlistenFn` is structurally compatible but nominally distinct.
+ */
+async function subscribe<T>(
+	event: string,
+	handler: (payload: T) => void,
+): Promise<UnlistenFn> {
+	const unlisten = await listen<T>(event, (e) => handler(e.payload));
+	return unlisten as UnlistenFn;
+}
 
 /**
  * Native runtime: wraps existing Tauri API.
@@ -129,7 +146,7 @@ export const nativeRuntime: Runtime = {
 		return invoke<AudioStatus>("get_audio_status");
 	},
 
-	async playSound(kind: "beep" | "applause" | "buzzer"): Promise<void> {
+	async playSound(kind: SoundKind): Promise<void> {
 		try {
 			await invoke("play_sound_kind", { kind });
 		} catch (_e) {
@@ -146,75 +163,57 @@ export const nativeRuntime: Runtime = {
 
 	// --- Event listeners ---
 	async onCountdownTick(handler: (value: string) => void): Promise<UnlistenFn> {
-		const unlisten = await listen<string>("countdown_tick", (event) => {
-			handler(String(event.payload ?? ""));
-		});
-		return unlisten as UnlistenFn;
+		return subscribe<string>("countdown_tick", (value) =>
+			handler(String(value ?? "")),
+		);
 	},
 
 	async onShowNumber(
 		handler: (payload: ShowNumber) => void,
 	): Promise<UnlistenFn> {
-		const unlisten = await listen<ShowNumber>("show_number", (event) => {
-			handler(event.payload);
-		});
-		return unlisten as UnlistenFn;
+		return subscribe<ShowNumber>("show_number", handler);
 	},
 
 	async onClearScreen(
 		handler: (payload: ClearScreen) => void,
 	): Promise<UnlistenFn> {
-		const unlisten = await listen<ClearScreen>("clear_screen", (event) => {
-			handler(event.payload);
-		});
-		return unlisten as UnlistenFn;
+		return subscribe<ClearScreen>("clear_screen", handler);
 	},
 
 	async onAutoRepeatWaiting(
 		handler: (payload: AutoRepeatWaitingPayload) => void,
 	): Promise<UnlistenFn> {
-		const unlisten = await listen<AutoRepeatWaitingPayload>(
-			"auto_repeat_waiting",
-			(event) => {
-				handler(event.payload);
-			},
-		);
-		return unlisten as UnlistenFn;
+		return subscribe<AutoRepeatWaitingPayload>("auto_repeat_waiting", handler);
 	},
 
 	async onAutoRepeatTick(
 		handler: (payload: AutoRepeatTickPayload) => void,
 	): Promise<UnlistenFn> {
-		const unlisten = await listen<AutoRepeatTickPayload>(
-			"auto_repeat_tick",
-			(event) => {
-				handler(event.payload);
-			},
-		);
-		return unlisten as UnlistenFn;
+		return subscribe<AutoRepeatTickPayload>("auto_repeat_tick", handler);
 	},
 
 	async onAppSettingsChanged(
 		handler: (payload: AppSettings) => void,
 	): Promise<UnlistenFn> {
-		const unlisten = await listen<AppSettings>(
-			"app_settings_changed",
-			(event) => {
-				handler(event.payload);
-			},
-		);
-		return unlisten as UnlistenFn;
+		return subscribe<AppSettings>("app_settings_changed", handler);
 	},
 
 	async onSessionComplete(
 		handler: (payload: SessionComplete) => void,
 	): Promise<UnlistenFn> {
-		const unlisten = await listen<SessionComplete>(
-			"session_complete",
-			(event) => {
-				handler(event.payload);
-			},
-		);
-		return unlisten as UnlistenFn;
+		return subscribe<SessionComplete>("session_complete", handler);
+	},
+
+	/**
+	 * No-op. A desktop window has no hidden-tab case worth reporting — the
+	 * process keeps running and the session stays in step with the user — so
+	 * there is nothing to interrupt.
+	 *
+	 * Implemented rather than omitted so `Runtime` can require the member and the
+	 * delegator in `index.ts` can forward every method uniformly. `App.tsx`
+	 * subscribes without checking for absence, and this never fires.
+	 */
+	async onSessionInterrupted(): Promise<UnlistenFn> {
+		return () => {};
 	},
 };
