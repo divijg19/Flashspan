@@ -7,6 +7,7 @@ import type {
 	SessionComplete,
 	ShowNumber,
 } from "../../runtime";
+import { formatValidationMessage } from "../../runtime/grading";
 
 type Listener<T> = (payload: T) => void;
 
@@ -24,9 +25,33 @@ export function createMockRuntime() {
 		autoRepeatTick: new Set<Listener<AutoRepeatTickPayload>>(),
 		appSettingsChanged: new Set<Listener<AppSettings>>(),
 		sessionComplete: new Set<Listener<SessionComplete>>(),
+		// Only the browser runtime has a hidden-tab case worth reporting, but
+		// the mock implements it so App's handler for that path is reachable from
+		// a test. It was not before, and the handler that returns the session to
+		// idle and explains why had no coverage.
+		//
+		// A bare function set rather than `Listener<void>`: this event carries no
+		// payload, and `Listener<T>` is `(payload: T) => void`, which would make
+		// the handler take an argument it does not have.
+		sessionInterrupted: new Set<() => void>(),
 	};
 
-	return {
+	/**
+	 * Annotated `Runtime` for two reasons, and the second is the one that matters:
+	 *
+	 * - Exhaustiveness is checked, so a missing member is a compile error rather
+	 *   than `runtime.foo()` being `undefined` inside some later test.
+	 * - The methods carry the interface's signatures instead of the narrow
+	 *   literal types they would otherwise infer. Tests override individual
+	 *   methods — `mock.startSession = async () => ...` — and a literal return
+	 *   type like `correct: true` rejects an override returning `correct: false`
+	 *   even though `Runtime` allows both. The previous `as` cast widened the
+	 *   whole object and hid exactly that.
+	 *
+	 * The emit helpers are spread on afterwards because they are not part of
+	 * `Runtime`.
+	 */
+	const implementation: Runtime = {
 		// commands
 		async ping() {
 			return "pong (mock)";
@@ -66,7 +91,7 @@ export function createMockRuntime() {
 					delta: 0,
 				},
 				auto_repeat_waiting: null,
-				message: "",
+				message: formatValidationMessage(true, providedSum, 0),
 			};
 		},
 		async submitAnswerText(_sessionId: number, providedText: string) {
@@ -79,7 +104,7 @@ export function createMockRuntime() {
 					delta: 0,
 				},
 				auto_repeat_waiting: null,
-				message: "",
+				message: formatValidationMessage(true, v, 0),
 			};
 		},
 		async getSoundEnabled() {
@@ -88,13 +113,6 @@ export function createMockRuntime() {
 		async setSoundEnabled() {},
 		async getAudioStatus() {
 			return { ...audioStatus };
-		},
-		setAudioStatus(next: {
-			enabled: boolean;
-			available: boolean;
-			detail: string;
-		}) {
-			audioStatus = { ...next };
 		},
 		async playSound() {},
 
@@ -119,6 +137,10 @@ export function createMockRuntime() {
 			listeners.autoRepeatTick.add(handler);
 			return () => listeners.autoRepeatTick.delete(handler);
 		},
+		async onSessionInterrupted(handler: () => void) {
+			listeners.sessionInterrupted.add(handler);
+			return () => listeners.sessionInterrupted.delete(handler);
+		},
 		async onAppSettingsChanged(handler: (p: AppSettings) => void) {
 			listeners.appSettingsChanged.add(handler);
 			return () => listeners.appSettingsChanged.delete(handler);
@@ -127,6 +149,10 @@ export function createMockRuntime() {
 			listeners.sessionComplete.add(handler);
 			return () => listeners.sessionComplete.delete(handler);
 		},
+	};
+
+	return {
+		...implementation,
 
 		// helpers to emit events in tests
 		emitCountdown(v: string) {
@@ -141,15 +167,15 @@ export function createMockRuntime() {
 		emitSessionComplete(payload: SessionComplete) {
 			for (const h of [...listeners.sessionComplete]) h(payload);
 		},
-	} as Runtime & {
-		emitCountdown: (v: string) => void;
-		emitShowNumber: (p: ShowNumber) => void;
-		emitClearScreen: (p: ClearScreen) => void;
-		emitSessionComplete: (p: SessionComplete) => void;
-		setAudioStatus: (next: {
+		emitSessionInterrupted() {
+			for (const h of [...listeners.sessionInterrupted]) h();
+		},
+		setAudioStatus(next: {
 			enabled: boolean;
 			available: boolean;
 			detail: string;
-		}) => void;
+		}) {
+			audioStatus = { ...next };
+		},
 	};
 }

@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { browserRuntime } from "../runtime/browser";
 import type { SessionComplete } from "../runtime/types";
+import type { WasmSessionPlan } from "../wasm/coreBridge";
 import {
-	registerWasmCoreBridge,
-	type WasmSessionPlan,
-} from "../wasm/coreBridge";
+	clearWasmCoreBridge,
+	fakeWasmPlan,
+	registerFakeWasmBridge,
+} from "./__mocks__/fakeWasmPlan";
+import { startedOrFail } from "./helpers";
 
 /**
  * The browser's session must grade and reveal the *intended plan*, not the
@@ -23,71 +26,36 @@ import {
 /** Per-number exposure in these plans; matches the config's 0.5s duration. */
 const EXPOSURE_MS = 500;
 
+/**
+ * The session config these cases start.
+ *
+ * Kept as a `SessionConfigInput` rather than folded into the plan fixture
+ * because several cases pass it to `startSession` directly, and one of them
+ * deliberately asks for a total the digit-width bound will clamp.
+ */
 const WASM_CONFIG = {
 	digits_per_number: 2,
 	number_duration_s: 0.5,
 	total_numbers: 3,
 	allow_negative_numbers: false,
-};
+} as const;
 
-/** A plan whose numbers do not sum to its running-sum arithmetic by accident. */
+/**
+ * A plan whose numbers do not sum to their running-sum arithmetic by accident.
+ *
+ * The shape comes from the shared `fakeWasmPlan` fixture; only the exposure is
+ * parameterised, because these cases are specifically about how long each
+ * number stays on screen.
+ */
 function planWith(
 	numbers: number[],
 	exposureMs = EXPOSURE_MS,
 ): WasmSessionPlan {
-	const steps: WasmSessionPlan["steps"] = [
-		{ ClearScreen: { session_id: 1, index: null, delay_ms_before_next: 0 } },
-		{ CountdownTick: { value: "3", delay_ms_before_next: 1000 } },
-		{ CountdownTick: { value: "2", delay_ms_before_next: 1000 } },
-		{ CountdownTick: { value: "1", delay_ms_before_next: 1100 } },
-	];
-	let at = 3100;
-	let running = 0;
-	for (let i = 0; i < numbers.length; i += 1) {
-		running += numbers[i];
-		steps.push({
-			ShowNumber: {
-				session_id: 1,
-				index: i + 1,
-				total: numbers.length,
-				value: numbers[i],
-				running_sum: running,
-				delay_ms_before_next: exposureMs,
-			},
-		});
-		at += exposureMs;
-		steps.push({
-			ClearScreen: { session_id: 1, index: i + 1, delay_ms_before_next: 100 },
-		});
-		at += 100;
-	}
-	const sum = numbers.reduce((a, b) => a + b, 0);
-	steps.push({
-		ClearScreen: { session_id: 1, index: null, delay_ms_before_next: 0 },
-	});
-	steps.push({ Complete: { session_id: 1, numbers, sum } });
-
-	return {
-		session_id: 1,
-		// Must agree with the numbers actually provided, or the new
-		// plan/config consistency guard rightfully rejects the session.
-		config_snapshot: { ...WASM_CONFIG, total_numbers: numbers.length },
-		steps,
-		total_duration_ms: at,
-		numbers_generated: numbers,
-		expected_sum: sum,
-	};
+	return fakeWasmPlan(numbers, { exposureMs });
 }
 
 function stubBridge(numbers: number[], exposureMs?: number): void {
-	registerWasmCoreBridge({
-		async normalizeSessionConfig() {
-			throw new Error("not used");
-		},
-		async buildSessionPlan() {
-			return planWith(numbers, exposureMs);
-		},
-	});
+	registerFakeWasmBridge(async () => planWith(numbers, exposureMs));
 }
 
 function captureComplete(): {
@@ -120,7 +88,7 @@ describe("browser grades the intended plan", () => {
 
 	afterEach(async () => {
 		await browserRuntime.stopSession();
-		registerWasmCoreBridge(null as never);
+		clearWasmCoreBridge();
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
@@ -128,20 +96,12 @@ describe("browser grades the intended plan", () => {
 	it("reveals and grades the full plan numbers and sum", async () => {
 		await browserRuntime.setSoundEnabled(false);
 		const numbers = [10, 20, 30];
-		registerWasmCoreBridge({
-			async normalizeSessionConfig() {
-				throw new Error("not used");
-			},
-			async buildSessionPlan() {
-				return planWith(numbers);
-			},
-		});
+		registerFakeWasmBridge(async () => planWith(numbers));
 
 		const completed = captureComplete();
 		const session = await browserRuntime.startSession({ ...WASM_CONFIG }, null);
 
-		// No case here supersedes the start, so null would be a contract break.
-		if (!session) throw new Error("startSession unexpectedly returned null");
+		const started = startedOrFail(session);
 		// The whole schedule, plus the final settle.
 		await vi.advanceTimersByTimeAsync(10_000);
 
@@ -150,7 +110,7 @@ describe("browser grades the intended plan", () => {
 		expect(payload.sum).toBe(60);
 
 		// The answer key is the plan's sum, never the flashed subset.
-		const right = await browserRuntime.submitAnswer(session.session_id, 60);
+		const right = await browserRuntime.submitAnswer(started.session_id, 60);
 		expect(right.validation).toEqual({
 			expected_sum: 60,
 			provided_sum: 60,
@@ -158,7 +118,7 @@ describe("browser grades the intended plan", () => {
 			delta: 0,
 		});
 
-		const wrong = await browserRuntime.submitAnswer(session.session_id, 0);
+		const wrong = await browserRuntime.submitAnswer(started.session_id, 0);
 		expect(wrong.validation.correct).toBe(false);
 		expect(wrong.validation.expected_sum).toBe(60);
 		expect(wrong.validation.delta).toBe(-60);
@@ -168,7 +128,7 @@ describe("browser grades the intended plan", () => {
 		await browserRuntime.setSoundEnabled(false);
 		// No bridge: the JS fallback planner must still build a full intended
 		// plan, so grading has an authoritative sum even without WASM.
-		registerWasmCoreBridge(null as never);
+		clearWasmCoreBridge();
 
 		const completed = captureComplete();
 		const session = await browserRuntime.startSession(
@@ -181,8 +141,7 @@ describe("browser grades the intended plan", () => {
 			null,
 		);
 
-		// No case here supersedes the start, so null would be a contract break.
-		if (!session) throw new Error("startSession unexpectedly returned null");
+		const started = startedOrFail(session);
 		await vi.advanceTimersByTimeAsync(20_000);
 
 		const payload = await completed.promise;
@@ -191,7 +150,7 @@ describe("browser grades the intended plan", () => {
 		expect(payload.sum).toBe(sumOfRevealed);
 
 		const response = await browserRuntime.submitAnswer(
-			session.session_id,
+			started.session_id,
 			payload.sum,
 		);
 		expect(response.validation.correct).toBe(true);
@@ -200,14 +159,7 @@ describe("browser grades the intended plan", () => {
 
 	it("returns null from a duplicate acknowledgeComplete, like native", async () => {
 		await browserRuntime.setSoundEnabled(false);
-		registerWasmCoreBridge({
-			async normalizeSessionConfig() {
-				throw new Error("not used");
-			},
-			async buildSessionPlan() {
-				return planWith([5, 5]);
-			},
-		});
+		registerFakeWasmBridge(async () => planWith([5, 5]));
 
 		const completed = captureComplete();
 		const session = await browserRuntime.startSession(
@@ -215,16 +167,15 @@ describe("browser grades the intended plan", () => {
 			{ enabled: true, repeats: 2, delay_s: 1 },
 		);
 
-		// No case here supersedes the start, so null would be a contract break.
-		if (!session) throw new Error("startSession unexpectedly returned null");
+		const started = startedOrFail(session);
 		await vi.advanceTimersByTimeAsync(10_000);
 		await completed.promise;
 
-		const first = await browserRuntime.acknowledgeComplete(session.session_id);
+		const first = await browserRuntime.acknowledgeComplete(started.session_id);
 		expect(first).not.toBeNull();
-		expect(first?.session_id).toBe(session.session_id);
+		expect(first?.session_id).toBe(started.session_id);
 
-		const second = await browserRuntime.acknowledgeComplete(session.session_id);
+		const second = await browserRuntime.acknowledgeComplete(started.session_id);
 		expect(second).toBeNull();
 	});
 });
@@ -242,7 +193,7 @@ describe("hidden-tab interruption", () => {
 	});
 
 	afterEach(async () => {
-		registerWasmCoreBridge(null as never);
+		clearWasmCoreBridge();
 		vi.restoreAllMocks();
 		vi.useRealTimers();
 	});

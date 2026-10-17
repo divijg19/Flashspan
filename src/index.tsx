@@ -13,14 +13,14 @@ if (!rootElement) {
 
 const root = rootElement as HTMLElement;
 
-const isTauriEnvironment = (): boolean => {
+function isTauriEnvironment(): boolean {
 	const globalWindow = globalThis as typeof globalThis & {
 		__TAURI__?: unknown;
 		__TAURI_INTERNALS__?: unknown;
 	};
 
 	return Boolean(globalWindow.__TAURI__ || globalWindow.__TAURI_INTERNALS__);
-};
+}
 
 async function performWasmHealthCheck(): Promise<void> {
 	try {

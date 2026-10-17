@@ -1,15 +1,25 @@
-import { render, screen } from "@solidjs/testing-library";
-import { describe, expect, it } from "vitest";
-import App from "../App";
-import { initializeRuntime } from "../runtime";
-import { createMockRuntime } from "./__mocks__/mockRuntime";
+import { screen } from "@solidjs/testing-library";
+import { beforeEach, describe, expect, it } from "vitest";
+import { resetRuntime } from "../runtime";
+import { mountApp } from "./helpers";
 
 describe("App accessibility tests", () => {
-	it("validation summary has aria-live and role for screen readers in markup", async () => {
-		const mock = createMockRuntime();
-		initializeRuntime(mock);
+	/**
+	 * Every test here builds its own mock and initializes it.
+	 *
+	 * Without this `beforeEach` the file silently shares the first mock for
+	 * its whole duration: `initializeRuntime` refuses a second call, so a later
+	 * test's `initializeRuntime(mock)` is a no-op and the component under test is
+	 * still subscribed to an earlier mock. Emitting on the new mock then does
+	 * nothing, and the failure shows up as a missing element rather than as the
+	 * isolation bug it is.
+	 */
+	beforeEach(() => {
+		resetRuntime();
+	});
 
-		const { container } = render(() => <App />);
+	it("validation summary has aria-live and role for screen readers in markup", async () => {
+		const { container } = await mountApp();
 
 		// Verify that validationText element exists in the DOM with proper ARIA attributes
 		// Look for any pre element that might be the validation summary
@@ -24,47 +34,43 @@ describe("App accessibility tests", () => {
 	});
 
 	it("Enter key submits answer in type mode via mock", async () => {
-		const mock = createMockRuntime();
 		let submitCalled = false;
 
-		mock.submitAnswerText = async (_sid, _text) => {
-			submitCalled = true;
-			return {
-				validation: {
-					expected_sum: 7,
-					provided_sum: 7,
-					correct: true,
-					delta: 0,
-				},
-				auto_repeat_waiting: null,
-				message: "",
+		await mountApp((mock) => {
+			mock.submitAnswerText = async (_sid, _text) => {
+				submitCalled = true;
+				return {
+					validation: {
+						expected_sum: 7,
+						provided_sum: 7,
+						correct: true,
+						delta: 0,
+					},
+					auto_repeat_waiting: null,
+					message: "",
+				};
 			};
-		};
-
-		initializeRuntime(mock);
-		render(() => <App />);
+		});
 
 		// Verify mock was set up (not testing Enter interaction directly)
 		expect(submitCalled).toBe(false);
 	});
 
 	it("validation summary can be announced via aria-live", async () => {
-		const mock = createMockRuntime();
-		mock.submitAnswerText = async (_sid, _text) => {
-			return {
-				validation: {
-					expected_sum: 50,
-					provided_sum: 25,
-					correct: false,
-					delta: -25,
-				},
-				auto_repeat_waiting: null,
-				message: "Incorrect",
+		const { container } = await mountApp((mock) => {
+			mock.submitAnswerText = async (_sid, _text) => {
+				return {
+					validation: {
+						expected_sum: 50,
+						provided_sum: 25,
+						correct: false,
+						delta: -25,
+					},
+					auto_repeat_waiting: null,
+					message: "Incorrect",
+				};
 			};
-		};
-
-		initializeRuntime(mock);
-		const { container } = render(() => <App />);
+		});
 
 		// Verify aria-live="polite" is in the component template
 		const liveRegions = container.querySelectorAll('[aria-live="polite"]');
@@ -75,10 +81,7 @@ describe("App accessibility tests", () => {
 	});
 
 	it("keyboard navigation: labels associated with inputs", async () => {
-		const mock = createMockRuntime();
-		initializeRuntime(mock);
-
-		render(() => <App />);
+		await mountApp();
 
 		// wait for mount
 		await new Promise((r) => setTimeout(r, 0));
@@ -98,10 +101,7 @@ describe("App accessibility tests", () => {
 	});
 
 	it("start button is accessible and properly labeled", async () => {
-		const mock = createMockRuntime();
-		initializeRuntime(mock);
-
-		render(() => <App />);
+		await mountApp();
 
 		// wait for mount
 		await new Promise((r) => setTimeout(r, 0));
@@ -113,10 +113,7 @@ describe("App accessibility tests", () => {
 	});
 
 	it("settings button has descriptive aria-label", async () => {
-		const mock = createMockRuntime();
-		initializeRuntime(mock);
-
-		render(() => <App />);
+		await mountApp();
 
 		// wait for mount
 		await new Promise((r) => setTimeout(r, 0));
@@ -129,10 +126,7 @@ describe("App accessibility tests", () => {
 	});
 
 	it("sound control has proper aria-label and radio group", async () => {
-		const mock = createMockRuntime();
-		initializeRuntime(mock);
-
-		render(() => <App />);
+		await mountApp();
 
 		// wait for mount
 		await new Promise((r) => setTimeout(r, 0));
@@ -147,10 +141,7 @@ describe("App accessibility tests", () => {
 	});
 
 	it("color theme controls are accessible with proper roles", async () => {
-		const mock = createMockRuntime();
-		initializeRuntime(mock);
-
-		render(() => <App />);
+		await mountApp();
 
 		// wait for mount
 		await new Promise((r) => setTimeout(r, 0));
@@ -168,10 +159,7 @@ describe("App accessibility tests", () => {
 	});
 
 	it("links have proper attributes (external links have rel and target)", async () => {
-		const mock = createMockRuntime();
-		initializeRuntime(mock);
-
-		render(() => <App />);
+		await mountApp();
 
 		// Find external link
 		const link = screen.getByRole("link");
@@ -179,5 +167,100 @@ describe("App accessibility tests", () => {
 		expect(link.getAttribute("target")).toBe("_blank");
 		expect(link.getAttribute("rel")).toContain("noopener");
 		expect(link.getAttribute("rel")).toContain("noreferrer");
+	});
+
+	/**
+	 * Opening the advanced settings moves focus into the panel and traps Tab
+	 * inside it.
+	 *
+	 * The trap is driven by a ref on the overlay element that lives in
+	 * `AdvancedSettings` but is read by a `createEffect` in `App.tsx`. Those two
+	 * are in different components now, and `App` holds the element in a plain
+	 * (non-reactive) variable rather than a signal — so the effect depends only
+	 * on `showAdvanced()`, and nothing re-runs it if the ref is assigned late or
+	 * not at all. That failure is silent: the panel still renders and every other
+	 * assertion here passes, while keyboard users tab straight out of the dialog
+	 * into the page behind it.
+	 *
+	 * So assert the focus actually moved, which is the observable consequence of
+	 * the ref having been wired up.
+	 */
+	/**
+	 * An interruption while the tab is hidden must return the app to idle and
+	 * explain itself, rather than leaving a screen that looks stuck mid-flash.
+	 *
+	 * The runtime side is covered by `sessionAnswerKey.test.ts`'s hidden-tab
+	 * block, which drives `browserRuntime` directly. This covers the UI wiring:
+	 * `App.tsx` subscribes via the optional `onSessionInterrupted` and runs
+	 * `resetForIncomingSessionIfComplete` plus the error banner. Neither the mock
+	 * nor any test reached it before, so the only code path that talks to the
+	 * user about this failure was unexercised.
+	 */
+	it("reports a hidden-tab interruption and returns to idle", async () => {
+		const { mock, unmount } = await mountApp();
+
+		mock.emitSessionInterrupted();
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(
+			screen.getByText(
+				"Session interrupted while the browser tab was in the background.",
+			),
+		).toBeTruthy();
+		// Back on the home screen, so Start is available again.
+		expect(screen.getByRole("button", { name: "Start" })).toBeTruthy();
+
+		unmount();
+	});
+
+	it("moves focus into the advanced settings panel and traps Tab", async () => {
+		const { container } = await mountApp();
+
+		await new Promise((r) => setTimeout(r, 0));
+
+		screen.getByRole("button", { name: "Additional settings" }).click();
+		await new Promise((r) => setTimeout(r, 0));
+
+		const panel = container.querySelector<HTMLElement>(".advancedPanel");
+		expect(panel, "advanced panel should render").toBeTruthy();
+
+		const focusable = panel?.querySelectorAll<HTMLElement>(
+			'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+		);
+		expect(focusable?.length ?? 0).toBeGreaterThan(0);
+
+		const first = focusable?.[0];
+		const last = focusable?.[(focusable?.length ?? 0) - 1];
+		expect(first).toBeTruthy();
+		expect(last).toBeTruthy();
+
+		// The ref reached App's effect: focus is inside the panel, not on <body>.
+		expect(document.activeElement).toBe(first);
+		expect(panel?.contains(document.activeElement)).toBe(true);
+
+		// Tab off the last control wraps back to the first rather than escaping.
+		// The handler is bound to the panel, so the event must originate on a
+		// control and bubble up to it.
+		(last as HTMLElement).focus();
+		const forward = new KeyboardEvent("keydown", {
+			key: "Tab",
+			bubbles: true,
+			cancelable: true,
+		});
+		(last as HTMLElement).dispatchEvent(forward);
+		expect(forward.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(first);
+
+		// And Shift+Tab off the first wraps forward to the last.
+		(first as HTMLElement).focus();
+		const backward = new KeyboardEvent("keydown", {
+			key: "Tab",
+			shiftKey: true,
+			bubbles: true,
+			cancelable: true,
+		});
+		(first as HTMLElement).dispatchEvent(backward);
+		expect(backward.defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(last);
 	});
 });

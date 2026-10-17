@@ -1,28 +1,14 @@
-pub mod core;
+//! Library half of the crate.
+//!
+//! This exists for `core` (shared by the native binary and the WASM bridge)
+//! and for the `wasm32` bridge exports below. The desktop entry point lives in
+//! `main.rs` as `native_app::run()`, which is what `main()` actually calls —
+//! there is deliberately no second entry point here. An earlier `run()` in this
+//! file was never called, and its `#[cfg_attr(mobile, tauri::mobile_entry_point)]`
+//! annotation made a dead function look like the mobile entry point while the
+//! live one lacked the annotation.
 
-/// Launch the Tauri application event loop.
-///
-/// # Panics
-///
-/// Panics if the Tauri runtime fails to start (missing `WebView` backend or
-/// context initialization failure).
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
-        .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-            Ok(())
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-}
+pub mod core;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_bridge;

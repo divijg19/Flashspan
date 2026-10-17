@@ -99,6 +99,8 @@ pub fn random_number_with_constraints(
 mod tests {
     use super::*;
     use rand::rng;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     /// The domain must be exactly "numbers with `digits` digits, no leading
     /// zero": every generated value is checked against it.
@@ -111,7 +113,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn magnitude_bounds_match_digit_width() {
         assert_eq!(magnitude_bounds(0), (1, 9));
         assert_eq!(magnitude_bounds(1), (1, 9));
@@ -122,13 +125,15 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[should_panic(expected = "digits <= 19 keeps 10^digits inside u64")]
     fn magnitude_bounds_rejects_widths_past_u64() {
         let _ = magnitude_bounds(20);
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn random_magnitude_stays_in_domain() {
         let mut rng = rng();
         for _ in 0..200 {
@@ -138,7 +143,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn random_magnitude_capped_respects_cap() {
         let mut rng = rng();
 
@@ -167,7 +173,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn random_number_never_negative_when_negatives_disabled() {
         let mut rng = rng();
         let mut running_sum: i128 = 0;
@@ -179,7 +186,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn random_number_first_is_never_negative() {
         let mut rng = rng();
         for digits in [1u32, 2, 5, 18] {
@@ -189,7 +197,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn random_number_never_drives_the_running_sum_negative() {
         let mut rng = rng();
         let mut running_sum: i128 = 0;
@@ -201,7 +210,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn random_number_with_a_tiny_running_sum_cannot_go_negative() {
         let mut rng = rng();
         // A running sum below the width's minimum magnitude cannot fund a
@@ -211,5 +221,109 @@ mod tests {
             assert!(value >= 0, "unfundable negative {value}");
             assert_in_domain(value, 5);
         }
+    }
+
+    /// The negative branch could be deleted and every other test here would
+    /// still pass: they only assert what is *not* produced (no negatives when
+    /// disabled, none on the first number, none when unfunded). This proves the
+    /// branch is reachable — with negatives enabled and a funded sum, negative
+    /// values actually come out — and that every one of them keeps the sum
+    /// non-negative.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn negative_branch_is_reachable_when_funded() {
+        let mut rng = rng();
+        let mut running_sum: i128 = 1_000_000;
+        let mut negatives = 0u32;
+
+        for index in 1..2_000u32 {
+            let value = random_number_with_constraints(&mut rng, 2, true, index, running_sum);
+            assert_in_domain(value, 2);
+            assert!(
+                running_sum + value >= 0,
+                "a funded negative drove the sum negative at {index}",
+            );
+            if value < 0 {
+                negatives += 1;
+            }
+            running_sum += value;
+        }
+
+        assert!(
+            negatives > 0,
+            "the negative branch never fired despite a funded sum — it is dead or unreachable",
+        );
+    }
+
+    /// Every digit width, not the three the older test samples: the widest
+    /// widths (up to 19) have the most fragile `10^digits - 1` arithmetic, and
+    /// the single-digit width is the special case.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn random_magnitude_covers_every_width_from_one_to_nineteen() {
+        let mut rng = rng();
+        for digits in 1..=19u32 {
+            for _ in 0..50 {
+                assert_in_domain(i128::from(random_magnitude(&mut rng, digits)), digits);
+            }
+        }
+    }
+
+    /// A negative draw is capped at the running sum, so it can never sink the
+    /// sum below zero. With a sum (250) below the width's maximum magnitude
+    /// (999), a funded negative must be squeezed into `[100, 250]` while a
+    /// positive draw still spans the full width.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn random_number_caps_a_negative_draw_at_the_running_sum() {
+        let mut rng = rng();
+        let mut saw_negative = false;
+
+        for _ in 0..2_000 {
+            let value = random_number_with_constraints(&mut rng, 3, true, 1, 250);
+            if value < 0 {
+                saw_negative = true;
+                assert!(
+                    value.unsigned_abs() <= 250,
+                    "negative {value} exceeded the running sum that funds it",
+                );
+                assert!(value.unsigned_abs() >= 100, "negative {value} is below the width");
+            } else {
+                assert!((100..=999).contains(&value), "positive {value} left the width");
+            }
+        }
+
+        assert!(
+            saw_negative,
+            "the capped negative branch must be reachable at width 3 with a funded sum",
+        );
+    }
+
+    /// A generator that only ever produced the low (or high) half of a width
+    /// would satisfy "inside the domain" but make sessions lop-sided. Sample
+    /// enough draws to show both halves occur.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn random_number_uses_both_halves_of_the_domain() {
+        let mut rng = rng();
+        let (min, max) = magnitude_bounds(2);
+        let midpoint = u64::midpoint(min, max);
+        let mut saw_low = false;
+        let mut saw_high = false;
+
+        for _ in 0..500 {
+            let value = random_number_with_constraints(&mut rng, 2, false, 0, 0);
+            let magnitude = u64::try_from(value).expect("negatives are disabled");
+            if magnitude <= midpoint {
+                saw_low = true;
+            } else {
+                saw_high = true;
+            }
+        }
+
+        assert!(
+            saw_low && saw_high,
+            "the draw must span the width; low={saw_low} high={saw_high}",
+        );
     }
 }

@@ -13,26 +13,30 @@
  * - Bridge deterministic core logic with platform-specific effects
  */
 
-// --- Re-export types that UI will use ---
-export type {
+// Re-export every runtime type, so `./runtime` is the one import the UI needs.
+// `export type *` keeps that surface in step with `./types` automatically,
+// rather than maintaining a second hand-written list that can silently fall
+// behind (the old copy had already drifted: it omitted `SoundKind`).
+export type * from "./types";
+
+// The names the `Runtime` interface itself references. Type-only, so the
+// import is erased at build time.
+import type {
 	AppSettings,
 	AudioStatus,
 	AutoRepeatConfig,
-	AutoRepeatEffective,
 	AutoRepeatTickPayload,
 	AutoRepeatWaitingPayload,
 	ClearScreen,
 	ColorScheme,
-	Phase,
 	SessionComplete,
-	SessionConfigEffective,
 	SessionConfigInput,
 	ShowNumber,
+	SoundKind,
 	StartSessionResponse,
 	SubmitAnswerResponse,
 	ThemeMode,
 	UnlistenFn,
-	ValidationResult,
 } from "./types";
 
 // --- Runtime instance singleton ---
@@ -70,7 +74,7 @@ export interface Runtime {
 	getSoundEnabled(): Promise<boolean>;
 	setSoundEnabled(enabled: boolean): Promise<void>;
 	getAudioStatus(): Promise<AudioStatus>;
-	playSound(kind: "beep" | "applause" | "buzzer"): Promise<void>;
+	playSound(kind: SoundKind): Promise<void>;
 
 	// --- Event listeners ---
 	onCountdownTick(handler: (value: string) => void): Promise<UnlistenFn>;
@@ -84,10 +88,14 @@ export interface Runtime {
 	): Promise<UnlistenFn>;
 	/**
 	 * A running session was abandoned while the tab was hidden and had to be
-	 * interrupted. Optional: only the browser runtime has a hidden-tab case worth
-	 * reporting, so a runtime that does not implement it simply never calls it.
+	 * interrupted.
+	 *
+	 * Required rather than optional so the `Runtime` delegator can forward every
+	 * member uniformly and callers do not each have to handle an absent method.
+	 * Only the browser runtime has a hidden-tab case worth reporting; the native
+	 * one implements a no-op, which never fires.
 	 */
-	onSessionInterrupted?(handler: () => void): Promise<UnlistenFn>;
+	onSessionInterrupted(handler: () => void): Promise<UnlistenFn>;
 	onAppSettingsChanged(
 		handler: (payload: AppSettings) => void,
 	): Promise<UnlistenFn>;
@@ -95,24 +103,6 @@ export interface Runtime {
 		handler: (payload: SessionComplete) => void,
 	): Promise<UnlistenFn>;
 }
-
-// Import type (lazy-loaded to avoid circular deps)
-import type {
-	AppSettings,
-	AudioStatus,
-	AutoRepeatConfig,
-	AutoRepeatTickPayload,
-	AutoRepeatWaitingPayload,
-	ClearScreen,
-	ColorScheme,
-	SessionComplete,
-	SessionConfigInput,
-	ShowNumber,
-	StartSessionResponse,
-	SubmitAnswerResponse,
-	ThemeMode,
-	UnlistenFn,
-} from "./types";
 
 /**
  * Initialize the runtime for the current platform.
@@ -132,12 +122,27 @@ export function initializeRuntime(runtimeImpl: Runtime): void {
 }
 
 /**
+ * Drop the current runtime so the next `initializeRuntime` takes effect.
+ *
+ * `initializeRuntime` deliberately refuses a second call, which is right for
+ * the app (one runtime per process) but means a test file that builds a mock
+ * per test silently shares the first one for the rest of the file. Tests then
+ * emit events on a mock the component under test never subscribed to, and the
+ * failure surfaces as a missing element rather than as the isolation bug it is.
+ *
+ * Test-only seam: nothing in `src/` calls it.
+ */
+export function resetRuntime(): void {
+	_runtime = null;
+}
+
+/**
  * Get the current runtime instance.
  * Must be called after initializeRuntime().
  *
  * @throws Error if runtime not initialized
  */
-export function getRuntime(): Runtime {
+function getRuntime(): Runtime {
 	if (_runtime === null) {
 		throw new Error(
 			"[runtime] Runtime not initialized. Call initializeRuntime() at app startup.",
@@ -147,91 +152,25 @@ export function getRuntime(): Runtime {
 }
 
 /**
- * Convenience wrapper for common runtime operations.
- * This is what UI code typically imports and uses.
+ * The delegating runtime the UI uses.
+ *
+ * Typed `Runtime` so adding a method to the interface is a compile error here if
+ * it is not also added below — the hand-written getters this replaced were
+ * unchecked, so a missing member surfaced as `runtime.newMethod()` being
+ * `undefined` inside the browser rather than at compile time.
+ *
+ * A Proxy keeps that exhaustiveness without repeating the delegation: every
+ * accessor and method on every implementation is forwarded automatically.
  */
-export const runtime = {
-	// Lazy getters to avoid errors if runtime not initialized yet
-	get ping() {
-		return () => getRuntime().ping();
+export const runtime: Runtime = new Proxy({} as Runtime, {
+	get(_target, property) {
+		const implementation = getRuntime();
+		const member = Reflect.get(implementation, property);
+		// Methods must be rebound: `browserRuntime` and `nativeRuntime` are
+		// object literals whose methods close over module-level state, and
+		// several read `this` implicitly through sibling members.
+		return typeof member === "function"
+			? (member as (...args: never[]) => unknown).bind(implementation)
+			: member;
 	},
-	get getAppSettings() {
-		return () => getRuntime().getAppSettings();
-	},
-	get setColorScheme() {
-		return (scheme: ColorScheme) => getRuntime().setColorScheme(scheme);
-	},
-	get setThemeMode() {
-		return (mode: ThemeMode) => getRuntime().setThemeMode(mode);
-	},
-	get startSession() {
-		return (config: SessionConfigInput, autoRepeat?: AutoRepeatConfig | null) =>
-			getRuntime().startSession(config, autoRepeat);
-	},
-	get stopSession() {
-		return () => getRuntime().stopSession();
-	},
-	get cancelAutoRepeat() {
-		return () => getRuntime().cancelAutoRepeat();
-	},
-	get acknowledgeComplete() {
-		return (sessionId: number) => getRuntime().acknowledgeComplete(sessionId);
-	},
-	get submitAnswer() {
-		return (sessionId: number, providedSum: number) =>
-			getRuntime().submitAnswer(sessionId, providedSum);
-	},
-	get submitAnswerText() {
-		return (sessionId: number, providedText: string) =>
-			getRuntime().submitAnswerText(sessionId, providedText);
-	},
-	get getSoundEnabled() {
-		return () => getRuntime().getSoundEnabled();
-	},
-	get setSoundEnabled() {
-		return (enabled: boolean) => getRuntime().setSoundEnabled(enabled);
-	},
-	get getAudioStatus() {
-		return () => getRuntime().getAudioStatus();
-	},
-	get playSound() {
-		return (kind: "beep" | "applause" | "buzzer") =>
-			getRuntime().playSound(kind);
-	},
-	get onCountdownTick() {
-		return (handler: (value: string) => void) =>
-			getRuntime().onCountdownTick(handler);
-	},
-	get onShowNumber() {
-		return (handler: (payload: ShowNumber) => void) =>
-			getRuntime().onShowNumber(handler);
-	},
-	get onClearScreen() {
-		return (handler: (payload: ClearScreen) => void) =>
-			getRuntime().onClearScreen(handler);
-	},
-	get onAutoRepeatWaiting() {
-		return (handler: (payload: AutoRepeatWaitingPayload) => void) =>
-			getRuntime().onAutoRepeatWaiting(handler);
-	},
-	get onSessionInterrupted() {
-		return (handler: () => void) => {
-			const runtime = getRuntime();
-			return runtime.onSessionInterrupted
-				? runtime.onSessionInterrupted(handler)
-				: Promise.resolve(() => {});
-		};
-	},
-	get onAutoRepeatTick() {
-		return (handler: (payload: AutoRepeatTickPayload) => void) =>
-			getRuntime().onAutoRepeatTick(handler);
-	},
-	get onAppSettingsChanged() {
-		return (handler: (payload: AppSettings) => void) =>
-			getRuntime().onAppSettingsChanged(handler);
-	},
-	get onSessionComplete() {
-		return (handler: (payload: SessionComplete) => void) =>
-			getRuntime().onSessionComplete(handler);
-	},
-};
+});

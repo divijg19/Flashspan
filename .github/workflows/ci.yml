@@ -191,6 +191,15 @@ jobs:
       # wasm-bindgen test runner, so the only symptom of a regression here is a
       # smaller count. Assert the count matches the source instead: this is how
       # the wire-format tests went unrunning on the one target that needs them.
+      #
+      # The count comparison alone is not enough, and that gap is not
+      # hypothetical: `core/engine.rs` and `core/generate.rs` were plain
+      # `#[test]` from the start, so 40 tests never ran on wasm and the count
+      # still matched, because a test that was never decorated moves neither
+      # number. So also assert structurally that no plain `#[test]` survives in
+      # the module the WASM bridge actually exposes. `prop_tests.rs` is exempt:
+      # it is `cfg`-gated out of the wasm build because `proptest` is not a wasm
+      # dependency, which is a deliberate host-only exclusion and not a skip.
       - name: Guard against silently skipped WASM tests
         working-directory: src-tauri
         run: |
@@ -206,6 +215,18 @@ jobs:
             echo "::error::wasm-pack ran $actual tests but $decorated are decorated #[wasm_bindgen_test]. A plain #[test] was silently skipped."
             exit 1
           fi
+
+          # Every test in the module the WASM bridge exposes must be decorated
+          # for both targets. `prop_tests.rs` is the one deliberate exception
+          # (host-only by dependency, not by omission).
+          strays=$(grep -rlE '^[[:space:]]*#\[test\]' src/core --include='*.rs' \
+            | grep -v 'prop_tests.rs' || true)
+          if [ -n "$strays" ]; then
+            echo "::error::plain #[test] in the wasm-exposed core; it compiles for wasm32 but is silently skipped there:"
+            echo "$strays"
+            exit 1
+          fi
+          echo "no plain #[test] in the wasm-exposed core"
 
       # Also run the frontend suite here rather than only in the frontend job:
       # this is the one job where src/wasm/pkg exists, so it is the only place the

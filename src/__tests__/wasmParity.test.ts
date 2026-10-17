@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { normalizeSessionConfig } from "../runtime/browser";
+import { normalizeSessionConfig } from "../runtime/localPlanner";
 import type { SessionConfigInput } from "../runtime/types";
 
 /**

@@ -1,18 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { browserRuntime, planStepsToEvents } from "../runtime/browser";
-import type { SessionConfigInput } from "../runtime/types";
 import {
 	registerWasmCoreBridge,
-	type WasmCoreBridge,
 	type WasmSessionPlan,
 } from "../wasm/coreBridge";
-
-const CONFIG_SNAPSHOT = {
-	digits_per_number: 2,
-	number_duration_s: 0.5,
-	total_numbers: 2,
-	allow_negative_numbers: false,
-};
+import {
+	clearWasmCoreBridge,
+	fakeWasmPlan,
+	registerFakeWasmBridge,
+} from "./__mocks__/fakeWasmPlan";
+import { startedOrFail } from "./helpers";
 
 function showStep(
 	index: number,
@@ -50,39 +47,16 @@ function countdownStep(value: string): WasmSessionPlan["steps"][number] {
 	};
 }
 
+/**
+ * The two-number plan most of these cases drive.
+ *
+ * Built by the shared `fakeWasmPlan` fixture, which reproduces what
+ * `build_session_plan` in `core/engine.rs` emits for a two-number session: the
+ * countdown, then a show/clear pair per number, then the completion. Its
+ * `total_duration_ms` of 4300 is the same value this used to hard-code.
+ */
 function fixedPlan(): WasmSessionPlan {
-	return {
-		session_id: 1,
-		config_snapshot: { ...CONFIG_SNAPSHOT },
-		steps: [
-			clearStep(null),
-			countdownStep("3"),
-			countdownStep("2"),
-			countdownStep("1"),
-			showStep(1, 42, 42),
-			clearStep(1),
-			showStep(2, 17, 59),
-			clearStep(2),
-			clearStep(null),
-			{
-				Complete: { session_id: 1, numbers: [42, 17], sum: 59 },
-			},
-		],
-		total_duration_ms: 4300,
-		numbers_generated: [42, 17],
-		expected_sum: 59,
-	};
-}
-
-function stubBridge(
-	buildSessionPlan: WasmCoreBridge["buildSessionPlan"],
-): WasmCoreBridge {
-	return {
-		async normalizeSessionConfig(_input: SessionConfigInput) {
-			throw new Error("not used in these tests");
-		},
-		buildSessionPlan,
-	};
+	return fakeWasmPlan([42, 17]);
 }
 
 describe("planStepsToEvents", () => {
@@ -151,6 +125,119 @@ describe("planStepsToEvents", () => {
 			] as never),
 		).toBeNull();
 	});
+
+	/**
+	 * Every remaining way a step can be rejected, as one table.
+	 *
+	 * Each of these is reachable from a foreign or corrupt wasm module rather
+	 * than from our own planner, and each one must return null so the caller
+	 * falls back to the local planner. A module that half-decodes would otherwise
+	 * push a truncated schedule into the driver, and the driver's fixed-interval
+	 * chaining turns a missing or malformed event into a stimulus that never
+	 * fires — a session that starts and then goes silent, with nothing to show
+	 * for it.
+	 */
+	it.each([
+		// Two serde tags in one step is not a valid externally-tagged enum.
+		"two tags in one step",
+		"body is not a record",
+		"ShowNumber with index below 1",
+		"ShowNumber with a non-integer value",
+		"ClearScreen with index below 1",
+		"a plan with no numbers at all",
+	])("rejects %s", (label) => {
+		switch (label) {
+			case "two tags in one step": {
+				// The step must be valid under *either* tag, so that the only thing
+				// that can reject it is the ambiguity itself. The trailing
+				// ShowNumber also means `shows > 0`, so without the guard the
+				// parser would take the last-matching tag and accept the plan
+				// instead of falling back to the local planner.
+				const ambiguous = {
+					ShowNumber: {
+						index: 1,
+						value: 5,
+						running_sum: 5,
+						delay_ms_before_next: 500,
+					},
+					ClearScreen: {
+						session_id: 1,
+						index: 1,
+						delay_ms_before_next: 100,
+					},
+				} as never;
+				expect(
+					planStepsToEvents([
+						clearStep(null),
+						ambiguous,
+						showStep(2, 7, 12),
+						clearStep(2),
+					]),
+				).toBeNull();
+				break;
+			}
+			case "body is not a record":
+				expect(planStepsToEvents([{ ShowNumber: 42 }] as never)).toBeNull();
+				break;
+			case "ShowNumber with index below 1":
+				expect(
+					planStepsToEvents([
+						clearStep(null),
+						{
+							ShowNumber: {
+								index: 0,
+								value: 5,
+								running_sum: 5,
+								delay_ms_before_next: 500,
+							},
+						},
+					] as never),
+				).toBeNull();
+				break;
+			case "ShowNumber with a non-integer value":
+				expect(
+					planStepsToEvents([
+						clearStep(null),
+						{
+							ShowNumber: {
+								index: 1,
+								value: "five",
+								running_sum: 5,
+								delay_ms_before_next: 500,
+							},
+						},
+					] as never),
+				).toBeNull();
+				break;
+			case "ClearScreen with index below 1":
+				expect(
+					planStepsToEvents([
+						clearStep(null),
+						{
+							ClearScreen: {
+								session_id: 1,
+								index: 0,
+								delay_ms_before_next: 100,
+							},
+						},
+					] as never),
+				).toBeNull();
+				break;
+			case "a plan with no numbers at all":
+				// `shows === 0` is rejected: a plan of only countdown ticks would
+				// otherwise drive a countdown and then a "finish" with nothing
+				// flashed, which reads as a session that started and went blank.
+				expect(
+					planStepsToEvents([
+						clearStep(null),
+						countdownStep("3"),
+						countdownStep("2"),
+						countdownStep("1"),
+					] as never),
+				).toBeNull();
+				break;
+		}
+	});
 });
 
 describe("WASM single-source execution", () => {
@@ -167,7 +254,7 @@ describe("WASM single-source execution", () => {
 
 	it("plays planned values and sums on the golden timeline", async () => {
 		await browserRuntime.setSoundEnabled(false);
-		registerWasmCoreBridge(stubBridge(async () => fixedPlan()));
+		registerFakeWasmBridge(async () => fixedPlan());
 
 		const shows: Array<{ value: number; runningSum: number; at: number }> = [];
 		let completed: { numbers: number[]; sum: number } | null = null;
@@ -202,11 +289,9 @@ describe("WASM single-source execution", () => {
 
 	it("falls back to the JS planner when the bridge fails", async () => {
 		await browserRuntime.setSoundEnabled(false);
-		registerWasmCoreBridge(
-			stubBridge(async () => {
-				throw new Error("wasm unavailable");
-			}),
-		);
+		registerFakeWasmBridge(async () => {
+			throw new Error("wasm unavailable");
+		});
 
 		let completedCount = 0;
 		let completedNumbers: number[] = [];
@@ -221,9 +306,8 @@ describe("WASM single-source execution", () => {
 			total_numbers: 1,
 			allow_negative_numbers: false,
 		});
-		// No case here supersedes the start, so null would be a contract break.
-		if (!resp) throw new Error("startSession unexpectedly returned null");
-		expect(resp.effective_config.total_numbers).toBe(1);
+		const started = startedOrFail(resp);
+		expect(started.effective_config.total_numbers).toBe(1);
 
 		await vi.advanceTimersByTimeAsync(5000);
 		expect(completedCount).toBe(1);
@@ -233,12 +317,10 @@ describe("WASM single-source execution", () => {
 	it("falls back to the JS planner on malformed steps", async () => {
 		await browserRuntime.setSoundEnabled(false);
 		const bad = fixedPlan();
-		registerWasmCoreBridge(
-			stubBridge(async () => ({
-				...bad,
-				steps: [{ Bogus: {} }] as never,
-			})),
-		);
+		registerFakeWasmBridge(async () => ({
+			...bad,
+			steps: [{ Bogus: {} }] as never,
+		}));
 
 		let completedCount = 0;
 		await browserRuntime.onSessionComplete(() => {
@@ -273,7 +355,7 @@ describe("plan/config agreement", () => {
 
 	afterEach(async () => {
 		await browserRuntime.stopSession();
-		registerWasmCoreBridge(null as never);
+		clearWasmCoreBridge();
 		vi.useRealTimers();
 	});
 
@@ -281,9 +363,6 @@ describe("plan/config agreement", () => {
 		await browserRuntime.setSoundEnabled(false);
 		// The config asks for 3 numbers; the plan provides 2.
 		registerWasmCoreBridge({
-			async normalizeSessionConfig() {
-				throw new Error("not used");
-			},
 			async buildSessionPlan() {
 				const plan = fixedPlan();
 				// The plan carries 2 numbers; the config asks for 3.

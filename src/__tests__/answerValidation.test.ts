@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { __test_setCompletedSession, validateAnswer } from "../runtime/browser";
 import {
-	__test_setCompletedSession,
 	deterministicFallback,
 	generateNumber,
 	parseProvidedAnswerText,
 	parseWithNumberFallback,
-	validateAnswer,
-} from "../runtime/browser";
+} from "../runtime/localPlanner";
 
 describe("parseWithNumberFallback (pre-BigInt browsers)", () => {
 	it("grades exactly up to 15 digits", () => {
@@ -194,55 +193,78 @@ describe("validateAnswer", () => {
 	});
 });
 
+/**
+ * `deterministicFallback` must agree with `next_distinct_value` in
+ * `core/engine.rs`: rotate the magnitude one step inside the digit-width domain,
+ * and carry the previous value's sign while the running sum can still fund it.
+ *
+ * This block previously pinned the opposite rule. It asserted that a negative
+ * predecessor comes back positive ("strips minus") and that an affordable
+ * positive duplicate becomes negative — the two halves of the divergence
+ * `src/__tests__/generatorFallback.test.ts` now pins against. Its comments also
+ * referred to a `maxExclusive` the implementation no longer had, so the values
+ * they claimed to explain were stale.
+ */
 describe("deterministicFallback", () => {
-	it("strips minus for negative lastPayload", () => {
-		const result = deterministicFallback("-5", 1, 10, false);
-		expect(result.payload).toBe("5");
-		expect(result.value).toBe(5);
-	});
-
-	it("applies modulo rotation for positive lastPayload", () => {
-		const result = deterministicFallback("5", 1, 10, true);
-		// With digits=1: maxExclusive=10, (5 % 9) + 1 = 6
-		// runningSum 10 - 6 >= 0 → uses negative: "-6"
+	it("keeps a negative payload negative while the sum funds it", () => {
+		// digits=1: min 1, max 9, span 9. |−5| rotates to 6, and 10 − 6 ≥ 0.
+		const result = deterministicFallback("-5", 1, 10);
 		expect(result.payload).toBe("-6");
 		expect(result.value).toBe(-6);
 	});
 
-	it("never invents a negative when negatives are disabled", () => {
-		const result = deterministicFallback("5", 1, 10, false);
+	it("keeps a positive payload positive even when a negative is affordable", () => {
+		// Same rotation as above, but the predecessor was positive, so the
+		// result is positive: Rust never invents a sign change.
+		const result = deterministicFallback("5", 1, 10);
 		expect(result.payload).toBe("6");
 		expect(result.value).toBe(6);
 	});
 
-	it("produces different payload from lastPayload for positive input", () => {
-		const result = deterministicFallback("5", 1, 10, true);
-		expect(result.payload).not.toBe("5");
+	it("drops the negative once the running sum is too small to fund it", () => {
+		// digits=1: the rotation is 6, and 3 − 6 < 0, so it is taken positive.
+		const result = deterministicFallback("-5", 1, 3);
+		expect(result.payload).toBe("6");
+		expect(result.value).toBe(6);
 	});
 
-	it("respects runningSum constraint when next would exceed it", () => {
-		// runningSum=3, next=6 → 3-6 < 0 → uses positive
-		const result = deterministicFallback("5", 1, 3, true);
-		expect(result.value).toBeGreaterThanOrEqual(0);
-		expect(result.payload).toBe("6");
+	it("produces a payload different from the one it replaced", () => {
+		for (const [last, digits] of [
+			["5", 1],
+			["-5", 1],
+			["50", 2],
+			["-50", 2],
+		] as const) {
+			const result = deterministicFallback(last, digits, 1000);
+			expect(result.payload).not.toBe(last);
+		}
+	});
+
+	it("rotates inside the digit width rather than wrapping", () => {
+		// digits=2: min 10, max 99, span 90. |50| rotates to 51, not 1.
+		const negative = deterministicFallback("-50", 2, 100);
+		expect(negative.payload).toBe("-51");
+		const positive = deterministicFallback("50", 2, 100);
+		expect(positive.payload).toBe("51");
 	});
 
 	it("handles null lastPayload", () => {
-		const result = deterministicFallback(null, 1, 0, false);
+		const result = deterministicFallback(null, 1, 0);
 		expect(result).toEqual({ payload: "1", value: 1 });
 	});
 
-	it("never returns same as lastPayload for digits=2", () => {
-		const result = deterministicFallback("50", 2, 100, true);
-		expect(result.payload).not.toBe("50");
-		// With digits=2: maxExclusive=100, (50 % 99) + 1 = 51
-		expect(result.payload).toBe("-51");
-		expect(result.value).toBe(-51);
-	});
+	it("clamps a below-domain payload into the digit width, matching Rust", () => {
+		// |0| is outside the 1..9 domain. `next_distinct_value` saturates the
+		// subtraction at zero and then rotates from `min`, landing on `min + 1`;
+		// the browser now does the same instead of letting a negative modulo
+		// wrap back to `min`.
+		const result = deterministicFallback("0", 1, 10);
+		expect(result.payload).toBe("2");
+		expect(result.value).toBe(2);
 
-	it("handles zero as lastPayload", () => {
-		const result = deterministicFallback("0", 1, 10, true);
-		// (0 % 9) + 1 = 1, runningSum 10 - 1 >= 0 → "-1"
-		expect(result.payload).toBe("-1");
+		// Same rule a digit wider: min 10, max 99 -> min + 1 = 11.
+		const wide = deterministicFallback("0", 2, 100);
+		expect(wide.payload).toBe("11");
+		expect(wide.value).toBe(11);
 	});
 });

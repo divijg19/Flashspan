@@ -9,6 +9,12 @@ import {
 	registerWasmCoreBridge,
 	type WasmSessionPlan,
 } from "../wasm/coreBridge";
+import {
+	clearWasmCoreBridge,
+	fakeWasmPlan,
+	registerFakeWasmBridge,
+} from "./__mocks__/fakeWasmPlan";
+import { startedOrFail } from "./helpers";
 
 /**
  * Every flashed number must stay on screen for at least its full exposure.
@@ -39,58 +45,19 @@ const CONFIG = {
 };
 
 const EXPOSURE_MS = 500;
+
+/** Blank gap between a clear and the next flash. `INTER_NUMBER_GAP_MS`. */
 const GAP_MS = 100;
 
+/**
+ * The plan these cases drive, from the shared fixture.
+ *
+ * `digits` is passed because `CONFIG` asks for one-digit numbers and a
+ * `config_snapshot` should describe the plan it accompanies; `exposureMs`
+ * matches `EXPOSURE_MS`, which is what the config's 0.5s duration implies.
+ */
 function planFor(numbers: number[]): WasmSessionPlan {
-	const steps: WasmSessionPlan["steps"] = [
-		{ ClearScreen: { session_id: 1, index: null, delay_ms_before_next: 0 } },
-		{ CountdownTick: { value: "3", delay_ms_before_next: 1000 } },
-		{ CountdownTick: { value: "2", delay_ms_before_next: 1000 } },
-		{ CountdownTick: { value: "1", delay_ms_before_next: 1100 } },
-	];
-	let at = 3100;
-	let running = 0;
-	for (let i = 0; i < numbers.length; i += 1) {
-		running += numbers[i];
-		steps.push({
-			ShowNumber: {
-				session_id: 1,
-				// Rust reports these 1-based.
-				index: i + 1,
-				total: numbers.length,
-				value: numbers[i],
-				running_sum: running,
-				delay_ms_before_next: EXPOSURE_MS,
-			},
-		});
-		at += EXPOSURE_MS;
-		steps.push({
-			ClearScreen: {
-				session_id: 1,
-				index: i + 1,
-				delay_ms_before_next: GAP_MS,
-			},
-		});
-		at += GAP_MS;
-	}
-	steps.push({
-		ClearScreen: { session_id: 1, index: null, delay_ms_before_next: 0 },
-	});
-	steps.push({
-		Complete: {
-			session_id: 1,
-			numbers,
-			sum: numbers.reduce((a, b) => a + b, 0),
-		},
-	});
-	return {
-		session_id: 1,
-		config_snapshot: { ...CONFIG },
-		steps,
-		total_duration_ms: at,
-		numbers_generated: numbers,
-		expected_sum: numbers.reduce((a, b) => a + b, 0),
-	};
+	return fakeWasmPlan(numbers, { exposureMs: EXPOSURE_MS, digits: 1 });
 }
 
 /**
@@ -118,7 +85,7 @@ function recorder() {
 			return shows.map((show) => {
 				const clear = clears.find((c) => c.index === show.index);
 				if (!clear) {
-					throw new Error(`number ${show.index} was never cleared`);
+					throw new Error(`Number ${show.index} was never cleared`);
 				}
 				return clear.emitted_at_ms - show.emitted_at_ms;
 			});
@@ -127,14 +94,7 @@ function recorder() {
 }
 
 function stubBridge(numbers: number[]): void {
-	registerWasmCoreBridge({
-		async normalizeSessionConfig() {
-			throw new Error("not used");
-		},
-		async buildSessionPlan() {
-			return planFor(numbers);
-		},
-	});
+	registerFakeWasmBridge(async () => planFor(numbers));
 }
 
 describe("flashed number exposure", () => {
@@ -165,16 +125,15 @@ describe("flashed number exposure", () => {
 
 	afterEach(async () => {
 		await browserRuntime.stopSession();
-		registerWasmCoreBridge(null as never);
+		clearWasmCoreBridge();
 		vi.restoreAllMocks();
 		vi.useRealTimers();
 	});
 
 	async function run(): Promise<StartSessionResponse> {
-		const response = await browserRuntime.startSession({ ...CONFIG }, null);
-		// No case here supersedes the start, so a null would be a contract break.
-		expect(response).not.toBeNull();
-		return response as StartSessionResponse;
+		return startedOrFail(
+			await browserRuntime.startSession({ ...CONFIG }, null),
+		);
 	}
 
 	it("keeps the first number's exposure full despite late delivery", async () => {
@@ -240,7 +199,7 @@ describe("flashed number exposure", () => {
 		await browserRuntime.setSoundEnabled(false);
 
 		// JS-fallback path: no bridge registered.
-		registerWasmCoreBridge(null as never);
+		clearWasmCoreBridge();
 		const fallback = recorder();
 		await fallback.start();
 		await run();
@@ -292,7 +251,7 @@ describe("stop during start", () => {
 	});
 
 	afterEach(async () => {
-		registerWasmCoreBridge(null as never);
+		clearWasmCoreBridge();
 		vi.restoreAllMocks();
 		vi.useRealTimers();
 	});
@@ -303,9 +262,6 @@ describe("stop during start", () => {
 		// the session in the window before it completes.
 		let releasePlan: (plan: WasmSessionPlan) => void = () => {};
 		registerWasmCoreBridge({
-			async normalizeSessionConfig() {
-				throw new Error("not used");
-			},
 			buildSessionPlan() {
 				return new Promise((resolve) => {
 					releasePlan = resolve;

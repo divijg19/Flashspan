@@ -2,11 +2,14 @@ import {
 	createEffect,
 	createMemo,
 	createSignal,
-	For,
 	onCleanup,
 	onMount,
 	Show,
 } from "solid-js";
+import { AdvancedSettings } from "./components/AdvancedSettings";
+import { AnswerNumbers } from "./components/AnswerNumbers";
+import { NumberField } from "./components/NumberField";
+import { SessionEndDetails } from "./components/SessionEndDetails";
 import { COUNTDOWN_FROM } from "./timing";
 import "./App.css";
 import {
@@ -24,6 +27,18 @@ function isEscapeKey(event: KeyboardEvent): boolean {
 	return event.key === "Escape";
 }
 
+/**
+ * Enter or leave fullscreen, best-effort.
+ *
+ * Never throws and never blocks a caller on a refusal: the Fullscreen API is
+ * simply absent on some targets (iOS Safari has no element `requestFullscreen`,
+ * as do cross-origin iframes and some WebViews) and can be refused by policy.
+ * Treating a refusal as fatal left the Start button permanently dead there, so
+ * a failure is swallowed and the session runs windowed; the countdown tick
+ * retries the request, which is the mechanism that actually matters. An absent
+ * `requestFullscreen` is not special-cased — calling it throws `TypeError`,
+ * which the same handler catches.
+ */
 async function setFullscreen(enabled: boolean): Promise<void> {
 	if (typeof document === "undefined") {
 		return;
@@ -38,72 +53,9 @@ async function setFullscreen(enabled: boolean): Promise<void> {
 			await document.exitFullscreen();
 		}
 	} catch {
-		// Ignore: some platforms or browser policies may refuse fullscreen.
+		// Best-effort: unsupported or refused. The countdown retries; the
+		// session runs windowed.
 	}
-}
-
-/**
- * Best-effort fullscreen entry before a session starts.
- *
- * Never throws and never blocks: the Fullscreen API is simply absent on some
- * targets (iOS Safari has no element `requestFullscreen`, as do cross-origin
- * iframes and some WebViews) and can be refused by policy. Treating a refusal
- * as fatal left the Start button permanently dead there. The countdown tick
- * retries the request, which is the mechanism that actually matters.
- */
-async function requestFullscreenBestEffort(): Promise<void> {
-	if (typeof document === "undefined") {
-		return;
-	}
-
-	if (document.fullscreenElement) {
-		return;
-	}
-
-	if (typeof document.documentElement.requestFullscreen !== "function") {
-		return;
-	}
-
-	try {
-		await document.documentElement.requestFullscreen();
-	} catch {
-		// Best-effort: the countdown retries, and the session runs windowed.
-	}
-}
-
-/**
- * Auto-repeat status strip: countdown label, progress ramp and cancel.
- *
- * Rendered in both answer modes, so it lives here rather than being duplicated:
- * the ramp's duration has to be identical in both places or one of the bars
- * animates differently.
- */
-// Exported for its unit test; the app itself only renders it internally.
-export function AutoRepeatBar(props: {
-	secondsLeft: number;
-	remaining: number;
-	fillMs: number;
-	onCancel: () => void;
-}) {
-	return (
-		<div class="autoRepeatBar">
-			<div class="autoRepeatStatus">
-				<div class="autoRepeatStatusText">
-					Next question in {props.secondsLeft}s · {props.remaining + 1}{" "}
-					remaining
-				</div>
-				<div class="autoRepeatProgressBar">
-					<div
-						class="autoRepeatProgressFill"
-						style={{ "animation-duration": `${props.fillMs}ms` }}
-					/>
-				</div>
-				<button class="autoRepeatCancel" type="button" onClick={props.onCancel}>
-					Cancel auto-repeat
-				</button>
-			</div>
-		</div>
-	);
 }
 
 export default function App() {
@@ -321,13 +273,20 @@ export default function App() {
 		createSignal<boolean>(false);
 
 	let sumInputRef: HTMLInputElement | undefined;
-	let overlayRef: HTMLDivElement | undefined;
 
 	const isRunning = (): boolean =>
 		phase() === "starting" || phase() === "flashing";
 
-	const resetForIncomingSessionIfComplete = () => {
-		if (phase() !== "complete") return;
+	/**
+	 * Clear everything the answer surface showed.
+	 *
+	 * Three callers need this exact set — the incoming-session reset, the Start
+	 * path and the stop path — and they used to write the seven setters out
+	 * separately each time, so adding a fifth piece of answer state (say, a
+	 * per-number breakdown) meant remembering three places. The variants that
+	 * follow are short and say what *they* add on top.
+	 */
+	const clearAnswerState = () => {
 		setShowAnswer(false);
 		setAnswerSum(0);
 		setTypedAnswer("");
@@ -335,6 +294,18 @@ export default function App() {
 		setShowNumbersList(false);
 		setHasValidated(false);
 		setAutoRepeatSecondsLeft(null);
+	};
+
+	/**
+	 * Answer state is only cleared once a session is over.
+	 *
+	 * The guard matters: this runs from event handlers that fire *during* a
+	 * session (a countdown tick arriving late for the previous session, say),
+	 * and wiping the answer mid-flash would blank a reveal the user is reading.
+	 */
+	const resetForIncomingSessionIfComplete = () => {
+		if (phase() !== "complete") return;
+		clearAnswerState();
 	};
 
 	const applyAutoRepeatWaiting = (payload: AutoRepeatWaitingPayload) => {
@@ -352,56 +323,25 @@ export default function App() {
 		requestAnimationFrame(() => sumInputRef?.focus?.());
 	});
 
-	createEffect(() => {
-		if (!showAdvanced() || !overlayRef) return;
-
-		const panel = overlayRef.querySelector<HTMLElement>(".advancedPanel");
-		if (!panel) return;
-
-		const focusable = panel.querySelectorAll<HTMLElement>(
-			'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-		);
-		if (focusable.length === 0) return;
-
-		const first = focusable[0];
-		const last = focusable[focusable.length - 1];
-		first.focus();
-
-		const handler = (e: KeyboardEvent) => {
-			if (e.key !== "Tab") return;
-			if (e.shiftKey && document.activeElement === first) {
-				e.preventDefault();
-				last.focus();
-			} else if (!e.shiftKey && document.activeElement === last) {
-				e.preventDefault();
-				first.focus();
-			}
-		};
-
-		panel.addEventListener("keydown", handler);
-		onCleanup(() => panel.removeEventListener("keydown", handler));
-	});
-
+	/**
+	 * The runtime owns the message text.
+	 *
+	 * `SubmitAnswerResponse.message` is formatted by the runtime that graded the
+	 * answer — Rust on desktop, `formatValidationMessage` on the web — so the
+	 * app renders it verbatim instead of rebuilding the same string from the
+	 * numeric fields (which had to stay word-for-word in step with two other
+	 * copies and silently did not belong to either runtime's tests).
+	 */
 	const applySubmitAnswerResponse = (resp: SubmitAnswerResponse) => {
-		const { validation } = resp;
-		const ok = validation.correct;
-
-		const lines = [
-			ok ? "Correct ✅" : "Incorrect",
-			`Expected answer: ${validation.expected_sum}`,
-		];
-
-		if (!ok) {
-			const d = validation.delta;
-			lines.push(`Difference: ${d > 0 ? "+" : ""}${d}`);
-		}
-
-		setValidationSummary(lines.join("\n"));
+		setValidationSummary(resp.message);
 
 		if (resp.auto_repeat_waiting) {
 			applyAutoRepeatWaiting(resp.auto_repeat_waiting);
 		}
 	};
+
+	/** The revealed list only shows after a grading attempt, on request. */
+	const numbersVisible = () => hasValidated() && showNumbersList();
 
 	const validateTypedAnswer = async () => {
 		if (hasValidated()) {
@@ -446,7 +386,10 @@ export default function App() {
 		try {
 			const settings = await runtime.getAppSettings();
 			setColorScheme(settings.color_scheme);
-			setThemeMode(settings.theme_mode ?? "dark");
+			// Normalize exactly as the onAppSettingsChanged handler below does, so
+			// both paths agree on how an out-of-contract value is handled instead of
+			// one using `??` and the other an explicit compare.
+			setThemeMode(settings.theme_mode === "light" ? "light" : "dark");
 			try {
 				const s = await runtime.getSoundEnabled();
 				setSoundEnabled(s);
@@ -458,114 +401,115 @@ export default function App() {
 			// Best-effort.
 		}
 
-		const unlistenCountdown = await runtime.onCountdownTick((value) => {
-			resetForIncomingSessionIfComplete();
-			setPhase("countdown");
-			setDisplayText(value);
-			setCurrentShown(null);
-			// Retry fullscreen at the start of the countdown, away from the first flash
-			// paint: the transition must not steal time from that paint. This is
-			// the real mechanism now that starting no longer depends on it.
-			if (value === "3") void setFullscreen(true);
-		});
-
-		const unlistenFlash = await runtime.onShowNumber((payload) => {
-			resetForIncomingSessionIfComplete();
-			setSessionId(payload.session_id);
-			setPhase("flashing");
-			setDisplayText(String(payload.value));
-			setCurrentShown({
-				session_id: payload.session_id,
-				index: payload.index,
-				emitted_at_ms: payload.emitted_at_ms,
-			});
-
-			// Debug-only: measure backend->UI delivery latency for first flash.
-			if (
-				import.meta.env.DEV &&
-				payload.index === 1 &&
-				lastFirstFlashSessionId !== payload.session_id
-			) {
-				lastFirstFlashSessionId = payload.session_id;
-				const deltaMs = Date.now() - payload.emitted_at_ms;
-				console.debug(`[flashspan] first flash latency: ${deltaMs}ms`);
-			}
-		});
-
-		const unlistenClear = await runtime.onClearScreen((payload) => {
-			const activeSessionId = sessionId();
-			if (activeSessionId == null) return;
-			if (payload.session_id !== activeSessionId) return;
-
-			const cur = currentShown();
-			if (cur && payload.emitted_at_ms < cur.emitted_at_ms) return;
-
-			if (payload.index == null) {
-				setDisplayText("");
+		// Subscribe to every session event at once. On desktop each subscription
+		// is an IPC round-trip, so awaiting them in turn paid that latency
+		// serially; `Promise.all` overlaps the registrations and yields a single
+		// array to clean up. Order does not matter — a session only starts after
+		// the user presses Start, long after this resolves.
+		const unlisten = await Promise.all([
+			runtime.onCountdownTick((value) => {
+				resetForIncomingSessionIfComplete();
+				setPhase("countdown");
+				setDisplayText(value);
 				setCurrentShown(null);
-				return;
-			}
+				// Retry fullscreen at the start of the countdown, away from the first flash
+				// paint: the transition must not steal time from that paint. This is
+				// the real mechanism now that starting no longer depends on it.
+				if (value === "3") void setFullscreen(true);
+			}),
 
-			if (cur && cur.index === payload.index) {
-				setDisplayText("");
-				setCurrentShown(null);
-			}
-		});
+			runtime.onShowNumber((payload) => {
+				resetForIncomingSessionIfComplete();
+				setSessionId(payload.session_id);
+				setPhase("flashing");
+				setDisplayText(String(payload.value));
+				setCurrentShown({
+					session_id: payload.session_id,
+					index: payload.index,
+					emitted_at_ms: payload.emitted_at_ms,
+				});
 
-		const unlistenAutoRepeatWaiting = await runtime.onAutoRepeatWaiting(
-			(payload) => {
+				// Debug-only: measure backend->UI delivery latency for first flash.
+				if (
+					import.meta.env.DEV &&
+					payload.index === 1 &&
+					lastFirstFlashSessionId !== payload.session_id
+				) {
+					lastFirstFlashSessionId = payload.session_id;
+					const deltaMs = Date.now() - payload.emitted_at_ms;
+					console.debug(`[flashspan] first flash latency: ${deltaMs}ms`);
+				}
+			}),
+
+			runtime.onClearScreen((payload) => {
+				const activeSessionId = sessionId();
+				if (activeSessionId == null) return;
+				if (payload.session_id !== activeSessionId) return;
+
+				const cur = currentShown();
+				if (cur && payload.emitted_at_ms < cur.emitted_at_ms) return;
+
+				if (payload.index == null) {
+					setDisplayText("");
+					setCurrentShown(null);
+					return;
+				}
+
+				if (cur && cur.index === payload.index) {
+					setDisplayText("");
+					setCurrentShown(null);
+				}
+			}),
+
+			runtime.onAutoRepeatWaiting((payload) => {
 				if (!autoRepeatEnabled()) return;
 				applyAutoRepeatWaiting(payload);
-			},
-		);
+			}),
 
-		const unlistenAutoRepeatTick = await runtime.onAutoRepeatTick((payload) => {
-			if (!autoRepeatEnabled()) return;
-			setAutoRepeatRemaining(payload.remaining);
-			setAutoRepeatSecondsLeft(payload.seconds_left);
-		});
+			runtime.onAutoRepeatTick((payload) => {
+				if (!autoRepeatEnabled()) return;
+				setAutoRepeatRemaining(payload.remaining);
+				setAutoRepeatSecondsLeft(payload.seconds_left);
+			}),
 
-		const unlistenSettings = await runtime.onAppSettingsChanged((payload) => {
-			setColorScheme(payload.color_scheme);
-			// payload.theme_mode may be 'dark' | 'light'
-			// ensure UI reflects server-side change
-			setThemeMode(payload.theme_mode === "light" ? "light" : "dark");
-		});
+			runtime.onAppSettingsChanged((payload) => {
+				setColorScheme(payload.color_scheme);
+				// payload.theme_mode may be 'dark' | 'light'
+				// ensure UI reflects server-side change
+				setThemeMode(payload.theme_mode === "light" ? "light" : "dark");
+			}),
 
-		const unlistenInterrupted = await runtime.onSessionInterrupted(() => {
-			// The runtime has already torn the session down; report it rather than
-			// leaving a screen that looks stuck. There is no result to grade.
-			resetForIncomingSessionIfComplete();
-			setPhase("idle");
-			setErrorText(
-				"Session interrupted while the browser tab was in the background.",
-			);
-		});
+			runtime.onSessionInterrupted(() => {
+				// The runtime has already torn the session down; report it rather than
+				// leaving a screen that looks stuck. There is no result to grade.
+				resetForIncomingSessionIfComplete();
+				setPhase("idle");
+				setErrorText(
+					"Session interrupted while the browser tab was in the background.",
+				);
+			}),
 
-		const unlistenComplete = await runtime.onSessionComplete((payload) => {
-			setPhase("complete");
-			setDisplayText("");
-			setCurrentShown(null);
-			setShowAnswer(false);
-			setNumbers(payload.numbers);
-			setAnswerSum(payload.sum);
-			setTypedAnswer("");
-			setValidationSummary("");
-			setShowNumbersList(false);
-			setHasValidated(false);
-			setAutoRepeatSecondsLeft(null);
-			setSessionId(payload.session_id);
-			void setFullscreen(false);
-		});
+			runtime.onSessionComplete((payload) => {
+				setPhase("complete");
+				setDisplayText("");
+				setCurrentShown(null);
+				// Reset the shared answer surface, then lay this session's plan on
+				// top: `clearAnswerState` zeroes `answerSum`, so the real total is
+				// written after it.
+				clearAnswerState();
+				setNumbers(payload.numbers);
+				setAnswerSum(payload.sum);
+				setSessionId(payload.session_id);
+				void setFullscreen(false);
+			}),
+		]);
 
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (!isEscapeKey(e)) return;
-			if (
-				phase() !== "flashing" &&
-				phase() !== "starting" &&
-				phase() !== "countdown"
-			)
-				return;
+			// Escape stops a live session. `isRunning` covers starting/flashing;
+			// the countdown is the one active phase it does not, and Escape while
+			// it runs cancels the pending start.
+			if (!isRunning() && phase() !== "countdown") return;
 			void stop();
 		};
 
@@ -573,14 +517,7 @@ export default function App() {
 
 		onCleanup(() => {
 			window.removeEventListener("keydown", onKeyDown);
-			unlistenCountdown();
-			unlistenFlash();
-			unlistenClear();
-			unlistenAutoRepeatWaiting();
-			unlistenAutoRepeatTick();
-			unlistenSettings();
-			unlistenComplete();
-			unlistenInterrupted();
+			for (const unsubscribe of unlisten) unsubscribe();
 		});
 	});
 
@@ -601,15 +538,7 @@ export default function App() {
 		setErrorText("");
 		setShowAdvanced(false);
 
-		setShowAnswer(false);
-		setAnswerSum(0);
-		setTypedAnswer("");
-		setValidationSummary("");
-		setShowNumbersList(false);
-		setHasValidated(false);
-
-		setAutoRepeatSecondsLeft(null);
-
+		clearAnswerState();
 		setSessionId(null);
 		setNumbers([]);
 
@@ -629,7 +558,7 @@ export default function App() {
 				autoRepeatEffective ? Math.trunc(autoRepeatCount()) : 0,
 			);
 
-			await requestFullscreenBestEffort();
+			await setFullscreen(true);
 			const resp = await runtime.startSession(
 				config,
 				autoRepeatEffective
@@ -670,14 +599,8 @@ export default function App() {
 			setPhase("idle");
 			setDisplayText("");
 			setCurrentShown(null);
-			setShowAnswer(false);
-			setAnswerSum(0);
-			setTypedAnswer("");
-			setValidationSummary("");
-			setShowNumbersList(false);
-			setHasValidated(false);
+			clearAnswerState();
 			setAutoRepeatRemaining(0);
-			setAutoRepeatSecondsLeft(null);
 			setSessionId(null);
 			setNumbers([]);
 			void setFullscreen(false);
@@ -755,439 +678,66 @@ export default function App() {
 						</button>
 
 						{showAdvanced() ? (
-							<div class="advancedOverlay" ref={overlayRef}>
-								<button
-									class="advancedOverlayDismiss"
-									type="button"
-									tabIndex={-1}
-									aria-label="Close additional settings"
-									onClick={() => setShowAdvanced(false)}
-								/>
-								<div class="advancedPanel">
-									<div class="advancedSectionTitle">Additional settings</div>
-
-									<div class="advancedSetting">
-										<div class="settingRow">
-											<div class="label">Auto-repeat</div>
-											<div
-												class="segmented"
-												role="radiogroup"
-												aria-label="Auto-repeat"
-											>
-												<label class="segmentedOption">
-													<input
-														class="segmentedInput"
-														type="radio"
-														name="auto-repeat-enabled"
-														value="off"
-														disabled={isRunning()}
-														checked={!autoRepeatEnabled()}
-														onInput={() => {
-															setAutoRepeatEnabled(false);
-															setAutoRepeatRemaining(0);
-															setAutoRepeatSecondsLeft(null);
-															void runtime.cancelAutoRepeat();
-														}}
-													/>
-													<span class="segmentedLabel">Off</span>
-												</label>
-												<label class="segmentedOption">
-													<input
-														class="segmentedInput"
-														type="radio"
-														name="auto-repeat-enabled"
-														value="on"
-														disabled={isRunning()}
-														checked={autoRepeatEnabled()}
-														onInput={() => setAutoRepeatEnabled(true)}
-													/>
-													<span class="segmentedLabel">On</span>
-												</label>
-											</div>
-										</div>
-
-										{autoRepeatEnabled() ? (
-											<div class="field">
-												<div class="fieldRow">
-													<div class="label">Repeats</div>
-													<input
-														class="input"
-														type="number"
-														min="1"
-														max="20"
-														step="1"
-														value={autoRepeatCount()}
-														disabled={isRunning()}
-														onInput={(e) =>
-															setAutoRepeatCount(
-																Number.isFinite(e.currentTarget.valueAsNumber)
-																	? e.currentTarget.valueAsNumber
-																	: 1,
-															)
-														}
-													/>
-												</div>
-												<input
-													class="range"
-													type="range"
-													min="1"
-													max="20"
-													step="1"
-													value={autoRepeatCount()}
-													disabled={isRunning()}
-													onInput={(e) =>
-														setAutoRepeatCount(
-															Number.isFinite(e.currentTarget.valueAsNumber)
-																? e.currentTarget.valueAsNumber
-																: 1,
-														)
-													}
-												/>
-												{autoRepeatCount() < 1 ? (
-													<div class="validationWarning">
-														Repeats must be at least 1
-													</div>
-												) : null}
-											</div>
-										) : null}
-
-										{autoRepeatEnabled() ? (
-											<>
-												<div class="fieldRow">
-													<div class="label">
-														Delay before next question (s)
-													</div>
-													<input
-														class="input"
-														type="number"
-														min="5"
-														max="120"
-														step="1"
-														value={autoRepeatDelaySeconds()}
-														disabled={isRunning()}
-														onInput={(e) =>
-															setAutoRepeatDelaySeconds(
-																Number.isFinite(e.currentTarget.valueAsNumber)
-																	? e.currentTarget.valueAsNumber
-																	: 5,
-															)
-														}
-													/>
-												</div>
-												<div class="hint">Starts after you validate.</div>
-											</>
-										) : null}
-									</div>
-
-									<div class="advancedSetting">
-										<div class="settingRow">
-											<div class="label">Answer mode</div>
-											<div
-												class="segmented"
-												role="radiogroup"
-												aria-label="Answer mode"
-											>
-												<label class="segmentedOption">
-													<input
-														class="segmentedInput"
-														type="radio"
-														name="answer-mode"
-														value="reveal"
-														disabled={isRunning()}
-														checked={answerMode() === "reveal"}
-														onInput={() => setAnswerMode("reveal")}
-													/>
-													<span class="segmentedLabel">Click</span>
-												</label>
-												<label class="segmentedOption">
-													<input
-														class="segmentedInput"
-														type="radio"
-														name="answer-mode"
-														value="type"
-														disabled={isRunning()}
-														checked={answerMode() === "type"}
-														onInput={() => setAnswerMode("type")}
-													/>
-													<span class="segmentedLabel">Type</span>
-												</label>
-											</div>
-										</div>
-									</div>
-
-									<div class="advancedSetting">
-										<div class="settingRow">
-											<div class="label">
-												Color
-												<div
-													class="modeVertical"
-													role="radiogroup"
-													aria-label="Theme mode"
-												>
-													<label class="segmentedOption">
-														<input
-															class="segmentedInput"
-															type="radio"
-															name="theme-mode"
-															value="dark"
-															disabled={isRunning()}
-															checked={themeMode() === "dark"}
-															onInput={() => {
-																setThemeMode("dark");
-																void runtime.setThemeMode("dark");
-															}}
-														/>
-														<span class="segmentedLabel">Dark</span>
-													</label>
-													<label class="segmentedOption">
-														<input
-															class="segmentedInput"
-															type="radio"
-															name="theme-mode"
-															value="light"
-															disabled={isRunning()}
-															checked={themeMode() === "light"}
-															onInput={() => {
-																setThemeMode("light");
-																void runtime.setThemeMode("light");
-															}}
-														/>
-														<span class="segmentedLabel">Light</span>
-													</label>
-												</div>
-											</div>
-											<div
-												class="colorGrid"
-												role="radiogroup"
-												aria-label="Color"
-											>
-												{(() => {
-													const values = [
-														"midnight",
-														"crimson",
-														"aqua",
-														"violet",
-														"amber",
-														"ivory",
-													] as const;
-													const darkNames: Record<string, string> = {
-														midnight: "Midnight",
-														crimson: "Crimson",
-														aqua: "Aqua",
-														violet: "Violet",
-														amber: "Amber",
-														ivory: "Obsidian",
-													};
-													const lightNames: Record<string, string> = {
-														midnight: "Dawn",
-														crimson: "Blush",
-														aqua: "Sea Glass",
-														violet: "Lilac",
-														amber: "Saffron",
-														ivory: "Ivory",
-													};
-
-													return values.map((value) => {
-														const label =
-															themeMode() === "light"
-																? lightNames[value]
-																: darkNames[value];
-														return (
-															<label class="colorOption" title={label}>
-																<input
-																	class="segmentedInput"
-																	type="radio"
-																	name="color-scheme"
-																	value={value}
-																	disabled={isRunning()}
-																	checked={colorScheme() === value}
-																	onInput={() => {
-																		setColorScheme(value);
-																		void runtime.setColorScheme(value);
-																	}}
-																/>
-																<span
-																	classList={{
-																		colorSwatch: true,
-																		[`sw-preview-${value}`]: true,
-																	}}
-																	aria-hidden="true"
-																/>
-																<span class="colorLabel">{label}</span>
-															</label>
-														);
-													});
-												})()}
-											</div>
-										</div>
-									</div>
-
-									<div class="advancedSetting">
-										<div class="settingRow">
-											<div class="label">Allow negative numbers</div>
-											<div
-												class="segmented"
-												role="radiogroup"
-												aria-label="Allow negative numbers"
-											>
-												<label class="segmentedOption">
-													<input
-														class="segmentedInput"
-														type="radio"
-														name="allow-negative-numbers"
-														value="off"
-														disabled={isRunning()}
-														checked={!allowNegativeNumbers()}
-														onInput={() => setAllowNegativeNumbers(false)}
-													/>
-													<span class="segmentedLabel">Off</span>
-												</label>
-												<label class="segmentedOption">
-													<input
-														class="segmentedInput"
-														type="radio"
-														name="allow-negative-numbers"
-														value="on"
-														disabled={isRunning()}
-														checked={allowNegativeNumbers()}
-														onInput={() => setAllowNegativeNumbers(true)}
-													/>
-													<span class="segmentedLabel">On</span>
-												</label>
-											</div>
-										</div>
-									</div>
-
-									<div class="advancedDivider" />
-
-									<div class="actions">
-										<button
-											class="button"
-											type="button"
-											onClick={() => setShowAdvanced(false)}
-											disabled={isRunning()}
-										>
-											Close
-										</button>
-									</div>
-								</div>
-							</div>
+							<AdvancedSettings
+								close={() => setShowAdvanced(false)}
+								disabled={isRunning()}
+								autoRepeat={{
+									enabled: autoRepeatEnabled,
+									setEnabled: setAutoRepeatEnabled,
+									count: autoRepeatCount,
+									setCount: setAutoRepeatCount,
+									delaySeconds: autoRepeatDelaySeconds,
+									setDelaySeconds: setAutoRepeatDelaySeconds,
+									cancel: cancelAutoRepeat,
+								}}
+								answerMode={answerMode}
+								setAnswerMode={setAnswerMode}
+								allowNegativeNumbers={allowNegativeNumbers}
+								setAllowNegativeNumbers={setAllowNegativeNumbers}
+								colorScheme={colorScheme}
+								setColorScheme={setColorScheme}
+								themeMode={themeMode}
+								setThemeMode={setThemeMode}
+								persistColorScheme={(value) => {
+									void runtime.setColorScheme(value);
+								}}
+								persistThemeMode={(value) => {
+									void runtime.setThemeMode(value);
+								}}
+							/>
 						) : null}
 
 						<div class="grid">
-							<div class="field">
-								<div class="fieldRow">
-									<div class="label">Digits per number</div>
-									<input
-										class="input"
-										type="number"
-										min="1"
-										max="15"
-										step="1"
-										value={digitsPerNumber()}
-										disabled={isRunning()}
-										onInput={(e) =>
-											setDigitsPerNumber(
-												Number.isFinite(e.currentTarget.valueAsNumber)
-													? e.currentTarget.valueAsNumber
-													: 1,
-											)
-										}
-									/>
-								</div>
-								<input
-									class="range"
-									type="range"
-									min="1"
-									max="15"
-									step="1"
-									value={digitsPerNumber()}
-									disabled={isRunning()}
-									onInput={(e) =>
-										setDigitsPerNumber(
-											Number.isFinite(e.currentTarget.valueAsNumber)
-												? e.currentTarget.valueAsNumber
-												: 1,
-										)
-									}
-								/>
-							</div>
-
-							<div class="field">
-								<div class="fieldRow">
-									<div class="label">Duration per number (s)</div>
-									<input
-										class="input"
-										type="number"
-										min="0.1"
-										max="5"
-										step="0.1"
-										value={numberDurationSeconds()}
-										disabled={isRunning()}
-										onInput={(e) =>
-											setNumberDurationSeconds(
-												Number.isFinite(e.currentTarget.valueAsNumber)
-													? e.currentTarget.valueAsNumber
-													: 0.1,
-											)
-										}
-									/>
-								</div>
-								<input
-									class="range"
-									type="range"
-									min="0.1"
-									max="5"
-									step="0.1"
-									value={numberDurationSeconds()}
-									disabled={isRunning()}
-									onInput={(e) =>
-										setNumberDurationSeconds(
-											Number.isFinite(e.currentTarget.valueAsNumber)
-												? e.currentTarget.valueAsNumber
-												: 0.1,
-										)
-									}
-								/>
-							</div>
-
-							<div class="field">
-								<div class="fieldRow">
-									<div class="label">Total numbers</div>
-									<input
-										class="input"
-										type="number"
-										min="1"
-										max="1500"
-										step="1"
-										value={totalNumbers()}
-										disabled={isRunning()}
-										onInput={(e) =>
-											setTotalNumbers(
-												Number.isFinite(e.currentTarget.valueAsNumber)
-													? e.currentTarget.valueAsNumber
-													: 1,
-											)
-										}
-									/>
-								</div>
-								<input
-									class="range"
-									type="range"
-									min="1"
-									max="1500"
-									step="1"
-									value={totalNumbers()}
-									disabled={isRunning()}
-									onInput={(e) =>
-										setTotalNumbers(
-											Number.isFinite(e.currentTarget.valueAsNumber)
-												? e.currentTarget.valueAsNumber
-												: 1,
-										)
-									}
-								/>
-							</div>
+							<NumberField
+								label="Digits per number"
+								value={digitsPerNumber}
+								setValue={setDigitsPerNumber}
+								min={1}
+								max={15}
+								step={1}
+								fallback={1}
+								disabled={isRunning}
+							/>
+							<NumberField
+								label="Duration per number (s)"
+								value={numberDurationSeconds}
+								setValue={setNumberDurationSeconds}
+								min={0.1}
+								max={5}
+								step={0.1}
+								fallback={0.1}
+								disabled={isRunning}
+							/>
+							<NumberField
+								label="Total numbers"
+								value={totalNumbers}
+								setValue={setTotalNumbers}
+								min={1}
+								max={1500}
+								step={1}
+								fallback={1}
+								disabled={isRunning}
+							/>
 						</div>
 
 						<div class="actions">
@@ -1258,17 +808,21 @@ export default function App() {
 					</div>
 				) : phase() === "complete" ? (
 					<div class="endScreen">
-						{answerMode() === "reveal" ? (
-							<div class="answerCard">
-								<div class="endHeaderCenter">
-									<div class="endTitle" role="status">
-										Session complete
-									</div>
-									<div class="endSub">Click to see answer</div>
+						<div class="answerCard">
+							<div class="endHeaderCenter">
+								<div class="endTitle" role="status">
+									Session complete
 								</div>
+								<div class="endSub">
+									{answerMode() === "reveal"
+										? "Click to see answer"
+										: "Type your answer"}
+								</div>
+							</div>
 
-								<div class="endBody">
-									{!showAnswer() ? (
+							<div class="endBody">
+								{answerMode() === "reveal" ? (
+									!showAnswer() ? (
 										<div class="actionField">
 											<button
 												class="button"
@@ -1298,157 +852,88 @@ export default function App() {
 												<div class="sumValue">{answerSum()}</div>
 											</div>
 
-											{hasValidated() && showNumbersList() ? (
-												<div class="answerNumbers">
-													<For each={numbers()}>
-														{(n, idx) => (
-															<div class="answerRow">
-																<div class="answerIndex">{idx() + 1}</div>
-																<div class="answerValue">{n}</div>
-															</div>
-														)}
-													</For>
-												</div>
+											<AnswerNumbers
+												visible={numbersVisible}
+												numbers={numbers}
+											/>
+										</>
+									)
+								) : (
+									<>
+										<input
+											ref={(el) => (sumInputRef = el)}
+											class="sumInput"
+											type="text"
+											inputmode="numeric"
+											autocomplete="off"
+											placeholder="Enter the answer"
+											disabled={hasValidated()}
+											value={typedAnswer()}
+											onInput={(e) => {
+												if (hasValidated()) return;
+												setTypedAnswer(e.currentTarget.value);
+											}}
+											onKeyDown={(e) => {
+												if (hasValidated()) return;
+												if (e.key === "Enter") void validateTypedAnswer();
+											}}
+											spellcheck={false}
+										/>
+
+										{validationSummary() ? (
+											<pre class="validationText" role="alert">
+												{validationSummary()}
+											</pre>
+										) : null}
+
+										<AnswerNumbers visible={numbersVisible} numbers={numbers} />
+									</>
+								)}
+							</div>
+
+							<SessionEndDetails
+								autoRepeatEnabled={autoRepeatEnabled}
+								hasValidated={hasValidated}
+								autoRepeatSecondsLeft={autoRepeatSecondsLeft}
+								autoRepeatRemaining={autoRepeatRemaining}
+								autoRepeatFillMs={autoRepeatFillMs}
+								cancelAutoRepeat={cancelAutoRepeat}
+								goHome={() => void stop()}
+								footerLead={() =>
+									answerMode() === "reveal" ? (
+										showAnswer() ? (
+											<button
+												class="button"
+												type="button"
+												onClick={() => setShowNumbersList((v) => !v)}
+											>
+												{showNumbersList() ? "Hide numbers" : "Show numbers"}
+											</button>
+										) : null
+									) : (
+										<>
+											<button
+												class="button"
+												type="button"
+												disabled={hasValidated()}
+												onClick={() => void validateTypedAnswer()}
+											>
+												Validate
+											</button>
+											{hasValidated() && validationSummary() ? (
+												<button
+													class="button"
+													type="button"
+													onClick={() => setShowNumbersList((v) => !v)}
+												>
+													{showNumbersList() ? "Hide numbers" : "Show numbers"}
+												</button>
 											) : null}
 										</>
-									)}
-								</div>
-
-								{autoRepeatEnabled() &&
-								hasValidated() &&
-								autoRepeatSecondsLeft() != null ? (
-									<AutoRepeatBar
-										secondsLeft={autoRepeatSecondsLeft() ?? 0}
-										remaining={autoRepeatRemaining()}
-										fillMs={autoRepeatFillMs()}
-										onCancel={cancelAutoRepeat}
-									/>
-								) : null}
-
-								<div class="endFooter">
-									<div class="endFooterInner">
-										<div class="actionField">
-											<div class="centerActions">
-												{showAnswer() ? (
-													<button
-														class="button"
-														type="button"
-														onClick={() => setShowNumbersList((v) => !v)}
-													>
-														{showNumbersList()
-															? "Hide numbers"
-															: "Show numbers"}
-													</button>
-												) : null}
-												<button
-													class="button"
-													type="button"
-													onClick={() => void stop()}
-												>
-													Home
-												</button>
-											</div>
-										</div>
-									</div>
-								</div>
-							</div>
-						) : (
-							<div class="answerCard">
-								<div class="endHeaderCenter">
-									<div class="endTitle" role="status">
-										Session complete
-									</div>
-									<div class="endSub">Type your answer</div>
-								</div>
-
-								<div class="endBody">
-									<input
-										ref={(el) => (sumInputRef = el)}
-										class="sumInput"
-										type="text"
-										inputmode="numeric"
-										autocomplete="off"
-										placeholder="Enter the answer"
-										disabled={hasValidated()}
-										value={typedAnswer()}
-										onInput={(e) => {
-											if (hasValidated()) return;
-											setTypedAnswer(e.currentTarget.value);
-										}}
-										onKeyDown={(e) => {
-											if (hasValidated()) return;
-											if (e.key === "Enter") void validateTypedAnswer();
-										}}
-										spellcheck={false}
-									/>
-
-									{validationSummary() ? (
-										<pre class="validationText" role="alert">
-											{validationSummary()}
-										</pre>
-									) : null}
-
-									{hasValidated() && showNumbersList() ? (
-										<div class="answerNumbers">
-											<For each={numbers()}>
-												{(n, idx) => (
-													<div class="answerRow">
-														<div class="answerIndex">{idx() + 1}</div>
-														<div class="answerValue">{n}</div>
-													</div>
-												)}
-											</For>
-										</div>
-									) : null}
-								</div>
-
-								{autoRepeatEnabled() &&
-								hasValidated() &&
-								autoRepeatSecondsLeft() != null ? (
-									<AutoRepeatBar
-										secondsLeft={autoRepeatSecondsLeft() ?? 0}
-										remaining={autoRepeatRemaining()}
-										fillMs={autoRepeatFillMs()}
-										onCancel={cancelAutoRepeat}
-									/>
-								) : null}
-
-								<div class="endFooter">
-									<div class="endFooterInner">
-										<div class="actionField">
-											<div class="centerActions">
-												<button
-													class="button"
-													type="button"
-													disabled={hasValidated()}
-													onClick={() => void validateTypedAnswer()}
-												>
-													Validate
-												</button>
-												{hasValidated() && validationSummary() ? (
-													<button
-														class="button"
-														type="button"
-														onClick={() => setShowNumbersList((v) => !v)}
-													>
-														{showNumbersList()
-															? "Hide numbers"
-															: "Show numbers"}
-													</button>
-												) : null}
-												<button
-													class="button"
-													type="button"
-													onClick={() => void stop()}
-												>
-													Home
-												</button>
-											</div>
-										</div>
-									</div>
-								</div>
-							</div>
-						)}
+									)
+								}
+							/>
+						</div>
 					</div>
 				) : (
 					<div

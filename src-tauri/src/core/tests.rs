@@ -9,14 +9,16 @@ mod validation_tests {
     use crate::core::engine::build_session_plan;
     use crate::core::types::{SessionConfig, SessionConfigInput, SessionStep};
     use crate::core::validate::{
-        MAX_EXACT_INTEGER, max_total_for_digits, normalize_session_config, validate_config,
+        MAX_EXACT_INTEGER, MAX_TOTAL_NUMBERS, max_total_for_digits, normalize_session_config,
+        validate_config,
     };
 
     // ======================
     // Validation Module Tests
     // ======================
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn normalize_session_config_clamps_digits_per_number() {
         // Test lower bound clamping
         let input = SessionConfigInput {
@@ -45,7 +47,8 @@ mod validation_tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn normalize_session_config_clamps_total_numbers() {
         // Test lower bound
         let input = SessionConfigInput {
@@ -76,7 +79,8 @@ mod validation_tests {
 
     // Exactness locks below assert bit-exact rounding: no epsilon.
     #[allow(clippy::float_cmp)]
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn normalize_session_config_handles_duration_values() {
         // Very small duration: clamps up to the 0.1s grid floor (100ms)
         let input = SessionConfigInput {
@@ -114,7 +118,8 @@ mod validation_tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn normalize_session_config_handles_nan_and_infinity() {
         // NaN should clamp to minimum
         let input_nan = SessionConfigInput {
@@ -157,7 +162,8 @@ mod validation_tests {
     }
 
     #[allow(clippy::float_cmp)]
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn normalize_session_config_rounds_to_1_decimal() {
         // Test rounding of effective duration
         let input = SessionConfigInput {
@@ -175,7 +181,8 @@ mod validation_tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn validate_config_rejects_zero_values() {
         let config_bad_digits = SessionConfig {
             digits_per_number: 0,
@@ -211,7 +218,8 @@ mod validation_tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn validate_config_rejects_out_of_bounds_values() {
         // digits_per_number > 15
         let config_digits_over = SessionConfig {
@@ -250,7 +258,8 @@ mod validation_tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn validate_config_accepts_boundary_values() {
         // All minimum values (except zero)
         let config_min = SessionConfig {
@@ -302,7 +311,8 @@ mod validation_tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn normalize_allows_negative_numbers_flag() {
         let input_neg = SessionConfigInput {
             digits_per_number: 2,
@@ -327,6 +337,79 @@ mod validation_tests {
             !effective_pos.allow_negative_numbers,
             "should preserve allow_negative_numbers flag"
         );
+    }
+
+    /// Negative inputs are valid IPC payloads: a buggy or hostile frontend can
+    /// send them, and they must clamp rather than panic downstream inside
+    /// `magnitude_bounds` or `max_total_for_digits`.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn normalize_clamps_negative_inputs_like_extreme_ones() {
+        // (digits, total, expected_digits, expected_total_at_that_width)
+        for (digits, total, expected_digits) in [
+            (-5, 5, 1),
+            (0, -100, 1),
+            (-1, -1, 1),
+            (3, 0, 3),
+            (99, 99, 15),
+        ] {
+            let (config, _) = normalize_session_config(&SessionConfigInput {
+                digits_per_number: digits,
+                number_duration_s: 1.0,
+                total_numbers: total,
+                allow_negative_numbers: false,
+            });
+            assert_eq!(
+                config.digits_per_number, expected_digits,
+                "digits={digits} should clamp to {expected_digits}"
+            );
+
+            // The clamped total must be the input's own bound, clamped to the
+            // width — never a magic number, so this cannot go stale with the
+            // bound table.
+            let requested = total.clamp(1, i64::from(MAX_TOTAL_NUMBERS));
+            let at_width = u32::try_from(requested)
+                .unwrap_or(MAX_TOTAL_NUMBERS)
+                .min(max_total_for_digits(expected_digits));
+            assert_eq!(
+                config.total_numbers, at_width,
+                "total={total} at digits={digits} should clamp to {at_width}"
+            );
+        }
+    }
+
+    /// The exact error strings are part of the IPC contract: the frontend shows
+    /// them to the user, so a silent wording change is a user-visible change.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn validate_config_error_strings_are_stable() {
+        let bad = SessionConfig {
+            digits_per_number: 0,
+            number_duration_ms: 500,
+            total_numbers: 5,
+            allow_negative_numbers: false,
+        };
+        let err = validate_config(&bad).expect_err("zero digits is invalid");
+        assert!(
+            err.contains("digits_per_number"),
+            "the message should name the offending field, got: {err}"
+        );
+
+        let bad = SessionConfig {
+            digits_per_number: 16,
+            number_duration_ms: 500,
+            total_numbers: 5,
+            allow_negative_numbers: false,
+        };
+        assert!(validate_config(&bad).is_err(), "16 digits is invalid");
+
+        let bad = SessionConfig {
+            digits_per_number: 1,
+            number_duration_ms: 0,
+            total_numbers: 5,
+            allow_negative_numbers: false,
+        };
+        assert!(validate_config(&bad).is_err(), "zero duration is invalid");
     }
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
@@ -364,7 +447,8 @@ mod validation_tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn digit_width_total_bound_table() {
         // Bound = min(10_000, floor((2^53 - 1) / (10^d - 1))). Only d >= 12
         // is constrained; anything below keeps the global 10,000 ceiling.
@@ -394,7 +478,8 @@ mod validation_tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn normalize_enforces_digit_width_total_bound() {
         // 15 digits with an excessive request clamps to 9.
         let (config, effective) = normalize_session_config(&SessionConfigInput {
@@ -417,7 +502,8 @@ mod validation_tests {
         assert_eq!(config_small.total_numbers, 500);
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn worst_case_sessions_stay_exact_at_every_width() {
         // At each width, build the maximum-bound session: must not panic,
         // every value and the sum must stay exactly representable in f64
@@ -565,7 +651,8 @@ mod validation_tests {
     /// The step ordering is the contract the browser driver depends on. Rename
     /// or reorder a variant and the web session silently falls back to the JS
     /// planner with no Rust test failing.
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn every_plan_starts_clear_countdown_settle_and_ends_complete() {
         // One representative config: the ordering is config-independent and the
         // countdown property test below sweeps the full accepted domain.
@@ -621,7 +708,8 @@ mod validation_tests {
 
     /// Every normalized config must produce the same countdown shape, and the
     /// advertised total must equal the sum of the step delays.
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn countdown_shape_and_total_hold_across_the_accepted_domain() {
         for digits in 1..=15u32 {
             let (config, effective) = normalize_session_config(&SessionConfigInput {
@@ -669,7 +757,8 @@ mod validation_tests {
     /// itself exact: for every digit width, the largest sum the generator can
     /// produce at the accepted total must stay inside `MAX_EXACT_INTEGER`.
     /// Otherwise f64 grading and the answer key could disagree.
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn accepted_configs_imply_exact_max_sums() {
         for digits in 1..=15u32 {
             let total = u64::from(max_total_for_digits(digits));
@@ -684,7 +773,8 @@ mod validation_tests {
     }
 
     /// The largest accepted plan must build, encode, and iterate without error.
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn max_total_plan_builds_and_encodes() {
         let (config, effective) = normalize_session_config(&SessionConfigInput {
             digits_per_number: 1,
@@ -702,5 +792,159 @@ mod validation_tests {
         // that allocated per step or mis-sized would surface here.
         let encoded = serde_json::to_string(&plan).expect("plan encodes");
         assert!(encoded.len() > 10_000);
+    }
+
+    /// The exact step sequence is a contract the browser driver and the desktop
+    /// executor both rely on: a leading global clear, three countdown ticks (the
+    /// last carrying the pre-flash settle), then per number a flash and a
+    /// per-index clear, then a trailing global clear and the completion. The
+    /// other tests count steps and check the endpoints; this walks *every* step
+    /// and pins its variant, order, index and delay.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn plan_step_sequence_is_exactly_the_documented_shape() {
+        let (config, effective) = normalize_session_config(&SessionConfigInput {
+            digits_per_number: 1,
+            number_duration_s: 0.5,
+            total_numbers: 2,
+            allow_negative_numbers: false,
+        });
+        let plan = build_session_plan(4, &config, effective, Some(42));
+
+        let labels: Vec<String> = plan
+            .steps
+            .iter()
+            .map(|step| match step {
+                SessionStep::CountdownTick { value, .. } => format!("countdown({value})"),
+                SessionStep::ShowNumber { index, .. } => format!("show({index})"),
+                SessionStep::ClearScreen { index: Some(i), .. } => format!("clear({i})"),
+                SessionStep::ClearScreen { index: None, .. } => "clear".to_string(),
+                SessionStep::Complete { .. } => "complete".to_string(),
+            })
+            .collect();
+
+        assert_eq!(
+            labels,
+            vec![
+                "clear",
+                "countdown(3)",
+                "countdown(2)",
+                "countdown(1)",
+                "show(1)",
+                "clear(1)",
+                "show(2)",
+                "clear(2)",
+                "clear",
+                "complete",
+            ],
+        );
+
+        // The delay each step waits before the next: 0, the countdown (with the
+        // settle on the final tick), the exposure, the fixed inter-number gap,
+        // then the closing clear and completion.
+        let delays: Vec<u64> = plan.steps.iter().map(SessionStep::delay_ms).collect();
+        assert_eq!(delays, vec![0, 1000, 1000, 1100, 500, 100, 500, 100, 0, 0]);
+        assert_eq!(plan.total_duration_ms, 4300);
+
+        // The per-number fields the label hides: the session id, the total, and
+        // a running sum that accumulates across the sequence.
+        let mut running = 0i64;
+        for step in &plan.steps {
+            if let SessionStep::ShowNumber {
+                session_id,
+                total,
+                value,
+                running_sum,
+                ..
+            } = step
+            {
+                assert_eq!(*session_id, 4);
+                assert_eq!(*total, 2);
+                running += value;
+                assert_eq!(*running_sum, running);
+            }
+        }
+
+        match plan.steps.last() {
+            Some(SessionStep::Complete { numbers, sum, .. }) => {
+                assert_eq!(numbers, &plan.numbers_generated);
+                assert_eq!(*sum, plan.expected_sum);
+            }
+            other => panic!("expected a Complete step, got {other:?}"),
+        }
+    }
+
+    /// For every digit width, the exact-integer bound is inclusive: the largest
+    /// admitted total validates, and one past it does not. This is the edge the
+    /// `digit_width_total_bound_table` feeds; here it is exercised through
+    /// `validate_config` rather than compared to a literal.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn validate_config_accepts_each_width_bound_and_rejects_one_past_it() {
+        for digits in 1..=15u32 {
+            let bound = max_total_for_digits(digits);
+            let at_bound = SessionConfig {
+                digits_per_number: digits,
+                number_duration_ms: 500,
+                total_numbers: bound,
+                allow_negative_numbers: false,
+            };
+            assert!(
+                validate_config(&at_bound).is_ok(),
+                "width {digits} must accept its own bound {bound}",
+            );
+
+            let over = SessionConfig {
+                total_numbers: bound + 1,
+                ..at_bound
+            };
+            assert!(
+                validate_config(&over).is_err(),
+                "width {digits} must reject one past {bound}",
+            );
+        }
+    }
+
+    /// A table pinning the reported view for representative inputs, including
+    /// the clamp boundaries and the cases where the digit-width bound (not the
+    /// global cap) is what truncates the total. The reported seconds must be
+    /// exactly the grid step the milliseconds represent.
+    #[allow(clippy::float_cmp)] // Exactness lock: the view's seconds are derived bit-exactly.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn normalize_reports_a_consistent_view_for_a_table_of_inputs() {
+        // ((digits, duration_s, total, negatives) -> (digits, ms, total, s, negatives))
+        let cases = [
+            ((0i64, 0.0f64, 0i64, false), (1u32, 100u64, 1u32, 0.1f64, false)),
+            ((15, 60.0, 9, true), (15, 60_000, 9, 60.0, true)),
+            // 16 digits clamps to 15 and the excess total clamps to that width.
+            ((16, 60.1, 20_000, true), (15, 60_000, 9, 60.0, true)),
+            // Negative digits clamp up; 2.56 rounds (half away from zero) to 2.6.
+            ((-3, 2.56, -1, true), (1, 2600, 1, 2.6, true)),
+            // 12 digits caps the total at 9007 while the request was far larger.
+            ((12, 0.05, 100_000, false), (12, 100, 9007, 0.1, false)),
+            ((2, 1.25, 50, true), (2, 1300, 50, 1.3, true)),
+        ];
+
+        for (input, expected) in cases {
+            let (config, effective) = normalize_session_config(&SessionConfigInput {
+                digits_per_number: input.0,
+                number_duration_s: input.1,
+                total_numbers: input.2,
+                allow_negative_numbers: input.3,
+            });
+
+            assert_eq!(
+                (
+                    config.digits_per_number,
+                    config.number_duration_ms,
+                    config.total_numbers,
+                    effective.number_duration_s,
+                    config.allow_negative_numbers,
+                ),
+                (expected.0, expected.1, expected.2, expected.3, expected.4),
+                "input {input:?}",
+            );
+        }
     }
 }

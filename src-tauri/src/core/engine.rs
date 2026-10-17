@@ -200,13 +200,18 @@ mod tests {
     use super::*;
     use crate::core::types::{SessionConfig, SessionConfigEffective, SessionConfigInput};
     use crate::core::validate::{MAX_EXACT_INTEGER, normalize_session_config};
+    // `wasm_bindgen_test` is a wasm32-only dev-dependency, so the import is
+    // gated even though the attribute below is not.
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     /// The exact-integer budget as a signed bound, for exactness assertions.
     fn max_exact() -> i64 {
         i64::try_from(MAX_EXACT_INTEGER).expect("2^53 - 1 fits i64")
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn session_plan_determinism_same_seed() {
         let input = SessionConfigInput {
             digits_per_number: 2,
@@ -232,7 +237,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn session_plan_different_seeds_produce_different_numbers() {
         let input = SessionConfigInput {
             digits_per_number: 2,
@@ -253,7 +259,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn session_plan_respects_invariants() {
         let input = SessionConfigInput {
             digits_per_number: 3,
@@ -298,7 +305,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn session_plan_step_structure() {
         let input = SessionConfigInput {
             digits_per_number: 1,
@@ -330,7 +338,8 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn session_plan_with_negative_numbers_respects_running_sum() {
         let input = SessionConfigInput {
             digits_per_number: 2,
@@ -353,7 +362,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn build_session_plan_total_numbers_0() {
         // Bypass normalize_session_config which clamps to 1, to test boundary directly
         let config = SessionConfig {
@@ -378,7 +388,30 @@ mod tests {
         assert_eq!(plan.total_duration_ms, 3100);
     }
 
-    #[test]
+    /// The `debug_assert_eq!` guarding `config_snapshot` against
+    /// `effective_from(config)` is a programmer-error tripwire with no runtime
+    /// cost. Without a test it could be deleted silently.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[should_panic(expected = "config_snapshot must be the effective view")]
+    fn build_session_plan_rejects_a_mismatched_config_snapshot() {
+        let (config, _) = normalize_session_config(&SessionConfigInput {
+            digits_per_number: 2,
+            number_duration_s: 0.5,
+            total_numbers: 3,
+            allow_negative_numbers: false,
+        });
+        let lie = crate::core::types::SessionConfigEffective {
+            digits_per_number: 1,
+            number_duration_s: 0.3,
+            total_numbers: 9,
+            allow_negative_numbers: false,
+        };
+        let _ = build_session_plan(1, &config, lie, Some(1));
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn build_session_plan_total_numbers_1() {
         let input = SessionConfigInput {
             digits_per_number: 1,
@@ -403,7 +436,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn build_session_plan_timing_includes_post_countdown_settle() {
         let input = SessionConfigInput {
             digits_per_number: 1,
@@ -421,7 +455,8 @@ mod tests {
         assert_eq!(plan.total_duration_ms, 4900);
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn last_countdown_tick_includes_settle_delay() {
         let input = SessionConfigInput {
             digits_per_number: 1,
@@ -457,7 +492,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn build_session_plan_max_config() {
         // digits=15 allows at most 9 numbers (exact-integer bound); a request
         // for 100 must clamp to 9 and still build without panic.
@@ -489,7 +525,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn build_session_plan_negative_numbers_forced() {
         // Use a seed known to produce negative numbers
         let input = SessionConfigInput {
@@ -526,7 +563,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn inter_number_gap_is_fixed_and_exposure_is_uniform() {
         // The gap is fixed by the timing budget (see crate::core::timing),
         // not by user input: any session must produce it.
@@ -578,7 +616,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn next_distinct_value_rotates_inside_the_digit_width() {
         for digits in [1u32, 2, 3, 15] {
             let (min, max) = crate::core::generate::magnitude_bounds(digits);
@@ -604,7 +643,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn next_distinct_value_flips_sign_when_the_sum_cannot_afford_it() {
         // A negative replacement is only legal while the running sum can
         // absorb it; otherwise the magnitude is taken as a positive.
@@ -615,7 +655,22 @@ mod tests {
         assert_eq!(next, -43);
     }
 
-    #[test]
+    /// A magnitude below the digit-width floor — only `0`, which the generator
+    /// never emits but which the browser mirror `deterministicFallback` is still
+    /// exercised with — must saturate at the floor and rotate to `min + 1`,
+    /// rather than leaving the domain. `saturating_sub` is what guarantees that
+    /// here, and the browser now applies the same clamp.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn next_distinct_value_saturates_below_the_domain_floor() {
+        // digits=1: floor 1, span 9 -> 1 + ((0 sat 1) + 1) % 9 = 2.
+        assert_eq!(next_distinct_value(0, i128::MAX, 1), 2);
+        // digits=2: floor 10 -> 10 + 1 = 11.
+        assert_eq!(next_distinct_value(0, i128::MAX, 2), 11);
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn countdown_order_and_settle_live_on_the_final_tick() {
         let input = SessionConfigInput {
             digits_per_number: 1,
@@ -645,6 +700,44 @@ mod tests {
                 ("2".to_string(), 1000),
                 ("1".to_string(), 1000 + PRE_FLASH_SETTLE_MS),
             ]
+        );
+    }
+
+    /// `next_distinct_value` is the fallback that must stay *total*: whatever
+    /// comes in, a same-width magnitude comes back that differs from the input.
+    /// The other tests pin a handful of points; this proves the structural
+    /// property exhaustively for the smallest width. The rotation is a
+    /// fixed-point-free bijection of the domain, so it never repeats a value and
+    /// never leaves the digit width — which is what makes the retry loop's
+    /// fallback safe to rely on.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn next_distinct_value_is_a_fixed_point_free_rotation_of_the_domain() {
+        // One digit (a domain of nine magnitudes) is small enough to walk whole.
+        let (min, max) = magnitude_bounds(1);
+        let (min, max) = (u128::from(min), u128::from(max));
+
+        let mut seen = std::collections::BTreeSet::new();
+        for magnitude in min..=max {
+            // A funded sum keeps the sign negative, so `unsigned_abs` is the
+            // rotated magnitude in every case.
+            let value = -i128::try_from(magnitude).expect("one digit fits i128");
+            let rotated = next_distinct_value(value, i128::MAX, 1).unsigned_abs();
+
+            assert!(
+                (min..=max).contains(&rotated),
+                "rotation of {magnitude} left the domain: {rotated}",
+            );
+            assert_ne!(rotated, magnitude, "the rotation must have no fixed point");
+            assert!(
+                seen.insert(rotated),
+                "the rotation is not injective at {magnitude}",
+            );
+        }
+        assert_eq!(
+            seen.len(),
+            usize::try_from(max - min + 1).expect("the span fits usize"),
+            "the rotation must reach every magnitude in the domain",
         );
     }
 }

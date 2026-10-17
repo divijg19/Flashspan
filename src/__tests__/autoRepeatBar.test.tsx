@@ -1,7 +1,7 @@
 import { render } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import { AutoRepeatBar } from "../App";
+import { AutoRepeatBar } from "../components/AutoRepeatBar";
 
 /**
  * The auto-repeat fill is one continuous ramp, not a per-tick step.
