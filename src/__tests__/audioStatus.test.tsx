@@ -49,12 +49,20 @@ describe("browser getAudioStatus", () => {
 });
 
 describe("sound status line", () => {
-	// One shared runtime per file (initializeRuntime ignores re-init), so a
-	// single mock with mutable status drives all three renders below.
-	it("reflects ready, unavailable, and off states", async () => {
-		const mock = createMockRuntime();
-		initializeRuntime(mock);
+	// One shared runtime per file (`initializeRuntime` ignores re-init), so the
+	// mock is built once and each test below states the status it starts from
+	// rather than depending on what the previous one left behind.
+	const mock = createMockRuntime();
+	initializeRuntime(mock);
 
+	const beforeSession = {
+		enabled: true,
+		available: true,
+		detail: "ready",
+	} as const;
+
+	it("reflects ready, unavailable, and off states", async () => {
+		mock.setAudioStatus(beforeSession);
 		const first = render(() => <App />);
 		await new Promise((r) => setTimeout(r, 0));
 		expect(await screen.findByText("Sound ready")).toBeTruthy();
@@ -84,5 +92,66 @@ describe("sound status line", () => {
 		expect(slot).not.toBeNull();
 		expect(slot?.textContent).toBe("");
 		third.unmount();
+	});
+
+	it("stays empty until playback has actually proven something", async () => {
+		// "Sound ready" used to be shown for this exact state, which is to say
+		// on every machine, for as long as no session had run — including one
+		// with no output device. The slot stays reserved and stays empty until
+		// playback has happened.
+		mock.setAudioStatus({
+			enabled: true,
+			available: true,
+			detail: "not-started",
+		});
+		const view = render(() => <App />);
+		await new Promise((r) => setTimeout(r, 0));
+
+		const slot = view.container.querySelector(".soundStatus");
+		expect(slot).not.toBeNull();
+		expect(slot?.textContent).toBe("");
+		view.unmount();
+	});
+
+	/**
+	 * Audio is only played during a session, so a session is the only window in
+	 * which the runtime can learn the device is broken — and the status line
+	 * lives on the home screen, which is where the app comes back to. Without
+	 * the re-read on the way home the indicator kept the "Sound ready" it showed
+	 * before the session started, whatever the session actually sounded like.
+	 */
+	it("re-reads the status when a session returns the app home", async () => {
+		mock.setAudioStatus(beforeSession);
+		const view = render(() => <App />);
+		await new Promise((r) => setTimeout(r, 0));
+		expect(await screen.findByText("Sound ready")).toBeTruthy();
+
+		// Into a live session...
+		mock.emitCountdown("2");
+		mock.emitShowNumber({
+			session_id: 1,
+			value: 7,
+			index: 0,
+			total: 1,
+			running_sum: 7,
+			emitted_at_ms: 0,
+		});
+		await new Promise((r) => setTimeout(r, 0));
+
+		// ...during which the runtime discovers there is no output device.
+		mock.setAudioStatus({
+			enabled: true,
+			available: false,
+			detail: "no-output-device",
+		});
+
+		// Escape stops the running session and returns to the home screen.
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(
+			await screen.findByText("Sound unavailable (no-output-device)"),
+		).toBeTruthy();
+		view.unmount();
 	});
 });

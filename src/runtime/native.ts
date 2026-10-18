@@ -5,15 +5,12 @@
  * It enables the UI to stay platform-agnostic while delegating to Tauri for:
  * - IPC command invocation
  * - Event emission and subscription
- * - Audio playback (with fallback to HTML Audio)
+ * - Sound state and playback health (playback itself belongs to Rust)
  * - Fullscreen and window management
  */
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import applauseUrl from "../assets/applause.wav?url";
-import beepUrl from "../assets/beep.wav?url";
-import buzzerUrl from "../assets/buzzer.wav?url";
 import type { Runtime, UnlistenFn } from "./index";
 import type {
 	AppSettings,
@@ -26,22 +23,10 @@ import type {
 	SessionComplete,
 	SessionConfigInput,
 	ShowNumber,
-	SoundKind,
 	StartSessionResponse,
 	SubmitAnswerResponse,
 	ThemeMode,
 } from "./types";
-
-// Audio fallback (in case Tauri audio fails or is not available)
-const audioFallback = {
-	beep: new Audio(beepUrl),
-	applause: new Audio(applauseUrl),
-	buzzer: new Audio(buzzerUrl),
-};
-Object.values(audioFallback).forEach((a) => {
-	a.preload = "auto";
-	a.volume = 0.9;
-});
 
 /**
  * Subscribe to a Tauri event, forwarding its payload to `handler`.
@@ -146,20 +131,12 @@ export const nativeRuntime: Runtime = {
 		return invoke<AudioStatus>("get_audio_status");
 	},
 
-	async playSound(kind: SoundKind): Promise<void> {
-		try {
-			await invoke("play_sound_kind", { kind });
-		} catch (_e) {
-			// Fallback to HTML Audio if Tauri fails
-			const audio = audioFallback[kind];
-			try {
-				audio.currentTime = 0;
-				await audio.play();
-			} catch {
-				/* ignore */
-			}
-		}
-	},
+	// No `playSound` here, and none on `Runtime` either: Rust owns every sound
+	// on desktop, both the session's flash beeps and the answer feedback, so
+	// nothing in the UI can ask for one. The HTML Audio fallback that used to
+	// live here was reachable only from that unused method, and it eagerly
+	// fetched and decoded all three clips (~429KB, applause alone 350KB) at
+	// module load for a path that could not run.
 
 	// --- Event listeners ---
 	async onCountdownTick(handler: (value: string) => void): Promise<UnlistenFn> {

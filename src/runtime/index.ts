@@ -32,7 +32,6 @@ import type {
 	SessionComplete,
 	SessionConfigInput,
 	ShowNumber,
-	SoundKind,
 	StartSessionResponse,
 	SubmitAnswerResponse,
 	ThemeMode,
@@ -74,7 +73,12 @@ export interface Runtime {
 	getSoundEnabled(): Promise<boolean>;
 	setSoundEnabled(enabled: boolean): Promise<void>;
 	getAudioStatus(): Promise<AudioStatus>;
-	playSound(kind: SoundKind): Promise<void>;
+	// No `playSound`: neither runtime can be asked to play one. The desktop
+	// plays every sound inside Rust (the session's beeps and the answer
+	// feedback) and the browser plays them from its own session code, so a
+	// command for a one-off playback had no caller — and on desktop it carried
+	// an HTML Audio fallback that was unreachable, while eagerly fetching all
+	// three clips at module load.
 
 	// --- Event listeners ---
 	onCountdownTick(handler: (value: string) => void): Promise<UnlistenFn>;

@@ -869,7 +869,10 @@ mod native_app {
 
             let json = serde_json::to_value(&response).expect("serialize response");
             assert_eq!(json["session_id"], serde_json::json!(7));
-            assert_eq!(json["effective_config"]["digits_per_number"], serde_json::json!(2));
+            assert_eq!(
+                json["effective_config"]["digits_per_number"],
+                serde_json::json!(2)
+            );
             assert_eq!(
                 json["effective_config"],
                 serde_json::json!({
@@ -879,7 +882,10 @@ mod native_app {
                     "allow_negative_numbers": true,
                 }),
             );
-            assert_eq!(json["effective_auto_repeat"]["repeats"], serde_json::json!(2));
+            assert_eq!(
+                json["effective_auto_repeat"]["repeats"],
+                serde_json::json!(2)
+            );
 
             let without = StartSessionResponse {
                 effective_auto_repeat: None,
@@ -990,7 +996,10 @@ mod native_app {
         fn parse_answer_text_length_cap_counts_the_cleaned_digits() {
             let padded = format!("{}1", "1,".repeat(10));
             assert!(padded.len() > 20, "the raw text carries separators");
-            assert_eq!(parse_answer_text(&padded).expect("parses after cleaning"), 11_111_111_111);
+            assert_eq!(
+                parse_answer_text(&padded).expect("parses after cleaning"),
+                11_111_111_111
+            );
 
             // A string that cleans to nothing is rejected by the empty check.
             assert!(parse_answer_text(&",".repeat(100)).is_err());
@@ -1080,8 +1089,8 @@ mod native_app {
 
             for (delay_s, expected_ms) in [
                 (5.0, 5_000u64),
-                (5.0004, 5_000),   // rounds down
-                (5.0006, 5_001),   // rounds up
+                (5.0004, 5_000), // rounds down
+                (5.0006, 5_001), // rounds up
                 (7.777, 7_777),
                 (12.3454, 12_345),
                 (12.3456, 12_346),
@@ -1356,7 +1365,6 @@ mod native_app {
                 acknowledge_complete,
                 submit_answer,
                 submit_answer_text,
-                crate::audio::play_sound_kind,
                 get_sound_enabled,
                 set_sound_enabled,
                 get_audio_status

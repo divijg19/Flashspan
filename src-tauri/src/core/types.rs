@@ -602,8 +602,8 @@ mod payload_schema_tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn event_payloads_carry_the_exact_integer_budget_without_truncation() {
-        let budget = i64::try_from(crate::core::validate::MAX_EXACT_INTEGER)
-            .expect("2^53 - 1 fits i64");
+        let budget =
+            i64::try_from(crate::core::validate::MAX_EXACT_INTEGER).expect("2^53 - 1 fits i64");
 
         let json = serde_json::to_value(ShowNumber {
             session_id: 1,
