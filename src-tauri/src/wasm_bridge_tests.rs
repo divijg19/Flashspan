@@ -1,6 +1,8 @@
 #[cfg(all(test, target_arch = "wasm32"))]
 mod wasm_tests {
-    use crate::core::types::{SessionConfig, SessionConfigEffective, SessionConfigInput, SessionPlan, SessionStep};
+    use crate::core::types::{
+        SessionConfig, SessionConfigEffective, SessionConfigInput, SessionPlan, SessionStep,
+    };
     use crate::{build_session_plan_wasm, normalize_session_config_wasm, ping, wasm_version};
     use serde::{Deserialize, Serialize};
     use serde_wasm_bindgen::{from_value, to_value};
@@ -460,8 +462,14 @@ mod wasm_tests {
                     assert_eq!(*index, 1, "a one-number session shows index 1");
                     assert_eq!(*total, 1);
                     assert_eq!(*value, plan.numbers_generated[0]);
-                    assert_eq!(*running_sum, *value, "the first running sum is the first number");
-                    assert_eq!(*delay_ms_before_next, 500, "the flash window is the exposure");
+                    assert_eq!(
+                        *running_sum, *value,
+                        "the first running sum is the first number"
+                    );
+                    assert_eq!(
+                        *delay_ms_before_next, 500,
+                        "the flash window is the exposure"
+                    );
                 }
                 SessionStep::ClearScreen {
                     index: Some(_),
@@ -472,9 +480,7 @@ mod wasm_tests {
                     assert_eq!(*delay_ms_before_next, 100, "the inter-number gap is fixed");
                 }
                 SessionStep::ClearScreen { index: None, .. } => global_clears += 1,
-                SessionStep::Complete {
-                    numbers, sum, ..
-                } => {
+                SessionStep::Complete { numbers, sum, .. } => {
                     completes += 1;
                     assert_eq!(numbers, &plan.numbers_generated);
                     assert_eq!(*sum, plan.expected_sum);
@@ -541,7 +547,10 @@ mod wasm_tests {
         let both: Both = from_value(value).expect("decode both halves");
         assert_eq!(both.config.number_duration_ms, 2500);
         assert_eq!(both.effective.number_duration_s, 2.5);
-        assert_eq!(both.config.digits_per_number, both.effective.digits_per_number);
+        assert_eq!(
+            both.config.digits_per_number,
+            both.effective.digits_per_number
+        );
         assert_eq!(both.config.total_numbers, both.effective.total_numbers);
         assert_eq!(
             both.config.allow_negative_numbers,

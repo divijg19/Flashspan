@@ -915,7 +915,10 @@ mod validation_tests {
     fn normalize_reports_a_consistent_view_for_a_table_of_inputs() {
         // ((digits, duration_s, total, negatives) -> (digits, ms, total, s, negatives))
         let cases = [
-            ((0i64, 0.0f64, 0i64, false), (1u32, 100u64, 1u32, 0.1f64, false)),
+            (
+                (0i64, 0.0f64, 0i64, false),
+                (1u32, 100u64, 1u32, 0.1f64, false),
+            ),
             ((15, 60.0, 9, true), (15, 60_000, 9, 60.0, true)),
             // 16 digits clamps to 15 and the excess total clamps to that width.
             ((16, 60.1, 20_000, true), (15, 60_000, 9, 60.0, true)),

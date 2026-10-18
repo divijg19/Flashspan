@@ -106,26 +106,151 @@ let soundEnabled = loadSoundEnabled();
 let hasLoggedWasmPlannerReady = false;
 let hasLoggedWasmPlannerFallback = false;
 /**
- * What audio has actually done so far: nothing yet, a clip played, or a
+ * What audio has actually done so far: nothing yet, a sound played, or a
  * playback attempt failed. `getAudioStatus` reports this instead of a static
  * capability guess, so it can never claim "ready" for a dead device.
+ *
+ * A later success clears a failure, so a device that comes back — a headset
+ * that reconnects, an audio server that finishes starting — stops being
+ * reported as broken without a reload. That is the same self-healing the
+ * native worker does, and it is why there is no one-way latch here.
  */
 let audioState: "not-started" | "ready" | "failed" = "not-started";
 
-const audio = {
-	beep: new Audio(beepUrl),
-	applause: new Audio(applauseUrl),
-	buzzer: new Audio(buzzerUrl),
+/** The headroom the old per-clip `volume` gave, now on the one gain node. */
+const SOUND_VOLUME = 0.9;
+
+const SOUND_URLS: Record<SoundKind, string> = {
+	applause: applauseUrl,
+	beep: beepUrl,
+	buzzer: buzzerUrl,
 };
 
-Object.values(audio).forEach((clip) => {
-	// "metadata" rather than "auto": eagerly preloading all three clips fetched
-	// ~430KB (applause alone is 350KB) in competition with the wasm download,
-	// for audio that is not needed until a session ends. `warmupAudio` decodes
-	// the clips under the Start gesture anyway, so the beep still lands on time.
-	clip.preload = "metadata";
-	clip.volume = 0.9;
-});
+/**
+ * The Web Audio graph: a context and the gain node every source connects
+ * through, kept as a pair because connecting straight to `destination` would
+ * leave the volume knob nowhere to live. `null` means "not created yet", which
+ * is also the state a browser with no Web Audio stays in for good.
+ */
+let audioCtx: AudioContext | null = null;
+let audioGain: GainNode | null = null;
+
+/** The sound currently sounding, so a cut has something to stop. */
+let activeSource: AudioBufferSourceNode | null = null;
+
+/**
+ * Distinguishes a play from the ones it supersedes. Decoding the first clip
+ * awaits a fetch, so two ticks can overlap, and a stale one starting after a
+ * fresh one would leave a beep nobody asked to queue.
+ */
+let playTicket = 0;
+
+/**
+ * Decoded clips, keyed by kind. A load is started once and awaited by every
+ * later play, including the ones that raced it.
+ */
+const audioBufferLoads = new Map<SoundKind, Promise<AudioBuffer>>();
+
+function ensureAudioContext(): AudioContext | null {
+	if (audioCtx) {
+		return audioCtx;
+	}
+	if (typeof AudioContext !== "function") {
+		return null;
+	}
+	const ctx = new AudioContext();
+	const gain = ctx.createGain();
+	gain.gain.value = SOUND_VOLUME;
+	gain.connect(ctx.destination);
+	audioCtx = ctx;
+	audioGain = gain;
+	return ctx;
+}
+
+/**
+ * Unlock the graph from inside a user gesture.
+ *
+ * The autoplay policy only accepts a *direct* user gesture, and the Start
+ * click has already been spent by the time anything asynchronous reaches
+ * audio: the UI awaits a fullscreen transition first, so a resume attempted
+ * from the session start is outside the gesture it came from. This listener is
+ * the fix, because `pointerdown` and `keydown` fire synchronously with the
+ * gesture — the one thing the policy asks for. It stays registered for the life
+ * of the page, since an engine may suspend the context again at any time (a
+ * backgrounded tab, or any audio interruption on iOS).
+ */
+function unlockAudio(): void {
+	const ctx = ensureAudioContext();
+	if (ctx && ctx.state !== "running") {
+		// A rejection means the policy still says no, which is a state rather
+		// than a fault: the next gesture retries through this same listener,
+		// and nothing here can usefully react to it.
+		void ctx.resume().catch(() => undefined);
+	}
+}
+
+if (typeof document !== "undefined") {
+	for (const event of ["pointerdown", "keydown"] as const) {
+		document.addEventListener(event, unlockAudio, { capture: true });
+	}
+}
+
+function decodeAudio(
+	ctx: AudioContext,
+	data: ArrayBuffer,
+): Promise<AudioBuffer> {
+	// The callback form rather than the promise form: every engine that has
+	// Web Audio has the callback, while the promise overload arrived later.
+	return new Promise((resolve, reject) => {
+		ctx.decodeAudioData(data, resolve, reject);
+	});
+}
+
+function loadAudioBuffer(kind: SoundKind): Promise<AudioBuffer> {
+	const inFlight = audioBufferLoads.get(kind);
+	if (inFlight) {
+		return inFlight;
+	}
+	const ctx = ensureAudioContext();
+	if (!ctx) {
+		return Promise.reject(new Error("this browser has no Web Audio"));
+	}
+	const load = fetch(SOUND_URLS[kind])
+		.then((response) => {
+			if (!response.ok) {
+				throw new Error(`sound fetch failed: ${response.status}`);
+			}
+			return response.arrayBuffer();
+		})
+		.then((data) => decodeAudio(ctx, data));
+	audioBufferLoads.set(kind, load);
+	// A failed load must not be remembered as an answer. The network, or the
+	// device behind it, may be fine a moment later, and the native worker
+	// retries for exactly that reason — so the entry is dropped and the next
+	// play pays for a fresh attempt.
+	void load.catch(() => audioBufferLoads.delete(kind));
+	return load;
+}
+
+/**
+ * Stop whatever is sounding.
+ *
+ * This is the cut half of the cut-then-play semantics the native worker has,
+ * and unlike the seek-to-zero it replaces it is exact: `stop()` ends the node
+ * now, with no asynchronous seek for the next beep to lose a race against.
+ */
+function stopActiveSource(): void {
+	if (!activeSource) {
+		return;
+	}
+	try {
+		activeSource.stop();
+	} catch {
+		// Already stopped, or never started. Either way there is nothing left
+		// to silence and nothing useful to do about it.
+	}
+	activeSource = null;
+}
 
 /**
  * Wall-clock time, used only for the payload fields the UI compares against
@@ -315,118 +440,115 @@ function emitClearScreen(sessionId: number, index: number | null): void {
 }
 
 /**
- * Cut semantics mirroring the native audio worker: restarting a clip cuts
- * whatever it was playing, so rapid flash ticks stay in sync with the
- * visuals instead of queueing behind them.
+ * Cut semantics mirroring the native audio worker: whatever was playing is
+ * stopped, so rapid flash ticks stay in sync with the visuals instead of
+ * queueing behind them.
  */
-function playAudio(kind: SoundKind): Promise<void> {
+async function playAudio(kind: SoundKind): Promise<void> {
 	if (!soundEnabled) {
-		return Promise.resolve();
+		return;
 	}
 
-	const clip = audio[kind];
+	// Every request takes a ticket, and only the newest one may sound.
+	const ticket = ++playTicket;
+	// Cut first, exactly as the worker does: a beep is a flash tick, and it is
+	// only worth anything on the tick it belongs to.
+	stopActiveSource();
 
 	try {
-		clip.currentTime = 0;
-		// Rapid restarts reject with AbortError, which the runtime itself causes
-		// by rewinding for the next beep. Treating that as a device failure would
-		// latch "Sound unavailable" for the rest of the page on a single clip, so
-		// a rewind-cancelled play must not downgrade a device that has already
-		// successfully played.
-		//
-		// Resolves once playback settles rather than when it finishes; callers on
-		// the flash path ignore it, and `playSound` awaits it to match the native
-		// runtime, which also resolves once the backend has acknowledged.
-		return Promise.resolve(clip.play())
-			.then(() => {
-				audioState = "ready";
-			})
-			.catch((error: unknown) => {
-				recordAudioFailure(error);
-			});
+		const ctx = ensureAudioContext();
+		if (!ctx) {
+			throw new Error("this browser has no Web Audio");
+		}
+		if (ctx.state !== "running") {
+			// Playing into a suspended context is worse than inaudible: the
+			// node is scheduled against a clock that never advanced, so it
+			// bursts out stale the moment something unlocks the context. Drop
+			// the tick and let the gesture listener bring the graph up.
+			return;
+		}
+		const buffer = await loadAudioBuffer(kind);
+		if (ticket !== playTicket) {
+			// A later sound superseded this one while it was decoding. Losing
+			// is the correct answer: the cut is what keeps the tick on time.
+			return;
+		}
+		const source = ctx.createBufferSource();
+		source.buffer = buffer;
+		source.connect(audioGain ?? ctx.destination);
+		source.start();
+		activeSource = source;
+		audioState = "ready";
 	} catch (error) {
 		recordAudioFailure(error);
-		return Promise.resolve();
 	}
 }
 
-/** Records a playback failure unless a working device was already proven. */
+function errorName(error: unknown): string {
+	return error != null && typeof (error as { name?: unknown }).name === "string"
+		? (error as { name: string }).name
+		: "";
+}
+
+/**
+ * Record a playback failure.
+ *
+ * Deliberately has neither of the two exemptions the media-element version
+ * needed. There is no "already proven working" guard, because one early
+ * success used to silence every later failure — including a device that died
+ * mid-session. And there is no `AbortError` exemption, because that rejection
+ * was an artefact of cutting by seeking a media element, which is the whole
+ * reason this is Web Audio now. What survives is the autoplay policy, which is
+ * a state rather than a fault, and clears on the next gesture.
+ */
 function recordAudioFailure(error: unknown): void {
-	if (audioState === "ready") {
-		return;
-	}
-	// NotAllowedError is the autoplay policy asking for a gesture, not a missing
-	// device: it resolves on the next user-initiated play, so it must not count
-	// as a permanent failure either.
-	const name =
-		error != null && typeof (error as { name?: unknown }).name === "string"
-			? (error as { name: string }).name
-			: "";
-	if (name === "AbortError" || name === "NotAllowedError") {
+	if (errorName(error) === "NotAllowedError") {
 		return;
 	}
 	audioState = "failed";
 }
 
-/**
- * Stop a clip and rewind it to the start.
- *
- * Two callers need this exact teardown — silencing everything on session stop,
- * and putting a clip back after the muted warm-up play-through — and both wrote
- * it out. `pause()` throws in some engines when the clip has never started
- * playing, so the error is swallowed rather than allowed to escape into a
- * teardown path where there is nothing useful to do with it.
- */
-function rewind(clip: HTMLAudioElement): void {
-	try {
-		clip.pause();
-		clip.currentTime = 0;
-	} catch {
-		// Best-effort only.
-	}
-}
-
-/** Silence all clips; used when a session stops or (re)starts. */
+/** Silence any sound, and drop a play that is still decoding its buffer. */
 function silenceAudio(): void {
-	for (const clip of Object.values(audio)) {
-		rewind(clip);
-	}
+	// The session that asked for it is over, and a beep arriving after it is
+	// not a beep worth hearing.
+	playTicket += 1;
+	stopActiveSource();
 }
 
 /**
- * Prime clips while a user gesture is active (session start originates
- * from the Start click): a muted play-through unlocks autoplay and forces
- * decode, so the first flash beep ~3s later plays on time instead of
- * stalling on first use. Inaudible by construction (muted throughout).
+ * Prime the graph ahead of the first flash: bring the context up if a gesture
+ * is still live, and start fetching and decoding the clips so the beep lands
+ * on time instead of stalling on first use.
+ *
+ * It says nothing about availability on purpose. The version this replaces
+ * marked the device ready from a muted play-through that was rewound straight
+ * away, so one early "success" proved a device that was never heard at all.
+ * Decoding shows what it actually shows — that the bytes are there — and
+ * `audioState` moves on the first real play.
  */
 function warmupAudio(): void {
 	if (!soundEnabled) {
 		return;
 	}
-
-	for (const clip of Object.values(audio)) {
-		try {
-			const wasMuted = clip.muted;
-			clip.muted = true;
-			void Promise.resolve(clip.play())
-				.then(() => {
-					audioState = "ready";
-					rewind(clip);
-				})
-				.catch(() => {
-					if (audioState !== "ready") {
-						audioState = "failed";
-					}
-				})
-				.finally(() => {
-					clip.muted = wasMuted;
-				});
-		} catch {
-			if (audioState !== "ready") {
-				audioState = "failed";
-			}
-		}
+	unlockAudio();
+	for (const kind of Object.keys(SOUND_URLS) as SoundKind[]) {
+		// Reported by the play that wanted it; a warmup is not that play.
+		void loadAudioBuffer(kind).catch(() => undefined);
 	}
+}
+
+/**
+ * `canPlayType` is the one question about wav a browser can answer without
+ * spending a fetch on it. It answers for a *format*, not for a device, so it
+ * stays the capability half of the status; `audioState` carries the half that
+ * only playing can settle.
+ */
+function supportsWavPlayback(): boolean {
+	if (typeof window === "undefined" || typeof window.Audio !== "function") {
+		return false;
+	}
+	return new window.Audio().canPlayType("audio/wav") !== "";
 }
 
 function buildBridgeSeed(): number {
@@ -839,6 +961,15 @@ async function startSessionImpl(
 	}
 	sessionStarting = true;
 	try {
+		// Primed here rather than later, and deliberately ahead of the plan
+		// await. Decoding the clips takes as long as the wasm build it races,
+		// and the countdown is the only slack there is — while the gesture that
+		// started this session is already gone by the time this function runs,
+		// because the UI awaits a fullscreen transition before calling in. The
+		// gesture requirement itself is settled by the runtime's own
+		// pointerdown/keydown listener; what has to be early is the work.
+		warmupAudio();
+
 		const effectiveAutoRepeat = alreadyNormalized
 			? (autoRepeat ?? null)
 			: normalizeAutoRepeat(autoRepeat);
@@ -902,9 +1033,6 @@ async function startSessionImpl(
 
 		currentSession = session;
 		silenceAudio();
-		// Prime clips while the Start-click gesture is active so the first
-		// flash beep plays on time; the countdown absorbs the unlock cost.
-		warmupAudio();
 		emitClearScreen(sessionId, null);
 
 		// Single-source execution when the WASM planner yields valid steps:
@@ -1190,13 +1318,21 @@ export const browserRuntime: Runtime = {
 
 	async setSoundEnabled(enabled: boolean): Promise<void> {
 		soundEnabled = Boolean(enabled);
+		// Muting has to cut what is already playing, not merely prevent the next
+		// sound: applause runs for seconds and outlives the click that mutes it.
+		if (!soundEnabled) {
+			silenceAudio();
+		} else {
+			// The toggle is itself a user gesture, so it is a real chance to
+			// bring the graph up and get the clips decoded before the next
+			// session rather than during its countdown.
+			warmupAudio();
+		}
 		persistSoundEnabled();
 	},
 
 	async getAudioStatus(): Promise<AudioStatus> {
-		const supported =
-			typeof window.Audio === "function" &&
-			audio.beep.canPlayType("audio/wav") !== "";
+		const supported = supportsWavPlayback();
 		const available = supported && audioState !== "failed";
 		const detail = !supported
 			? "wav-playback-unsupported"
@@ -1210,14 +1346,6 @@ export const browserRuntime: Runtime = {
 			available,
 			detail,
 		};
-	},
-
-	async playSound(kind: SoundKind): Promise<void> {
-		// `playAudio` already runs the full state machine — gate, rewind,
-		// success/failure classification — so a UI-initiated probe and a flash
-		// beep cannot disagree about whether the device works. This is a thin
-		// awaitable wrapper rather than a second copy of that logic.
-		return playAudio(kind);
 	},
 
 	async onCountdownTick(handler: (value: string) => void): Promise<UnlistenFn> {

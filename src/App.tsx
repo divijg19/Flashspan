@@ -251,12 +251,14 @@ export default function App() {
 				setSoundStatusText("");
 			} else if (!status.available) {
 				setSoundStatusText(`Sound unavailable (${status.detail})`);
+			} else if (status.detail === "not-started") {
+				// Nothing has been played yet, so nothing has been proven. This
+				// branch is what used to claim "Sound ready" for the whole time
+				// before the first session — which is to say, always, on a
+				// machine with no output device. The slot stays reserved and
+				// stays empty until playback has actually happened.
+				setSoundStatusText("");
 			} else {
-				// `detail` is left to the unavailable branch. It is "not-started"
-				// until something has actually played, on *both* runtimes — native
-				// reports the same before the first clip — so spelling that out
-				// here only diverged from the desktop and produced a label too long
-				// for the single reserved line.
 				setSoundStatusText("Sound ready");
 			}
 		} catch {
@@ -484,6 +486,7 @@ export default function App() {
 				// leaving a screen that looks stuck. There is no result to grade.
 				resetForIncomingSessionIfComplete();
 				setPhase("idle");
+				void refreshSoundStatus();
 				setErrorText(
 					"Session interrupted while the browser tab was in the background.",
 				);
@@ -578,6 +581,9 @@ export default function App() {
 		} catch (e) {
 			setPhase("idle");
 			void setFullscreen(false);
+			// The runtime warms audio up as part of starting, so the device may
+			// have just failed while this screen came back.
+			void refreshSoundStatus();
 			setErrorText(String(e));
 		}
 	};
@@ -604,6 +610,12 @@ export default function App() {
 			setSessionId(null);
 			setNumbers([]);
 			void setFullscreen(false);
+			// Audio is only ever played during a session, so that is the only
+			// window in which the runtime can learn the device is broken — and
+			// this screen is where its answer would be shown. Without this the
+			// indicator kept the "Sound ready" it showed before the session
+			// started, however the session actually went.
+			void refreshSoundStatus();
 		}
 	};
 

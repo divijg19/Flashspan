@@ -114,7 +114,6 @@ export function createMockRuntime() {
 		async getAudioStatus() {
 			return { ...audioStatus };
 		},
-		async playSound() {},
 
 		// event listeners
 		async onCountdownTick(handler: (v: string) => void) {

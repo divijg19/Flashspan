@@ -205,8 +205,8 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
-        MAX_DURATION_MS, MAX_EXACT_INTEGER, MAX_TOTAL_NUMBERS, effective_from, max_total_for_digits,
-        normalize_session_config, validate_config,
+        MAX_DURATION_MS, MAX_EXACT_INTEGER, MAX_TOTAL_NUMBERS, effective_from,
+        max_total_for_digits, normalize_session_config, validate_config,
     };
     use crate::core::types::{SessionConfig, SessionConfigInput};
 
@@ -288,7 +288,10 @@ mod tests {
     fn digit_width_bound_stays_inside_the_global_ceiling() {
         for digits in 1u32..=64 {
             let bound = max_total_for_digits(digits);
-            assert!((1..=MAX_TOTAL_NUMBERS).contains(&bound), "width {digits} -> {bound}");
+            assert!(
+                (1..=MAX_TOTAL_NUMBERS).contains(&bound),
+                "width {digits} -> {bound}"
+            );
         }
     }
 
@@ -341,12 +344,12 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn duration_snaps_to_the_nearest_tenth_and_clamps_at_the_edges() {
         for (requested, expected_ms) in [
-            (0.0, 100),      // below the 0.1s floor -> shortest allowed step
-            (0.05, 100),     // still below the floor
-            (0.1, 100),      // exactly the floor
-            (0.15, 200),     // half-way: rounds away from zero
-            (0.25, 300),     // half-way again
-            (0.99, 1000),    // just under a whole second
+            (0.0, 100),   // below the 0.1s floor -> shortest allowed step
+            (0.05, 100),  // still below the floor
+            (0.1, 100),   // exactly the floor
+            (0.15, 200),  // half-way: rounds away from zero
+            (0.25, 300),  // half-way again
+            (0.99, 1000), // just under a whole second
             (1.0, 1000),
             (1.04, 1000),    // rounds down
             (1.06, 1100),    // rounds up
@@ -386,7 +389,8 @@ mod tests {
             (-5, f64::INFINITY, -3, true),
             (i64::MIN, f64::NEG_INFINITY, i64::MAX, false),
         ] {
-            let (config, _effective) = normalize_session_config(&input(digits, duration_s, total, negatives));
+            let (config, _effective) =
+                normalize_session_config(&input(digits, duration_s, total, negatives));
             assert!(
                 validate_config(&config).is_ok(),
                 "normalized {config:?} (from {digits}/{duration_s}/{total}/{negatives}) must validate",
@@ -404,7 +408,10 @@ mod tests {
         // 12 digits caps the total at 9007, comfortably below the 10_000 hard
         // cap, so the width bound is the one that fires.
         let bound = max_total_for_digits(12);
-        assert!(bound < MAX_TOTAL_NUMBERS, "the test needs the width bound to bite");
+        assert!(
+            bound < MAX_TOTAL_NUMBERS,
+            "the test needs the width bound to bite"
+        );
 
         let over = SessionConfig {
             digits_per_number: 12,
@@ -422,7 +429,10 @@ mod tests {
             total_numbers: bound,
             ..over
         };
-        assert!(validate_config(&at).is_ok(), "the bound itself is inclusive");
+        assert!(
+            validate_config(&at).is_ok(),
+            "the bound itself is inclusive"
+        );
     }
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]

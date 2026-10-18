@@ -941,9 +941,20 @@ mod tests {
      * generation-check call, so each of the guard's three checks can be exercised
      * individually and deterministically — no threads, no real waiting.
      *
-     * The live loop calls the generation probe once per poll iteration, once
-     * after the delay elapses, and once immediately before restarting, so
-     * `bump_on` selects which check observes the bump.
+     * The deque below holds four values, so the loop runs four iterations and
+     * the generation probe is called:
+     *
+     * | calls  | check                              |
+     * |--------|------------------------------------|
+     * | 1 to 4 | once per poll iteration            |
+     * | 5      | once the delay has elapsed         |
+     * | 6      | immediately before the restart     |
+     *
+     * Call 4 is still a *poll* check: the fourth iteration is the one that reads
+     * the trailing `0` and breaks. Numbering the checks by probe call rather
+     * than by position is what stops a test aimed at the post-delay guard from
+     * quietly landing on the poll guard instead — which it would, silently,
+     * with the same ticks and the same answer.
      */
     fn wait_with_generation_bump_on(bump_on: u32) -> (Vec<u64>, bool) {
         let mut remaining = std::collections::VecDeque::from(vec![3000, 2000, 1000, 0]);
@@ -976,10 +987,24 @@ mod tests {
     }
 
     #[test]
-    fn auto_repeat_wait_abandons_when_generation_bumps_after_the_delay() {
-        // Call 4 is the check after the delay elapsed: every whole-second tick
-        // was already emitted, but the restart must still be abandoned.
+    fn auto_repeat_wait_abandons_when_generation_bumps_on_a_later_poll() {
+        // Call 4 is the poll check on the fourth iteration — the one that reads
+        // the trailing `0`. Every whole-second tick has been emitted, but the
+        // restart must still be abandoned.
         let (ticks, may_start) = wait_with_generation_bump_on(4);
+        assert_eq!(ticks, vec![3, 2, 1]);
+        assert!(!may_start);
+    }
+
+    #[test]
+    fn auto_repeat_wait_abandons_when_generation_bumps_after_the_delay() {
+        // Call 5 is the check once the delay has elapsed. A cancel landing here
+        // has already counted all the way down, so the "0 seconds" tick must
+        // not reach the UI: the wait is over, but the restart is not permitted.
+        // Dropping this guard would emit that tick anyway before the final
+        // check caught the cancel, which is the difference between a countdown
+        // that stops and one that lies about reaching zero.
+        let (ticks, may_start) = wait_with_generation_bump_on(5);
         assert_eq!(ticks, vec![3, 2, 1]);
         assert!(!may_start);
     }
@@ -1119,10 +1144,9 @@ mod tests {
             // intermittently here.
             let mut started = false;
             for _ in 0..100_000 {
-                match manager.start_with_emitter(
-                    BarrierEmitter { done: tx.clone() },
-                    config.clone(),
-                ) {
+                match manager
+                    .start_with_emitter(BarrierEmitter { done: tx.clone() }, config.clone())
+                {
                     Ok(_) => {
                         started = true;
                         break;
@@ -2628,11 +2652,16 @@ mod tests {
         ));
         assert!(recover_lock(&manager.worker, "worker").is_none());
         assert!(recover_lock(&manager.stop, "stop").is_none());
+        assert!(recover_lock(&manager.auto_repeat_plan, "auto_repeat_plan").is_none());
         assert!(
-            recover_lock(&manager.auto_repeat_plan, "auto_repeat_plan").is_none()
+            manager.result_for(1).is_err(),
+            "no results before any session"
         );
-        assert!(manager.result_for(1).is_err(), "no results before any session");
-        assert_eq!(manager.auto_repeat_generation(), 1, "generations start at 1");
+        assert_eq!(
+            manager.auto_repeat_generation(),
+            1,
+            "generations start at 1"
+        );
     }
 
     /// `emitted_at_ms` is compared against the webview's `Date.now()`, so the
@@ -2746,8 +2775,7 @@ mod tests {
                 recover_lock(&self.events, "events").push(format!("countdown({value})"));
             }
             fn show_number(&self, payload: ShowNumber) {
-                recover_lock(&self.events, "events")
-                    .push(format!("show({})", payload.index));
+                recover_lock(&self.events, "events").push(format!("show({})", payload.index));
             }
             fn session_complete(&self, payload: SessionComplete) {
                 recover_lock(&self.events, "events").push("complete".to_string());

@@ -287,9 +287,15 @@ mod tests {
                     value.unsigned_abs() <= 250,
                     "negative {value} exceeded the running sum that funds it",
                 );
-                assert!(value.unsigned_abs() >= 100, "negative {value} is below the width");
+                assert!(
+                    value.unsigned_abs() >= 100,
+                    "negative {value} is below the width"
+                );
             } else {
-                assert!((100..=999).contains(&value), "positive {value} left the width");
+                assert!(
+                    (100..=999).contains(&value),
+                    "positive {value} left the width"
+                );
             }
         }
 

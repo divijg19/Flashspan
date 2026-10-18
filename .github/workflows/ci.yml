@@ -18,6 +18,7 @@ jobs:
   frontend:
     name: Frontend Checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -28,35 +29,45 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Cache Bun runtime
+      # Only the package download cache is safe to share. `~/.bun` also holds
+      # `~/.bun/bin/bun`, and this step runs *after* Setup Bun, so caching the
+      # whole directory meant a cache hit overwrote the binary that step had
+      # just installed with whatever bun was cached the last time the lockfile
+      # changed. The run would then execute an older bun while the job reported
+      # `latest`. Keyed on the lockfile alone: a version bump does not change
+      # the dependency set, so it used to invalidate this cache for nothing.
+      - name: Cache Bun package downloads
         uses: actions/cache@v6
         with:
-          path: |
-            ~/.bun
-            .bun
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'package.json') }}
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      # Cheapest, most likely to be wrong first: a formatting or type error
+      # should fail the run before the suite and the bundle are built.
+      - name: Lint frontend
+        run: bun run lint:check
+
+      - name: Type check frontend
+        run: bun run typecheck
+
       - name: Run Vitest
         run: bun run test
 
+      # `continue-on-error` alone: `fail_ci_if_error: false` was the action's
+      # default already, so carrying both just restated the default. Nothing
+      # enforces these numbers — there is no `codecov.yml` with thresholds — so
+      # a failed upload must never decide a run.
       - name: Upload coverage
         uses: codecov/codecov-action@v7
         with:
           files: ./coverage/coverage-final.json
           flags: frontend
-          fail_ci_if_error: false
         continue-on-error: true
-
-      - name: Lint frontend
-        run: bun x biome check .
-
-      - name: Type check frontend
-        run: bun x tsc --noEmit
 
       - name: Build frontend
         run: bun run build
@@ -64,6 +75,7 @@ jobs:
   rust:
     name: Rust Checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: src-tauri
@@ -76,23 +88,26 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: rustfmt
 
+      # build-essential, curl, xz-utils and file were listed here too, but all
+      # four ship with ubuntu-latest and none of them is invoked by this build.
       - name: Install Linux native dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             libsecret-1-dev \
             libasound2-dev \
             libdbus-1-dev \
-            libssl-dev \
-            curl \
-            xz-utils \
-            file
+            libssl-dev
 
+      # Host and wasm build different artefacts into the same `target` tree, but
+      # GitHub's cache is immutable per key. Both jobs used to write the same
+      # `${{ runner.os }}-cargo-<lock-hash>` entry, so whichever saved first won
+      # and the other job spent its whole run restoring an unrelated build.
       - name: Cache Cargo registry and target
         uses: actions/cache@v6
         with:
@@ -100,31 +115,19 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-host-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-host-
+
+      # First, because it reads sources and compiles nothing: a reflow should
+      # not cost a full build before it is reported.
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
 
       # No separate `cargo check` step: the test and lint runs below already
       # compile the lib, the bin and every test target.
       - name: Run Rust tests
         run: cargo test --locked
-
-      # `cargo test --locked` reports pass/fail, which on a two-target crate says
-      # nothing about the wasm side: a plain `#[test]` compiles for wasm32 but is
-      # never run there. Coverage turns that into a number.
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
-
-      - name: Measure Rust coverage
-        run: cargo llvm-cov --locked --lcov --output-path lcov.info
-
-      - name: Upload Rust coverage
-        uses: codecov/codecov-action@v7
-        with:
-          files: ./src-tauri/lcov.info
-          flags: rust
-          fail_ci_if_error: false
-          continue-on-error: true
 
       - name: Run Rust lints
         run: cargo clippy --locked --all-targets -- -D warnings -D clippy::pedantic
@@ -134,9 +137,35 @@ jobs:
       - name: Run Rust lints (wasm32 target)
         run: cargo clippy --locked --target wasm32-unknown-unknown --all-targets -- -D warnings -D clippy::pedantic
 
+      # Coverage is a trend signal, not a gate: there is no `codecov.yml` with
+      # thresholds and the upload below can never fail a run. It is also the
+      # one step that rebuilds the whole tree under instrumentation in its own
+      # target directory and then re-runs every test a second time — the tests
+      # above are not reused — which is why pull requests no longer pay for it.
+      # It still runs on every push to main, and on a manual dispatch, so the
+      # series is preserved without a PR waiting on a number nothing enforces.
+      - name: Install cargo-llvm-cov
+        if: github.event_name != 'pull_request'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Measure Rust coverage
+        if: github.event_name != 'pull_request'
+        run: cargo llvm-cov --locked --lcov --output-path lcov.info
+
+      - name: Upload Rust coverage
+        if: github.event_name != 'pull_request'
+        uses: codecov/codecov-action@v7
+        with:
+          files: ./src-tauri/lcov.info
+          flags: rust
+        continue-on-error: true
+
   wasm:
     name: WASM Build and Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -147,19 +176,25 @@ jobs:
         with:
           bun-version: latest
 
+      # Declared explicitly rather than left to `wasm-pack` to resolve: the
+      # rust job asks for this target and this one did not, so the two jobs
+      # disagreed about what a clean toolchain provides.
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
-      - name: Cache Bun runtime
+      - name: Cache Bun package downloads
         uses: actions/cache@v6
         with:
-          path: |
-            ~/.bun
-            .bun
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'package.json') }}
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-
 
+      # Same key as the rust job used to have, and with the same consequence:
+      # this job writes wasm32 artefacts, so sharing the entry with the host
+      # build meant only one of the two ever stayed in the cache.
       - name: Cache Cargo registry and target
         uses: actions/cache@v6
         with:
@@ -167,25 +202,33 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-wasm-
 
+      # Prebuilt binary; `cargo install wasm-pack` compiled it from source on
+      # every run, which was 46s of this job.
       - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build browser bundle with WASM
-        run: bun run build:web
-
       # Runs the whole wasm_bindgen_test suite. Do not "fix" a failure by
       # adding wasm_bindgen_test_configure!(run_in_browser): under --node that
       # makes this step execute zero tests without failing.
+      #
+      # The output is kept because the count guard below used to re-run this
+      # whole suite a second time, on a toolchain that compiles the crate for
+      # wasm32, purely to read a number out of its output. One run, two
+      # consumers.
       - name: Run WASM tests
         working-directory: src-tauri
-        run: wasm-pack test --node
+        env:
+          WASM_TEST_LOG: ${{ runner.temp }}/wasm-test.log
+        run: wasm-pack test --node 2>&1 | tee "$WASM_TEST_LOG"
 
       # A plain `#[test]` compiles under wasm32 but is silently skipped by the
       # wasm-bindgen test runner, so the only symptom of a regression here is a
@@ -202,13 +245,36 @@ jobs:
       # dependency, which is a deliberate host-only exclusion and not a skip.
       - name: Guard against silently skipped WASM tests
         working-directory: src-tauri
+        env:
+          WASM_TEST_LOG: ${{ runner.temp }}/wasm-test.log
         run: |
           set -euo pipefail
           # Two decoration forms exist: the literal attribute and the
-          # cfg_attr form used by tests that must run on both targets.
-          decorated=$(( $(grep -rho '#\[wasm_bindgen_test\]' --include='*.rs' . | wc -l) + $(grep -rho 'cfg_attr(target_arch' --include='*.rs' . | wc -l) ))
-          actual=$(wasm-pack test --node 2>&1 \
-            | grep -oE 'running [0-9]+ tests' | head -1 | grep -oE '[0-9]+')
+          # cfg_attr form used by tests that must run on both targets. The
+          # cfg_attr pattern spells out the whole attribute rather than the
+          # shorter `cfg_attr(target_arch`, which would also match a future
+          # non-test `cfg_attr(target_arch = ...)` and inflate this count.
+          #
+          # Each grep is allowed to find nothing. Under `pipefail` a grep with
+          # no match exits 1, which would abort the script before any message
+          # below could be printed — and "nothing decorated" and "no log" are
+          # exactly the two cases this script most needs to explain.
+          wasm_attr=$(grep -rho '#\[wasm_bindgen_test\]' --include='*.rs' . | wc -l || true)
+          cfg_attr=$(grep -rhoE '#\[cfg_attr\(target_arch = "wasm32", wasm_bindgen_test\)\]' --include='*.rs' . | wc -l || true)
+          decorated=$(( wasm_attr + cfg_attr ))
+
+          # Deleting every decoration would make both sides of the comparison
+          # zero, and a guard that passes at zero is not a guard.
+          if [ "$decorated" -eq 0 ]; then
+            echo "::error::no decorated #[wasm_bindgen_test] found in $(pwd); the count comparison below would match at zero and pass vacuously"
+            exit 1
+          fi
+
+          # Sum every `N passed` rather than reading the first
+          # `running N tests` line, which assumed the doc-test binary happened
+          # to be emitted after the real one.
+          actual=$(grep -oE '[0-9]+ passed' "$WASM_TEST_LOG" | grep -oE '[0-9]+' | awk '{s+=$1} END {print s+0}' || true)
+
           echo "decorated #[wasm_bindgen_test] functions: $decorated"
           echo "tests wasm-pack actually ran: $actual"
           if [ "$actual" != "$decorated" ]; then
@@ -216,20 +282,40 @@ jobs:
             exit 1
           fi
 
-          # Every test in the module the WASM bridge exposes must be decorated
-          # for both targets. `prop_tests.rs` is the one deliberate exception
-          # (host-only by dependency, not by omission).
-          strays=$(grep -rlE '^[[:space:]]*#\[test\]' src/core --include='*.rs' \
-            | grep -v 'prop_tests.rs' || true)
+          # Everything compiled for wasm32 under test must be decorated for both
+          # targets: a plain #[test] compiles for wasm32 but is silently skipped
+          # by the wasm-bindgen runner, and neither count above moves to catch
+          # it. That surface is `src/core` — the whole lib target, which is what
+          # the bridge exposes — plus `wasm_bridge_tests.rs`, the only other
+          # module `lib.rs` pulls in under wasm32. `prop_tests.rs` is the one
+          # deliberate exception (host-only by dependency, not by omission).
+          strays=$(grep -rlE '^[[:space:]]*#\[test\]' src/core src/wasm_bridge_tests.rs \
+            --include='*.rs' | grep -v 'prop_tests.rs' || true)
           if [ -n "$strays" ]; then
-            echo "::error::plain #[test] in the wasm-exposed core; it compiles for wasm32 but is silently skipped there:"
+            echo "::error::plain #[test] in a wasm-compiled test module; it compiles for wasm32 but is silently skipped there:"
             echo "$strays"
             exit 1
           fi
-          echo "no plain #[test] in the wasm-exposed core"
+          echo "no plain #[test] in any wasm-compiled test module"
 
-      # Also run the frontend suite here rather than only in the frontend job:
-      # this is the one job where src/wasm/pkg exists, so it is the only place the
-      # JS/WASM parity test can actually run instead of skipping.
-      - name: Run frontend tests against the built WASM package
-        run: bun run test
+      # `build:wasm`, not `build:web`. The release profile — lto,
+      # codegen-units=1, opt-level="s", strip — is what actually ships, and
+      # `wasm-pack test` above only ever compiles a dev profile, so this is the
+      # one step that proves the shipped artefact builds at all. The Vite half
+      # of `build:web` is deliberately not repeated here: the frontend job
+      # already builds the bundle, and the parity test below imports
+      # `src/wasm/pkg` directly rather than reading `dist/`.
+      #
+      # After the tests rather than before them, because it is this job's most
+      # expensive step and a failing test should not pay for it first.
+      - name: Build the release WASM package
+        run: bun run build:wasm
+
+      # `src/wasm/pkg` only exists here, so this is the one place the JS/WASM
+      # parity test can run instead of skipping. It is also the only spec file
+      # that imports the package: the other 24 are identical with or without
+      # it, so re-running them was a second copy of the frontend suite with
+      # nothing new under test. Coverage is off because nothing consumes a
+      # report from this job.
+      - name: Run JS/WASM planner parity tests
+        run: bun run test -- src/__tests__/wasmParity.test.ts --coverage.enabled=false
