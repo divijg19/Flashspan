@@ -94,10 +94,9 @@ pub(crate) fn drive_auto_repeat_wait(
         return false;
     }
     on_tick(0);
-    if !generation_is_current(generation(), observed_generation) {
-        return false;
-    }
-    true
+    // The final check is the return value, not a call whose result is
+    // discarded: a cancel landing after the last tick still vetoes the start.
+    generation_is_current(generation(), observed_generation)
 }
 
 pub(crate) fn now_epoch_ms() -> u64 {

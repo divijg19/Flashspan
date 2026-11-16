@@ -186,6 +186,15 @@ describe("splash presentation", () => {
 		override.textContent = ".splash { --splash-hold: 5000ms; }";
 		document.head.append(override);
 
+		// The mount effect reads the timings off the first `.splash` in the
+		// document. Under `vi.resetModules` the app's own element is not inserted
+		// yet when that effect runs, so provide the element the contract reads
+		// from. A constant-based or document-root read still fails this test:
+		// `<html>` carries no `--splash-hold`, so it would fall back to 1000ms.
+		const probe = document.createElement("div");
+		probe.className = "splash";
+		document.body.append(probe);
+
 		vi.useFakeTimers();
 		try {
 			vi.resetModules();
@@ -214,6 +223,7 @@ describe("splash presentation", () => {
 			await vi.advanceTimersByTimeAsync(1800);
 			expect(splash()).toBeNull();
 		} finally {
+			probe.remove();
 			override.remove();
 			vi.useRealTimers();
 		}
