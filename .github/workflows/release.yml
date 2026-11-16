@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: read
@@ -25,7 +25,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 'latest'
+          bun-version: "latest"
 
       - name: Cache Bun runtime
         uses: actions/cache@v6
@@ -118,7 +118,7 @@ jobs:
       - name: Setup Bun (frontend runtime)
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 'latest'
+          bun-version: "latest"
 
       - name: Cache Bun runtime
         uses: actions/cache@v6
@@ -222,7 +222,6 @@ jobs:
           }
           Copy-Item $exe.FullName "release\Ascent.Flash-Windows_setup.exe" -Force
 
-
       # --------------------
       # Artifacts
       # --------------------
@@ -248,7 +247,7 @@ jobs:
       - name: Setup Bun (frontend runtime)
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 'latest'
+          bun-version: "latest"
 
       - name: Cache Bun runtime
         uses: actions/cache@v6
@@ -323,4 +322,3 @@ jobs:
             **/Ascent.Flash-macOS.dmg
             **/Ascent.Flash-Windows_setup.exe
             **/Ascent.Flash-web.tar.gz
-
