@@ -7,7 +7,7 @@ import { registerWasmCoreBridge } from "../../wasm/coreBridge";
  *
  * Three test files each carried their own copy of a plan builder, a bridge
  * stub and a config snapshot. The builders were near-identical — the same
- * 3/2/1 countdown, the same 1-based index conversion, the same 100ms gap — and
+ * 3/2/1 countdown, the same 1-based index conversion, the same exposures — and
  * the snapshots differed only in `digits_per_number` and `total_numbers`. So a
  * change to the plan shape had to be made in three places, and the copies had
  * already drifted: one took an `exposureMs` parameter while the others
@@ -20,7 +20,7 @@ import { registerWasmCoreBridge } from "../../wasm/coreBridge";
 
 /** The countdown every plan starts with, as the engine emits it. */
 const COUNTDOWN_STEPS: WasmSessionPlan["steps"] = [
-	{ ClearScreen: { session_id: 1, index: null, delay_ms_before_next: 0 } },
+	{ ClearScreen: { session_id: 1, delay_ms_before_next: 0 } },
 	{ CountdownTick: { value: "3", delay_ms_before_next: 1000 } },
 	{ CountdownTick: { value: "2", delay_ms_before_next: 1000 } },
 	// The final tick also carries the pre-flash settle, matching
@@ -30,9 +30,6 @@ const COUNTDOWN_STEPS: WasmSessionPlan["steps"] = [
 
 /** The first flash follows the countdown, settle included. */
 const FIRST_FLASH_AT_MS = 3100;
-
-/** Blank gap between a clear and the next flash. `INTER_NUMBER_GAP_MS`. */
-const GAP_MS = 100;
 
 /**
  * A config snapshot for a plan.
@@ -56,8 +53,9 @@ function configSnapshot(overrides?: {
  * Build a `WasmSessionPlan` whose numbers are exactly `numbers`.
  *
  * The steps mirror `build_session_plan` in `core/engine.rs`: an initial clear,
- * the three countdown ticks, then a show/clear pair per number, then a trailing
- * clear and the completion. Indices are 1-based, as Rust reports them.
+ * the three countdown ticks, one show per number (continuous replacement, no
+ * blank step), then a trailing clear and the completion. Indices are 1-based,
+ * as Rust reports them.
  *
  * `exposureMs` is how long each number stays on screen; it defaults to 500ms,
  * which is what the tests that do not care about timing use.
@@ -87,18 +85,10 @@ export function fakeWasmPlan(
 			},
 		});
 		at += exposureMs;
-		steps.push({
-			ClearScreen: {
-				session_id: 1,
-				index: i + 1,
-				delay_ms_before_next: GAP_MS,
-			},
-		});
-		at += GAP_MS;
 	}
 
 	steps.push({
-		ClearScreen: { session_id: 1, index: null, delay_ms_before_next: 0 },
+		ClearScreen: { session_id: 1, delay_ms_before_next: 0 },
 	});
 	steps.push({
 		Complete: {

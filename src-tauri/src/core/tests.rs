@@ -432,14 +432,10 @@ mod validation_tests {
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg_attr(not(target_arch = "wasm32"), test)]
-    fn timing_budget_constants_are_100ms() {
-        // The inter-number gap is no longer configurable; both executors
-        // share these fixed values (see crate::core::timing).
-        assert_eq!(
-            crate::core::timing::INTER_NUMBER_GAP_MS,
-            100,
-            "inter-number gap must stay 100ms"
-        );
+    fn pre_flash_settle_is_100ms() {
+        // Both executors share this fixed value (see crate::core::timing).
+        // There is deliberately no inter-number gap constant any more: numbers
+        // replace one another continuously.
         assert_eq!(
             crate::core::timing::PRE_FLASH_SETTLE_MS,
             100,
@@ -564,13 +560,13 @@ mod validation_tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn plan_matches_golden_vectors_for_fixed_seeds() {
-        // Total: 0 + 3*1000 + 100 (settle) + 2*(100 flash + 100 gap) = 3500.
+        // Total: 0 + 3*1000 + 100 (settle) + 2*100 (flash, no gap) = 3300.
         /// (digits, total, seed, expected numbers, expected sum, expected duration)
         type Vector = (u32, u32, u64, &'static [i64], i64, u64);
         let cases: [Vector; 3] = [
-            (1, 2, 1, &[9, 7], 16, 3500),
-            (2, 2, 1, &[97, 72], 169, 3500),
-            (1, 2, 99, &[6, 7], 13, 3500),
+            (1, 2, 1, &[9, 7], 16, 3300),
+            (2, 2, 1, &[97, 72], 169, 3300),
+            (1, 2, 99, &[6, 7], 13, 3300),
         ];
 
         for (digits, total, seed, numbers, sum, duration) in cases {
@@ -618,7 +614,7 @@ mod validation_tests {
                     let mut last: Option<u64> = None;
                     for step in &plan.steps {
                         match step {
-                            SessionStep::ClearScreen { index: None, .. } => {
+                            SessionStep::ClearScreen { .. } => {
                                 at += step.delay_ms();
                             }
                             SessionStep::Complete { .. } => {}
@@ -670,7 +666,6 @@ mod validation_tests {
         assert!(matches!(
             steps[0],
             SessionStep::ClearScreen {
-                index: None,
                 delay_ms_before_next: 0,
                 ..
             }
@@ -697,7 +692,7 @@ mod validation_tests {
         // no delay of its own.
         assert!(matches!(
             steps[steps.len() - 2],
-            SessionStep::ClearScreen { index: None, .. }
+            SessionStep::ClearScreen { .. }
         ));
         assert!(matches!(
             steps[steps.len() - 1],
@@ -817,8 +812,7 @@ mod validation_tests {
             .map(|step| match step {
                 SessionStep::CountdownTick { value, .. } => format!("countdown({value})"),
                 SessionStep::ShowNumber { index, .. } => format!("show({index})"),
-                SessionStep::ClearScreen { index: Some(i), .. } => format!("clear({i})"),
-                SessionStep::ClearScreen { index: None, .. } => "clear".to_string(),
+                SessionStep::ClearScreen { .. } => "clear".to_string(),
                 SessionStep::Complete { .. } => "complete".to_string(),
             })
             .collect();
@@ -831,20 +825,18 @@ mod validation_tests {
                 "countdown(2)",
                 "countdown(1)",
                 "show(1)",
-                "clear(1)",
                 "show(2)",
-                "clear(2)",
                 "clear",
                 "complete",
             ],
         );
 
         // The delay each step waits before the next: 0, the countdown (with the
-        // settle on the final tick), the exposure, the fixed inter-number gap,
+        // settle on the final tick), the exposures with no gap between them,
         // then the closing clear and completion.
         let delays: Vec<u64> = plan.steps.iter().map(SessionStep::delay_ms).collect();
-        assert_eq!(delays, vec![0, 1000, 1000, 1100, 500, 100, 500, 100, 0, 0]);
-        assert_eq!(plan.total_duration_ms, 4300);
+        assert_eq!(delays, vec![0, 1000, 1000, 1100, 500, 500, 0, 0]);
+        assert_eq!(plan.total_duration_ms, 4100);
 
         // The per-number fields the label hides: the session id, the total, and
         // a running sum that accumulates across the sequence.

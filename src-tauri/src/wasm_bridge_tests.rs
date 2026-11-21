@@ -4,7 +4,7 @@ mod wasm_tests {
         SessionConfig, SessionConfigEffective, SessionConfigInput, SessionPlan, SessionStep,
     };
     use crate::{build_session_plan_wasm, normalize_session_config_wasm, ping, wasm_version};
-    use serde::{Deserialize, Serialize};
+    use serde::Deserialize;
     use serde_wasm_bindgen::{from_value, to_value};
     use wasm_bindgen::JsValue;
     use wasm_bindgen_test::*;
@@ -218,10 +218,10 @@ mod wasm_tests {
 
         let plan = plan(77777, &input, None);
 
-        // 1 initial clear + 3 countdown ticks + 2 per number + 1 final clear
-        // + 1 complete.
-        assert_eq!(plan.steps.len(), 1 + 3 + (2 * 5) + 1 + 1);
-        assert_eq!(plan.total_duration_ms, 3_000 + 100 + 5 * (1_000 + 100));
+        // 1 initial clear + 3 countdown ticks + 1 show per number
+        // + 1 final clear + 1 complete (continuous replacement, no gap).
+        assert_eq!(plan.steps.len(), 1 + 3 + 5 + 1 + 1);
+        assert_eq!(plan.total_duration_ms, 3_000 + 100 + 5 * 1_000);
     }
 
     /// Malformed input must surface as a thrown value, never a wasm trap. A
@@ -359,40 +359,42 @@ mod wasm_tests {
         from_value::<NormalizedConfig>(value).expect("decode");
     }
 
-    /// `ClearScreen { index: None }` is the one field whose shape differs between
-    /// serializers: `serde-wasm-bindgen` emits `null` where `serde_json` emits
-    /// `undefined`. The browser guards with `== null`, but nothing proved what the
-    /// wasm side actually produces. Round-tripping through the real serializer is
-    /// stronger than inspecting it with reflection.
+    /// The bridge's `ClearScreen` wire shape is the contract the browser's
+    /// `planStepsToEvents` validates: an externally-tagged `{ ClearScreen: ... }`
+    /// step carrying only `session_id` and `delay_ms_before_next`. The old
+    /// `index` field is gone now that numbers replace one another continuously,
+    /// and a foreign or stale module that still sends it must be rejected by
+    /// the browser rather than silently accepted. Serialize the *real* type
+    /// through the real serializer so a future field change cannot pass a test
+    /// built around a hand-written look-alike struct.
     #[wasm_bindgen_test]
-    fn wasm_clear_screen_index_none_round_trips() {
-        #[derive(Debug, Deserialize, Serialize)]
-        struct ClearScreenWire {
-            session_id: u64,
-            index: Option<u32>,
-            delay_ms_before_next: u64,
-        }
-        #[derive(Debug, Deserialize, Serialize)]
-        struct StepWire {
-            #[serde(rename = "ClearScreen")]
-            clear: ClearScreenWire,
-        }
-
-        let step = StepWire {
-            clear: ClearScreenWire {
-                session_id: 1,
-                index: None,
-                delay_ms_before_next: 0,
-            },
+    fn wasm_clear_screen_wire_shape_has_no_index() {
+        let step = SessionStep::ClearScreen {
+            session_id: 1,
+            delay_ms_before_next: 0,
         };
-        let encoded = to_value(&step).expect("encode");
-        let decoded: StepWire = from_value(encoded).expect("decode");
-        assert_eq!(
-            decoded.clear.index, None,
-            "index: None must survive as None"
+        let encoded = to_value(&step).expect("encode real SessionStep");
+
+        let shape: serde_json::Value = from_value(encoded.clone()).expect("decode shape");
+        let body = &shape["ClearScreen"];
+        assert_eq!(body["session_id"], 1);
+        assert_eq!(body["delay_ms_before_next"], 0);
+        assert!(
+            body.get("index").is_none(),
+            "a per-number index must never cross the wire: {shape}"
         );
-        assert_eq!(decoded.clear.session_id, 1);
-        assert_eq!(decoded.clear.delay_ms_before_next, 0);
+
+        // And the same bytes must decode back into the production type.
+        match from_value::<SessionStep>(encoded).expect("decode real SessionStep") {
+            SessionStep::ClearScreen {
+                session_id,
+                delay_ms_before_next,
+            } => {
+                assert_eq!(session_id, 1);
+                assert_eq!(delay_ms_before_next, 0);
+            }
+            other => panic!("expected ClearScreen, got {other:?}"),
+        }
     }
     /// `normalize_session_config_wasm` shares the JS decode boundary with
     /// `build_session_plan_wasm`, so it must reject the same malformed inputs as
@@ -437,7 +439,6 @@ mod wasm_tests {
         let mut countdown_values: Vec<String> = Vec::new();
         let mut countdown_delays: Vec<u64> = Vec::new();
         let mut show_count = 0;
-        let mut indexed_clears = 0;
         let mut global_clears = 0;
         let mut completes = 0;
 
@@ -472,14 +473,15 @@ mod wasm_tests {
                     );
                 }
                 SessionStep::ClearScreen {
-                    index: Some(_),
                     delay_ms_before_next,
                     ..
                 } => {
-                    indexed_clears += 1;
-                    assert_eq!(*delay_ms_before_next, 100, "the inter-number gap is fixed");
+                    global_clears += 1;
+                    assert_eq!(
+                        *delay_ms_before_next, 0,
+                        "a global clear never waits: replacement is continuous"
+                    );
                 }
-                SessionStep::ClearScreen { index: None, .. } => global_clears += 1,
                 SessionStep::Complete { numbers, sum, .. } => {
                     completes += 1;
                     assert_eq!(numbers, &plan.numbers_generated);
@@ -493,7 +495,6 @@ mod wasm_tests {
         // paints late rather than short.
         assert_eq!(countdown_delays, vec![1000, 1000, 1100]);
         assert_eq!(show_count, 1);
-        assert_eq!(indexed_clears, 1);
         // One global clear before the countdown, one after the last number.
         assert_eq!(global_clears, 2);
         assert_eq!(completes, 1);

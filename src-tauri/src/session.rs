@@ -471,7 +471,6 @@ fn run_session_plan<E: SessionEmitter>(
         if stop.is_requested() {
             emitter.clear_screen(ClearScreen {
                 session_id: plan.session_id,
-                index: None,
                 emitted_at_ms: now_epoch_ms(),
             });
             let mut st = recover_lock(&*state, "state");
@@ -519,12 +518,10 @@ fn run_session_plan<E: SessionEmitter>(
 
             SessionStep::ClearScreen {
                 session_id,
-                index,
                 delay_ms_before_next,
             } => {
                 emitter.clear_screen(ClearScreen {
                     session_id: *session_id,
-                    index: *index,
                     emitted_at_ms: now_epoch_ms(),
                 });
 
@@ -585,7 +582,6 @@ fn run_session_plan<E: SessionEmitter>(
         if stop.is_requested() {
             emitter.clear_screen(ClearScreen {
                 session_id: plan.session_id,
-                index: None,
                 emitted_at_ms: now_epoch_ms(),
             });
             let mut st = recover_lock(&*state, "state");
@@ -1327,6 +1323,16 @@ mod tests {
                 .map_or_else(|| panic!("{label} was never emitted"), |(_, t)| *t)
         }
 
+        /// The nth emission with this label. Clears are global only now, so the
+        /// one that ends the last number's exposure is the second `clear`.
+        fn at_nth(&self, label: &str, n: usize) -> u64 {
+            recover_lock(&self.events, "events")
+                .iter()
+                .filter(|(l, _)| l == label)
+                .nth(n - 1)
+                .map_or_else(|| panic!("{label} #{n} was never emitted"), |(_, t)| *t)
+        }
+
         fn labels(&self) -> Vec<String> {
             recover_lock(&self.events, "events")
                 .iter()
@@ -1337,11 +1343,7 @@ mod tests {
 
     impl SessionEmitter for TimingEmitter {
         fn clear_screen(&self, payload: ClearScreen) {
-            let label = match payload.index {
-                Some(i) => format!("clear({i})"),
-                None => "clear".to_string(),
-            };
-            self.record(label, payload.emitted_at_ms);
+            self.record("clear".to_string(), payload.emitted_at_ms);
         }
         fn countdown_tick(&self, value: String) {
             let t = now_epoch_ms();
@@ -1357,7 +1359,7 @@ mod tests {
 
     /// A two-number plan whose delays are non-zero, so the executor's waiting is
     /// observable.
-    fn timed_plan(session_id: u64, exposure_ms: u64, gap_ms: u64) -> SessionPlan {
+    fn timed_plan(session_id: u64, exposure_ms: u64, countdown_gap_ms: u64) -> SessionPlan {
         SessionPlan {
             session_id,
             config_snapshot: SessionConfigEffective {
@@ -1369,20 +1371,19 @@ mod tests {
             steps: vec![
                 SessionStep::ClearScreen {
                     session_id,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::CountdownTick {
                     value: "3".into(),
-                    delay_ms_before_next: gap_ms,
+                    delay_ms_before_next: countdown_gap_ms,
                 },
                 SessionStep::CountdownTick {
                     value: "2".into(),
-                    delay_ms_before_next: gap_ms,
+                    delay_ms_before_next: countdown_gap_ms,
                 },
                 SessionStep::CountdownTick {
                     value: "1".into(),
-                    delay_ms_before_next: gap_ms + exposure_ms / 4,
+                    delay_ms_before_next: countdown_gap_ms + exposure_ms / 4,
                 },
                 SessionStep::ShowNumber {
                     session_id,
@@ -1391,11 +1392,6 @@ mod tests {
                     value: 5,
                     running_sum: 5,
                     delay_ms_before_next: exposure_ms,
-                },
-                SessionStep::ClearScreen {
-                    session_id,
-                    index: Some(1),
-                    delay_ms_before_next: gap_ms,
                 },
                 SessionStep::ShowNumber {
                     session_id,
@@ -1407,12 +1403,6 @@ mod tests {
                 },
                 SessionStep::ClearScreen {
                     session_id,
-                    index: Some(2),
-                    delay_ms_before_next: gap_ms,
-                },
-                SessionStep::ClearScreen {
-                    session_id,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::Complete {
@@ -1430,20 +1420,20 @@ mod tests {
     /// Wall-clock floor for `timed_plan`: the sum of every delay the executor
     /// waits on.
     ///
-    /// Countdown contributes `gap` twice plus `gap + exposure/4` on the final
-    /// tick (which carries the pre-flash settle), and each number contributes
-    /// `exposure` then `gap`. The leading and trailing global clears and the
-    /// completion carry no delay.
-    fn timed_plan_delay_floor(exposure_ms: u64, gap_ms: u64) -> Duration {
-        let countdown = gap_ms * 3 + exposure_ms / 4;
-        let numbers = 2 * (exposure_ms + gap_ms);
+    /// Countdown contributes the gap twice plus `gap + exposure/4` on the final
+    /// tick (which carries the pre-flash settle). Each number contributes just
+    /// its exposure: replacement is continuous, so there is no gap to wait.
+    /// The leading and trailing global clears and the completion carry no delay.
+    fn timed_plan_delay_floor(exposure_ms: u64, countdown_gap_ms: u64) -> Duration {
+        let countdown = countdown_gap_ms * 3 + exposure_ms / 4;
+        let numbers = 2 * exposure_ms;
         Duration::from_millis(countdown + numbers)
     }
 
     /// Runs `timed_plan` and returns the elapsed time alongside the emitter.
     fn run_timed_plan(
         exposure_ms: u64,
-        gap_ms: u64,
+        countdown_gap_ms: u64,
         lag: Option<(usize, u64)>,
     ) -> (Duration, TimingEmitter) {
         let emitter = TimingEmitter::new(lag);
@@ -1455,7 +1445,7 @@ mod tests {
         let started = Instant::now();
         run_session_plan(
             &emitter,
-            timed_plan(7, exposure_ms, gap_ms),
+            timed_plan(7, exposure_ms, countdown_gap_ms),
             state,
             stop,
             recent_results,
@@ -1491,11 +1481,12 @@ mod tests {
     /// production: the previous event's lateness used to be deducted from this
     /// number's window, so a flash came up short.
     ///
-    /// The lag is injected on `clear(1)` - the event that *ends* number 1's
-    /// window - so that under the historical absolute-grid scheduling it would
-    /// eat into number 2's exposure. Injecting it on `show(1)` instead would
-    /// not show the symptom: that payload is stamped before the callback runs,
-    /// so number 1's own measured exposure stays intact either way.
+    /// The lag is injected on `show(2)` - the event that *ends* number 1's
+    /// window under continuous replacement - so that under the historical
+    /// absolute-grid scheduling it would eat into number 2's exposure. Injecting
+    /// it on `show(1)` instead would not show the symptom: that payload is
+    /// stamped before the callback runs, so number 1's own exposure stays intact
+    /// either way.
     ///
     /// The executor re-anchors each deadline to `Instant::now() + delay`, so
     /// burning the time can only push the rest of the session later.
@@ -1503,11 +1494,13 @@ mod tests {
     fn run_session_plan_lateness_does_not_shorten_exposure() {
         let (exposure, gap) = (60u64, 20u64);
         let lag_ms = 150u64;
-        // Emission 6 is `clear(1)`: 1 global clear, 3 countdowns, show(1).
+        // Emission 6 is `show(2)`: 1 global clear, 3 countdowns, show(1).
         let (elapsed, emitter) = run_timed_plan(exposure, gap, Some((6, lag_ms)));
 
         let second_shown = emitter.at("show(2)");
-        let second_cleared = emitter.at("clear(2)");
+        // With no per-number clears, the second `clear` (the closing one) is
+        // what ends the last number's exposure.
+        let second_cleared = emitter.at_nth("clear", 2);
         let on_screen = Duration::from_millis(second_cleared.saturating_sub(second_shown));
 
         assert!(
@@ -1595,14 +1588,8 @@ mod tests {
     impl SessionEmitter for StateObservingEmitter {
         fn clear_screen(&self, payload: ClearScreen) {
             self.observe();
-            // Index-aware labels, matching `TimingEmitter`, so a test can tell
-            // the global clear from the one that ends a specific number's
-            // exposure.
-            let label = match payload.index {
-                Some(i) => format!("clear({i})"),
-                None => "clear".to_string(),
-            };
-            recover_lock(&self.events, "events").push(label);
+            let _ = payload.session_id;
+            recover_lock(&self.events, "events").push("clear".to_string());
         }
         fn countdown_tick(&self, value: String) {
             self.observe();
@@ -1666,10 +1653,13 @@ mod tests {
             show.1,
         );
 
+        // The closing clear is the last one: the leading clear happens before
+        // any number is shown and correctly observes Idle.
         let cleared = trace
             .iter()
-            .find(|(label, _)| *label == "clear(1)")
-            .unwrap_or_else(|| panic!("expected clear(1) in {trace:?}"));
+            .rev()
+            .find(|(label, _)| *label == "clear")
+            .unwrap_or_else(|| panic!("expected clear in {trace:?}"));
         assert!(
             matches!(cleared.1, SessionState::ShowingNumbers),
             "the clear that ends the exposure must observe ShowingNumbers, got {:?}",
@@ -1739,7 +1729,6 @@ mod tests {
             steps: vec![
                 SessionStep::ClearScreen {
                     session_id: 99,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::CountdownTick {
@@ -1764,7 +1753,6 @@ mod tests {
                 },
                 SessionStep::ClearScreen {
                     session_id: 99,
-                    index: Some(1),
                     delay_ms_before_next: 0,
                 },
                 SessionStep::Complete {
@@ -1846,7 +1834,6 @@ mod tests {
             steps: vec![
                 SessionStep::ClearScreen {
                     session_id,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::CountdownTick {
@@ -1869,11 +1856,6 @@ mod tests {
                     running_sum: 5,
                     delay_ms_before_next: 0,
                 },
-                SessionStep::ClearScreen {
-                    session_id,
-                    index: Some(1),
-                    delay_ms_before_next: 0,
-                },
                 SessionStep::ShowNumber {
                     session_id,
                     index: 2,
@@ -1884,12 +1866,6 @@ mod tests {
                 },
                 SessionStep::ClearScreen {
                     session_id,
-                    index: Some(2),
-                    delay_ms_before_next: 0,
-                },
-                SessionStep::ClearScreen {
-                    session_id,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::Complete {
@@ -1939,9 +1915,7 @@ mod tests {
                 "countdown(2)",
                 "countdown(1)",
                 "show_number(5)",
-                "clear_screen",
                 "show_number(3)",
-                "clear_screen",
                 "clear_screen",
                 "session_complete",
             ],
@@ -2116,7 +2090,6 @@ mod tests {
             steps: vec![
                 SessionStep::ClearScreen {
                     session_id: 77,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::CountdownTick {
@@ -2141,7 +2114,6 @@ mod tests {
                 },
                 SessionStep::ClearScreen {
                     session_id: 77,
-                    index: Some(1),
                     delay_ms_before_next: 0,
                 },
                 SessionStep::ShowNumber {
@@ -2154,12 +2126,10 @@ mod tests {
                 },
                 SessionStep::ClearScreen {
                     session_id: 77,
-                    index: Some(2),
                     delay_ms_before_next: 0,
                 },
                 SessionStep::ClearScreen {
                     session_id: 77,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::Complete {
@@ -2230,7 +2200,6 @@ mod tests {
             steps: vec![
                 SessionStep::ClearScreen {
                     session_id: 100,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::CountdownTick {
@@ -2247,7 +2216,6 @@ mod tests {
                 },
                 SessionStep::ClearScreen {
                     session_id: 100,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::Complete {
@@ -2313,7 +2281,6 @@ mod tests {
             steps: vec![
                 SessionStep::ClearScreen {
                     session_id: 50,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::CountdownTick {
@@ -2338,12 +2305,10 @@ mod tests {
                 },
                 SessionStep::ClearScreen {
                     session_id: 50,
-                    index: Some(1),
                     delay_ms_before_next: 0,
                 },
                 SessionStep::ClearScreen {
                     session_id: 50,
-                    index: None,
                     delay_ms_before_next: 0,
                 },
                 SessionStep::Complete {
@@ -2764,11 +2729,8 @@ mod tests {
 
         impl SessionEmitter for ChannelEmitter {
             fn clear_screen(&self, payload: ClearScreen) {
-                let label = match payload.index {
-                    Some(index) => format!("clear({index})"),
-                    None => "clear".to_string(),
-                };
-                recover_lock(&self.events, "events").push(label);
+                let _ = payload.session_id;
+                recover_lock(&self.events, "events").push("clear".to_string());
             }
             fn countdown_tick(&self, value: String) {
                 recover_lock(&self.events, "events").push(format!("countdown({value})"));
@@ -2836,8 +2798,8 @@ mod tests {
         ));
 
         // The emitted sequence is exactly the plan: a leading global clear, the
-        // countdown, one flash-then-clear per number, a trailing clear and the
-        // completion.
+        // countdown, the flashes replacing one another continuously, a trailing
+        // clear and the completion.
         assert_eq!(
             *recover_lock(&events, "events"),
             vec![
@@ -2846,9 +2808,7 @@ mod tests {
                 "countdown(2)",
                 "countdown(1)",
                 "show(1)",
-                "clear(1)",
                 "show(2)",
-                "clear(2)",
                 "clear",
                 "complete",
             ],

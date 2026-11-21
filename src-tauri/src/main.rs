@@ -192,12 +192,12 @@ mod native_app {
     #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
     #[serde(rename_all = "snake_case")]
     enum ColorScheme {
+        Ocean,
         Midnight,
-        Ivory,
-        Crimson,
         Aqua,
-        Violet,
-        Amber,
+        Ivory,
+        Rose,
+        Sage,
     }
 
     #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -219,7 +219,7 @@ mod native_app {
     impl Default for AppSettings {
         fn default() -> Self {
             Self {
-                color_scheme: ColorScheme::Midnight,
+                color_scheme: ColorScheme::Ocean,
                 theme_mode: ThemeMode::Dark,
             }
         }
@@ -725,12 +725,12 @@ mod native_app {
         #[test]
         fn color_scheme_round_trips_as_snake_case() {
             for (scheme, wire) in [
+                (ColorScheme::Ocean, "ocean"),
                 (ColorScheme::Midnight, "midnight"),
-                (ColorScheme::Ivory, "ivory"),
-                (ColorScheme::Crimson, "crimson"),
                 (ColorScheme::Aqua, "aqua"),
-                (ColorScheme::Violet, "violet"),
-                (ColorScheme::Amber, "amber"),
+                (ColorScheme::Ivory, "ivory"),
+                (ColorScheme::Rose, "rose"),
+                (ColorScheme::Sage, "sage"),
             ] {
                 assert_eq!(
                     serde_json::to_value(scheme).expect("serialize scheme"),
@@ -773,15 +773,15 @@ mod native_app {
         }
 
         #[test]
-        fn app_settings_default_is_midnight_dark_with_the_frontend_keys() {
+        fn app_settings_default_is_ocean_dark_with_the_frontend_keys() {
             let settings = AppSettings::default();
-            assert!(matches!(settings.color_scheme, ColorScheme::Midnight));
+            assert!(matches!(settings.color_scheme, ColorScheme::Ocean));
             assert!(matches!(settings.theme_mode, ThemeMode::Dark));
 
             // The UI reads these two exact keys off `get_app_settings`.
             assert_eq!(
                 serde_json::to_value(&settings).expect("serialize settings"),
-                serde_json::json!({ "color_scheme": "midnight", "theme_mode": "dark" }),
+                serde_json::json!({ "color_scheme": "ocean", "theme_mode": "dark" }),
             );
         }
 

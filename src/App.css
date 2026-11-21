@@ -31,25 +31,41 @@
 	--ui-scale: 1;
 }
 
+/*
+ * Native range sliders default to the browser's blue, which is nearly the
+ * same hue as several of our blue-ish themes (Ocean especially) and so
+ * disappears into the background. Drive `accent-color` from a mode-scoped
+ * neutral instead: a light control on dark surfaces, a dark one on light.
+ * The problem is luminance similarity, which tracks the mode, not the hue,
+ * so two tokens cover all six schemes without per-theme churn.
+ */
+.app.theme-dark {
+	--control-accent: #eef4ff;
+}
+
+.app.theme-light {
+	--control-accent: #0b1a2e;
+}
+
 :root {
 	/* Preview colors for the color panel (dark / light) */
-	--preview-midnight-dark: #000000;
+	--preview-ocean-dark: #1c5094;
+	--preview-ocean-light: #bccdf8;
+
+	--preview-midnight-dark: #05070a;
 	--preview-midnight-light: #9fdce6;
 
-	--preview-crimson-dark: #5c0f0f;
-	--preview-crimson-light: #ffe6e8;
+	--preview-aqua-dark: #0b4b62;
+	--preview-aqua-light: #d8f5ef;
 
-	--preview-aqua-dark: #006d63;
-	--preview-aqua-light: #c7fff4;
+	--preview-ivory-dark: #2a231d;
+	--preview-ivory-light: #f9fafb;
 
-	--preview-violet-dark: #2b0f3a;
-	--preview-violet-light: #f0e0ff;
+	--preview-rose-dark: #3a2028;
+	--preview-rose-light: #f7e6ea;
 
-	--preview-amber-dark: #5a2a07;
-	--preview-amber-light: #ffdf9c;
-
-	--preview-ivory-dark: #f9fafb;
-	--preview-ivory-light: #ffffff;
+	--preview-sage-dark: #173326;
+	--preview-sage-light: #dcefe1;
 
 	/* UI scale (updated by JS on resize) */
 	--ui-scale: 1;
@@ -103,11 +119,23 @@
 }
 
 .bottomInfo a {
-	color: var(--accent);
+	color: var(--app-fg);
 	text-decoration: none;
 	font-weight: 600;
 	font-size: calc(clamp(14px, 1.4vw, 18px) * var(--ui-scale));
 	/* +2px larger */
+}
+
+/* On light surfaces the attribution stays pure black: the accent and the
+   translucent theme foreground can both fall below the small-text contrast
+   threshold, while black is unambiguously compliant on every light theme. */
+body.theme-light .bottomInfo,
+body.theme-light .bottomInfo a {
+	color: #000000;
+}
+
+body.theme-light .bottomInfo a:hover {
+	color: var(--accent);
 }
 
 .isoRow {
@@ -121,19 +149,21 @@
 	opacity: 0.9;
 }
 
-.app.theme-midnight {
-	--app-bg: #000000;
-	--app-fg: #ffffff;
-	--app-bg-rgb: 0, 0, 0;
-	--app-fg-rgb: 255, 255, 255;
-	--accent: #4fd1ff;
-	--accent-contrast: #00121a;
-	--sw-midnight: #000000;
-	--sw-crimson: #2a0b0b;
-	--sw-aqua: #052027;
-	--sw-violet: #1a0825;
-	--sw-amber: #241400;
+/* Ocean is the default: a deep ultramarine, the family used by Memoriad's
+   Flash Anzan competition software. */
+.app.theme-ocean {
+	--app-bg: #1c5094;
+	--app-fg: #eef4ff;
+	--app-bg-rgb: 28, 80, 148;
+	--app-fg-rgb: 238, 244, 255;
+	--accent: #93b8ff;
+	--accent-contrast: #0a1642;
+	--sw-ocean: #1c5094;
+	--sw-midnight: #05070a;
+	--sw-aqua: #0b4b62;
 	--sw-ivory: #f9fafb;
+	--sw-rose: #3a2028;
+	--sw-sage: #173326;
 }
 
 .app.theme-ivory {
@@ -143,186 +173,181 @@
 	--app-fg-rgb: 17, 24, 39;
 	--accent: #1d4ed8;
 	--accent-contrast: #f8fafc;
+	--sw-ocean: #bccdf8;
 	--sw-midnight: #111827;
-	--sw-crimson: #ffdede;
 	--sw-aqua: #e6fffb;
-	--sw-violet: #f3e8ff;
-	--sw-amber: #fff4d6;
-	--sw-ivory: #ffffff;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #f7e6ea;
+	--sw-sage: #dcefe1;
 }
 
 /* Ivory dark-mode variant: a tasteful dark shell while keeping Ivory previews light */
 .app.theme-ivory.theme-dark {
-	--app-bg: #1f2937;
-	/* Obsidian (lighter, greyer) */
-	--app-fg: #f8fafc;
-	--app-bg-rgb: 31, 41, 55;
-	--app-fg-rgb: 248, 250, 252;
-	--accent: #60a5fa;
-	--accent-contrast: #171e28;
-	--sw-midnight: #06121a;
-	--sw-crimson: #2a0b0b;
-	--sw-aqua: #052027;
-	--sw-violet: #1a0825;
-	--sw-amber: #241400;
+	--app-bg: #2a231d;
+	--app-fg: #f5efe6;
+	--app-bg-rgb: 42, 35, 29;
+	--app-fg-rgb: 245, 239, 230;
+	--accent: #d9a86c;
+	--accent-contrast: #241c14;
+	--sw-ocean: #1c5094;
+	--sw-midnight: #05070a;
+	--sw-aqua: #0b4b62;
 	--sw-ivory: #f9fafb;
+	--sw-rose: #3a2028;
+	--sw-sage: #173326;
 }
 
-.app.theme-crimson {
-	--app-bg: #5c0f0f;
-	--app-fg: #fff4f5;
-	--app-bg-rgb: 92, 15, 15;
-	--app-fg-rgb: 255, 244, 245;
-	--accent: #ff4b5c;
-	--accent-contrast: #3f0000;
-	--sw-midnight: #070607;
-	--sw-crimson: #5c0f0f;
-	--sw-aqua: #083437;
-	--sw-violet: #2b052f;
-	--sw-amber: #3b1600;
-	--sw-ivory: #fff6f7;
+/* Matte black, not pure black: less halation against light digits. */
+.app.theme-midnight {
+	--app-bg: #05070a;
+	--app-fg: #f2f6fa;
+	--app-bg-rgb: 5, 7, 10;
+	--app-fg-rgb: 242, 246, 250;
+	--accent: #8fb6d9;
+	--accent-contrast: #0c1015;
+	--sw-ocean: #1c5094;
+	--sw-midnight: #05070a;
+	--sw-aqua: #0b4b62;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #3a2028;
+	--sw-sage: #173326;
 }
 
 .app.theme-aqua {
-	--app-bg: #006d63;
-	--app-fg: #e6fffb;
-	--app-bg-rgb: 0, 109, 99;
-	--app-fg-rgb: 230, 255, 251;
+	--app-bg: #0b4b62;
+	--app-fg: #eafaf7;
+	--app-bg-rgb: 11, 75, 98;
+	--app-fg-rgb: 234, 250, 247;
 	--accent: #08b7a8;
 	--accent-contrast: #002926;
-	--sw-midnight: #001018;
-	--sw-crimson: #2b0b0b;
-	--sw-aqua: #006d63;
-	--sw-violet: #0f0520;
-	--sw-amber: #241400;
-	--sw-ivory: #dffbff;
+	--sw-ocean: #1c5094;
+	--sw-midnight: #05070a;
+	--sw-aqua: #0b4b62;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #3a2028;
+	--sw-sage: #173326;
 }
 
-.app.theme-violet {
-	--app-bg: #2b0f3a;
-	--app-fg: #f6e9ff;
-	--app-bg-rgb: 43, 15, 58;
-	--app-fg-rgb: 246, 233, 255;
-	--accent: #b786ff;
-	--accent-contrast: #190819;
-	--sw-midnight: #07020b;
-	--sw-crimson: #2a0b0b;
-	--sw-aqua: #031018;
-	--sw-violet: #2b0f3a;
-	--sw-amber: #2b1400;
-	--sw-ivory: #f6e9ff;
+.app.theme-rose {
+	--app-bg: #3a2028;
+	--app-fg: #f5e6ea;
+	--app-bg-rgb: 58, 32, 40;
+	--app-fg-rgb: 245, 230, 234;
+	--accent: #e39aae;
+	--accent-contrast: #2a1018;
+	--sw-ocean: #1c5094;
+	--sw-midnight: #05070a;
+	--sw-aqua: #0b4b62;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #3a2028;
+	--sw-sage: #173326;
 }
 
-.app.theme-amber {
-	--app-bg: #5a2a07;
-	--app-fg: #fff4d6;
-	--app-bg-rgb: 90, 42, 7;
-	--app-fg-rgb: 255, 244, 214;
-	--accent: #ff7a2d;
-	--accent-contrast: #3b1f00;
-	--sw-midnight: #060404;
-	--sw-crimson: #3a0b07;
-	--sw-aqua: #041616;
-	--sw-violet: #2a0718;
-	--sw-amber: #5a2a07;
-	--sw-ivory: #fff4d6;
+.app.theme-sage {
+	--app-bg: #173326;
+	--app-fg: #e2f0e7;
+	--app-bg-rgb: 23, 51, 38;
+	--app-fg-rgb: 226, 240, 231;
+	--accent: #7fc9a0;
+	--accent-contrast: #0d2016;
+	--sw-ocean: #1c5094;
+	--sw-midnight: #05070a;
+	--sw-aqua: #0b4b62;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #3a2028;
+	--sw-sage: #173326;
 }
 
-/* Light-mode variants for each color theme (keeps accent but swaps background/foreground) */
+/* Light-mode variants for each colour theme (keeps accent but swaps surfaces). */
+.app.theme-ocean.theme-light {
+	--app-bg: #bccdf8;
+	--app-fg: #062331;
+	--app-bg-rgb: 188, 205, 248;
+	--app-fg-rgb: 6, 35, 49;
+	--accent: #2c58c4;
+	--accent-contrast: #f2f6ff;
+	--sw-ocean: #bccdf8;
+	--sw-midnight: #9fdce6;
+	--sw-aqua: #d8f5ef;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #f7e6ea;
+	--sw-sage: #dcefe1;
+}
+
+.app.theme-ivory.theme-light {
+	--app-bg: #f9fafb;
+	--app-fg: #111827;
+	--app-bg-rgb: 249, 250, 251;
+	--app-fg-rgb: 17, 24, 39;
+	--accent: #1e40af;
+	--accent-contrast: #ffffff;
+	--sw-ocean: #bccdf8;
+	--sw-midnight: #9fdce6;
+	--sw-aqua: #d8f5ef;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #f7e6ea;
+	--sw-sage: #dcefe1;
+}
+
+/* Dawn keeps its original cool blue, paired with the new matte Midnight. */
 .app.theme-midnight.theme-light {
 	--app-bg: #9fdce6;
-	/* Dawn - lighter cerulean */
 	--app-fg: #062331;
 	--app-bg-rgb: 159, 220, 230;
 	--app-fg-rgb: 6, 35, 49;
 	--accent: #0284c7;
-	--accent-contrast: #9fdce6;
+	--accent-contrast: #f2fbff;
+	--sw-ocean: #bccdf8;
 	--sw-midnight: #9fdce6;
-	--sw-crimson: #ffdede;
-	--sw-aqua: #dafaf8;
-	--sw-violet: #f2e9ff;
-	--sw-amber: #fff5db;
-	--sw-ivory: #ffffff;
-}
-
-.app.theme-ivory.theme-light {
-	--app-bg: #ffffff;
-	/* keep Ivory as pure white theme */
-	--app-fg: #071020;
-	--app-bg-rgb: 255, 255, 255;
-	--app-fg-rgb: 7, 16, 32;
-	--accent: #1e40af;
-	--accent-contrast: #ffffff;
-	--sw-midnight: #111827;
-	--sw-crimson: #ffdede;
-	--sw-aqua: #e6fffb;
-	--sw-violet: #f3e8ff;
-	--sw-amber: #fff4d6;
-	--sw-ivory: #ffffff;
-}
-
-.app.theme-crimson.theme-light {
-	--app-bg: #ffe6e8;
-	/* lighter Blush */
-	--app-fg: #3a0b0f;
-	--app-bg-rgb: 255, 230, 232;
-	--app-fg-rgb: 58, 11, 15;
-	--accent: #e11d48;
-	--accent-contrast: #fff6f6;
-	--sw-midnight: #fdeef0;
-	--sw-crimson: #ffe6e8;
-	--sw-aqua: #e6fbfa;
-	--sw-violet: #f7eefe;
-	--sw-amber: #fff3e6;
-	--sw-ivory: #fff6f7;
+	--sw-aqua: #d8f5ef;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #f7e6ea;
+	--sw-sage: #dcefe1;
 }
 
 .app.theme-aqua.theme-light {
-	--app-bg: #c7fff4;
-	/* lighter teal-sea glass */
+	--app-bg: #d8f5ef;
 	--app-fg: #013733;
-	--app-bg-rgb: 199, 255, 244;
+	--app-bg-rgb: 216, 245, 239;
 	--app-fg-rgb: 1, 55, 51;
 	--accent: #0ea5a4;
-	--accent-contrast: #c7fff4;
-	--sw-midnight: #e6f9fb;
-	--sw-crimson: #fff0f1;
-	--sw-aqua: #c7fff4;
-	--sw-violet: #f6f0ff;
-	--sw-amber: #fff8e6;
-	--sw-ivory: #fffaf7;
+	--accent-contrast: #f2fffc;
+	--sw-ocean: #bccdf8;
+	--sw-midnight: #9fdce6;
+	--sw-aqua: #d8f5ef;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #f7e6ea;
+	--sw-sage: #dcefe1;
 }
 
-.app.theme-violet.theme-light {
-	--app-bg: #f0e0ff;
-	/* stronger Lilac */
-	--app-fg: #2b0f32;
-	--app-bg-rgb: 240, 224, 255;
-	--app-fg-rgb: 43, 15, 50;
-	--accent: #9b6bff;
-	--accent-contrast: #f0e0ff;
-	--sw-midnight: #f1eef8;
-	--sw-crimson: #fff2f4;
-	--sw-aqua: #eafaf9;
-	--sw-violet: #f0e0ff;
-	--sw-amber: #fff6e8;
-	--sw-ivory: #f7f0ff;
+.app.theme-rose.theme-light {
+	--app-bg: #f7e6ea;
+	--app-fg: #3a1f26;
+	--app-bg-rgb: 247, 230, 234;
+	--app-fg-rgb: 58, 31, 38;
+	--accent: #a8475f;
+	--accent-contrast: #fff3f5;
+	--sw-ocean: #bccdf8;
+	--sw-midnight: #9fdce6;
+	--sw-aqua: #d8f5ef;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #f7e6ea;
+	--sw-sage: #dcefe1;
 }
 
-.app.theme-amber.theme-light {
-	--app-bg: #ffdf9c;
-	/* stronger Saffron */
-	--app-fg: #2a1500;
-	--app-bg-rgb: 255, 223, 156;
-	--app-fg-rgb: 42, 21, 0;
-	--accent: #ff8b36;
-	--accent-contrast: #ffdf9c;
-	--sw-midnight: #fff6ee;
-	--sw-crimson: #fff2f1;
-	--sw-aqua: #f3fffb;
-	--sw-violet: #fff6fb;
-	--sw-amber: #ffdf9c;
-	--sw-ivory: #fffdf5;
+.app.theme-sage.theme-light {
+	--app-bg: #dcefe1;
+	--app-fg: #14291d;
+	--app-bg-rgb: 220, 239, 225;
+	--app-fg-rgb: 20, 41, 29;
+	--accent: #387d56;
+	--accent-contrast: #f4fbf6;
+	--sw-ocean: #bccdf8;
+	--sw-midnight: #9fdce6;
+	--sw-aqua: #d8f5ef;
+	--sw-ivory: #f9fafb;
+	--sw-rose: #f7e6ea;
+	--sw-sage: #dcefe1;
 }
 
 .endScreen {
@@ -800,6 +825,7 @@
 	width: 100%;
 	height: 24px;
 	background: transparent;
+	accent-color: var(--control-accent);
 }
 
 .range:disabled {
@@ -884,20 +910,20 @@
 /* Explicit preview swatch colors per mode so clicking a swatch (selecting theme)
    doesn't change the other swatches' appearance. Scoped under .app to avoid
    matching unrelated elements. */
+.app.theme-dark .sw-preview-ocean {
+	background: var(--preview-ocean-dark);
+}
+
+.app.theme-light .sw-preview-ocean {
+	background: var(--preview-ocean-light);
+}
+
 .app.theme-dark .sw-preview-midnight {
 	background: var(--preview-midnight-dark);
 }
 
 .app.theme-light .sw-preview-midnight {
 	background: var(--preview-midnight-light);
-}
-
-.app.theme-dark .sw-preview-crimson {
-	background: var(--preview-crimson-dark);
-}
-
-.app.theme-light .sw-preview-crimson {
-	background: var(--preview-crimson-light);
 }
 
 .app.theme-dark .sw-preview-aqua {
@@ -908,22 +934,6 @@
 	background: var(--preview-aqua-light);
 }
 
-.app.theme-dark .sw-preview-violet {
-	background: var(--preview-violet-dark);
-}
-
-.app.theme-light .sw-preview-violet {
-	background: var(--preview-violet-light);
-}
-
-.app.theme-dark .sw-preview-amber {
-	background: var(--preview-amber-dark);
-}
-
-.app.theme-light .sw-preview-amber {
-	background: var(--preview-amber-light);
-}
-
 .app.theme-dark .sw-preview-ivory {
 	background: var(--preview-ivory-dark);
 	border: 2px solid rgba(0, 0, 0, 0.06);
@@ -932,6 +942,22 @@
 .app.theme-light .sw-preview-ivory {
 	background: var(--preview-ivory-light);
 	border: 2px solid rgba(0, 0, 0, 0.06);
+}
+
+.app.theme-dark .sw-preview-rose {
+	background: var(--preview-rose-dark);
+}
+
+.app.theme-light .sw-preview-rose {
+	background: var(--preview-rose-light);
+}
+
+.app.theme-dark .sw-preview-sage {
+	background: var(--preview-sage-dark);
+}
+
+.app.theme-light .sw-preview-sage {
+	background: var(--preview-sage-light);
 }
 
 /* Selected state */
@@ -1077,10 +1103,25 @@
 .number {
 	--len: 1;
 	font-family: var(--font-mono);
-	/* Fit long digit strings without overflow (approx monospace glyph width ~0.62em). */
-	font-size: min(70vh, calc(92vw / (var(--len) * 0.62)));
+	/*
+	 * A fixed-width, lining numeral at every digit position: the number never
+	 * shifts horizontally between flashes, and oldstyle descenders never add
+	 * a bobbing baseline. Monospace already tabulates; the explicit properties
+	 * also cover fallback fonts that ship both figure styles.
+	 */
+	font-variant-numeric: tabular-nums lining-nums;
+	/* Explicit 400: thin strokes vanish on dark fields, heavy ones bleed and
+	   prolong afterimages. Medium-regular is the most legible at speed. */
+	font-weight: 400;
+	/* The number uses the active theme's own foreground: the session display
+	   is the theme, not a separate neutral shell. */
+	color: var(--app-fg);
+	/* Fit long digit strings without overflow (approx monospace glyph width ~0.62em).
+	   60vh caps the bright area: large enough for children, small enough to
+	   avoid an oversized adapting stimulus over a long session. */
+	font-size: min(60vh, calc(92vw / (var(--len) * 0.62)));
 	line-height: 1;
-	letter-spacing: 0.03em;
+	letter-spacing: 0.04em;
 	user-select: none;
 	white-space: nowrap;
 	display: flex;

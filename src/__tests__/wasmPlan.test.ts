@@ -28,12 +28,12 @@ function showStep(
 	};
 }
 
-function clearStep(index: number | null): WasmSessionPlan["steps"][number] {
+/** Clears are global only and never wait; they produce no driver event. */
+function clearStep(): WasmSessionPlan["steps"][number] {
 	return {
 		ClearScreen: {
 			session_id: 1,
-			index,
-			delay_ms_before_next: index == null ? 0 : 100,
+			delay_ms_before_next: 0,
 		},
 	};
 }
@@ -52,8 +52,9 @@ function countdownStep(value: string): WasmSessionPlan["steps"][number] {
  *
  * Built by the shared `fakeWasmPlan` fixture, which reproduces what
  * `build_session_plan` in `core/engine.rs` emits for a two-number session: the
- * countdown, then a show/clear pair per number, then the completion. Its
- * `total_duration_ms` of 4300 is the same value this used to hard-code.
+ * countdown, then one show per number (continuous replacement), then the
+ * completion. Its `total_duration_ms` of 4100 is the same value this used to
+ * hard-code.
  */
 function fixedPlan(): WasmSessionPlan {
 	return fakeWasmPlan([42, 17]);
@@ -70,10 +71,8 @@ describe("planStepsToEvents", () => {
 			{ at: 1000, kind: "countdown", value: "2" },
 			{ at: 2000, kind: "countdown", value: "1" },
 			{ at: 3100, kind: "show", index: 0, value: 42, runningSum: 42 },
-			{ at: 3600, kind: "clear", index: 0 },
-			{ at: 3700, kind: "show", index: 1, value: 17, runningSum: 59 },
-			{ at: 4200, kind: "clear", index: 1 },
-			{ at: 4300, kind: "finish" },
+			{ at: 3600, kind: "show", index: 1, value: 17, runningSum: 59 },
+			{ at: 4100, kind: "finish" },
 		]);
 	});
 
@@ -94,7 +93,7 @@ describe("planStepsToEvents", () => {
 					delay_ms_before_next: 0,
 				},
 			},
-			{ ClearScreen: { session_id: 1, index: 1, delay_ms_before_next: 100 } },
+			clearStep(),
 			{ Complete: { session_id: 1, numbers: [5], sum: 5 } },
 		];
 		expect(planStepsToEvents(collide())).toBeNull();
@@ -120,7 +119,7 @@ describe("planStepsToEvents", () => {
 		).toBeNull();
 		expect(
 			planStepsToEvents([
-				clearStep(null),
+				clearStep(),
 				{ CountdownTick: { value: 3 } },
 			] as never),
 		).toBeNull();
@@ -143,7 +142,7 @@ describe("planStepsToEvents", () => {
 		"body is not a record",
 		"ShowNumber with index below 1",
 		"ShowNumber with a non-integer value",
-		"ClearScreen with index below 1",
+		"ClearScreen with a negative delay",
 		"a plan with no numbers at all",
 	])("rejects %s", (label) => {
 		switch (label) {
@@ -162,16 +161,15 @@ describe("planStepsToEvents", () => {
 					},
 					ClearScreen: {
 						session_id: 1,
-						index: 1,
-						delay_ms_before_next: 100,
+						delay_ms_before_next: 0,
 					},
 				} as never;
 				expect(
 					planStepsToEvents([
-						clearStep(null),
+						clearStep(),
 						ambiguous,
 						showStep(2, 7, 12),
-						clearStep(2),
+						clearStep(),
 					]),
 				).toBeNull();
 				break;
@@ -182,7 +180,7 @@ describe("planStepsToEvents", () => {
 			case "ShowNumber with index below 1":
 				expect(
 					planStepsToEvents([
-						clearStep(null),
+						clearStep(),
 						{
 							ShowNumber: {
 								index: 0,
@@ -197,7 +195,7 @@ describe("planStepsToEvents", () => {
 			case "ShowNumber with a non-integer value":
 				expect(
 					planStepsToEvents([
-						clearStep(null),
+						clearStep(),
 						{
 							ShowNumber: {
 								index: 1,
@@ -209,15 +207,14 @@ describe("planStepsToEvents", () => {
 					] as never),
 				).toBeNull();
 				break;
-			case "ClearScreen with index below 1":
+			case "ClearScreen with a negative delay":
 				expect(
 					planStepsToEvents([
-						clearStep(null),
+						clearStep(),
 						{
 							ClearScreen: {
 								session_id: 1,
-								index: 0,
-								delay_ms_before_next: 100,
+								delay_ms_before_next: -1,
 							},
 						},
 					] as never),
@@ -229,7 +226,7 @@ describe("planStepsToEvents", () => {
 				// flashed, which reads as a session that started and went blank.
 				expect(
 					planStepsToEvents([
-						clearStep(null),
+						clearStep(),
 						countdownStep("3"),
 						countdownStep("2"),
 						countdownStep("1"),
@@ -278,12 +275,12 @@ describe("WASM single-source execution", () => {
 
 		await vi.advanceTimersByTimeAsync(3100);
 		expect(shows).toEqual([{ value: 42, runningSum: 42, at: 3100 }]);
-		await vi.advanceTimersByTimeAsync(1100);
+		await vi.advanceTimersByTimeAsync(500);
 		expect(shows).toEqual([
 			{ value: 42, runningSum: 42, at: 3100 },
-			{ value: 17, runningSum: 59, at: 3700 },
+			{ value: 17, runningSum: 59, at: 3600 },
 		]);
-		await vi.advanceTimersByTimeAsync(600);
+		await vi.advanceTimersByTimeAsync(500);
 		expect(completed).toEqual({ numbers: [42, 17], sum: 59 });
 	});
 

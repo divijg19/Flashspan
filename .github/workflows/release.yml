@@ -279,10 +279,16 @@ jobs:
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
 
+      # Prebuilt binary, matching CI. `cargo install wasm-pack --locked`
+      # compiled binaryen and the whole tool from source on every release.
       - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
 
       - name: Build web (WASM + Vite)
+        env:
+          RUSTFLAGS: "--remap-path-prefix=/home/runner=/U"
         run: bun run build:web
 
       - name: Package web bundle

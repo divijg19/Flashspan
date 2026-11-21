@@ -46,9 +46,6 @@ const CONFIG = {
 
 const EXPOSURE_MS = 500;
 
-/** Blank gap between a clear and the next flash. `INTER_NUMBER_GAP_MS`. */
-const GAP_MS = 100;
-
 /**
  * The plan these cases drive, from the shared fixture.
  *
@@ -80,14 +77,19 @@ function recorder() {
 		stop(): void {
 			for (const fn of unsubscribers) fn();
 		},
-		/** On-screen duration of each number, by its 1-based payload index. */
+		/**
+		 * On-screen duration of each number. With continuous replacement, a
+		 * number's window ends when the *next* one arrives; the last one ends
+		 * at the closing global clear.
+		 */
 		exposures(): number[] {
-			return shows.map((show) => {
-				const clear = clears.find((c) => c.index === show.index);
-				if (!clear) {
-					throw new Error(`Number ${show.index} was never cleared`);
+			return shows.map((show, i) => {
+				const next = shows[i + 1]?.emitted_at_ms;
+				const end = next ?? clears.at(-1)?.emitted_at_ms;
+				if (end == null) {
+					throw new Error(`Number ${show.index} was never replaced`);
 				}
-				return clear.emitted_at_ms - show.emitted_at_ms;
+				return end - show.emitted_at_ms;
 			});
 		},
 	};
@@ -232,7 +234,7 @@ describe("flashed number exposure", () => {
 		// a strobe; only the first turn of the chain is legitimately 0.
 		const positive = scheduledDelays.filter((delay) => delay > 0);
 		expect(positive.length).toBeGreaterThan(0);
-		expect(Math.min(...positive)).toBeGreaterThanOrEqual(GAP_MS);
+		expect(Math.min(...positive)).toBeGreaterThanOrEqual(EXPOSURE_MS);
 	});
 });
 
