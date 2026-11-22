@@ -299,7 +299,8 @@ jobs:
           echo "no plain #[test] in any wasm-compiled test module"
 
       # `build:wasm`, not `build:web`. The release profile — lto,
-      # codegen-units=1, opt-level="s", strip — is what actually ships, and
+      # codegen-units=1, strip — plus the wasm-only opt-level=3 override in
+      # `build:wasm` is what actually ships (desktop stays at "s"), and
       # `wasm-pack test` above only ever compiles a dev profile, so this is the
       # one step that proves the shipped artefact builds at all. The Vite half
       # of `build:web` is deliberately not repeated here: the frontend job

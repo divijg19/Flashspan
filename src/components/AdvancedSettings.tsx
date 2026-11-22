@@ -4,20 +4,9 @@ import { COLOR_SCHEMES } from "../runtime/types";
 import { numericValue } from "./NumberField";
 
 /**
- * The advanced settings overlay: auto-repeat, answer mode, colour and theme.
- *
- * This was a ~320-line block inline in `App.tsx`, which pushed the app's own
- * session handling far enough down the file that it was hard to find. It is
- * pure presentation plus signal plumbing, so it extracts cleanly.
- *
- * Reactive values arrive as accessors rather than plain values, which is the
- * Solid convention: passing `props.autoRepeat.enabled` would read the signal
- * once at render time and never update, whereas `props.autoRepeat.enabled()`
- * stays subscribed inside the child's effects and event handlers.
- *
- * Props are grouped by the section they belong to rather than flattened. There
- * are seventeen of them, and a flat list of unrelated signals on one surface
- * makes it hard to see which controls a given setter actually drives.
+ * Advanced settings overlay: auto-repeat, answer mode, colour and theme. Props
+ * are accessors per Solid convention — a plain value is read once at render and
+ * never updates — and grouped by section.
  */
 
 /** How the answer to a finished session is collected. */
@@ -95,18 +84,9 @@ const LIGHT_NAMES: Record<ColorScheme, string> = {
 
 export function AdvancedSettings(props: AdvancedSettingsProps): JSX.Element {
 	/**
-	 * Keeps Tab inside the panel while the overlay is open.
-	 *
-	 * This lived in `App.tsx` for as long as the panel did, reaching through an
-	 * `overlayRef` callback into DOM the component itself rendered. That made the
-	 * parent own the focus behaviour of markup it does not control, and it needed
-	 * a `createEffect` plus `onCleanup` to compensate for not knowing when the
-	 * panel mounts. The component already knows, so `onMount` is the honest
-	 * shape and the parent is free of both the ref and the effect.
-	 *
-	 * `document.activeElement` is read rather than an index into `focusable`,
-	 * because the browser moves focus with the keyboard and a mouse independently
-	 * of the order the elements were listed in.
+	 * Keep Tab inside the panel while open. Read `document.activeElement`
+	 * rather than an index into `focusable`, since focus moves independently of
+	 * element order.
 	 */
 	let overlayRef: HTMLDivElement | undefined;
 	onMount(() => {

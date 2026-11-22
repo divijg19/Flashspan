@@ -40,8 +40,26 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      # The bridge is only built in the `build-web` job, but a tag push does
+      # not trigger CI's `push` gate (main only), so this verify job is the
+      # release's own WASM check. Build the package first or the parity spec
+      # silently skips on the missing pkg directory.
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      - name: Build release WASM package
+        env:
+          RUSTFLAGS: "--remap-path-prefix=/home/runner=/U"
+        run: bun run build:wasm
+
       - name: Run Vitest
         run: bun run test
+
+      - name: Run WASM tests
+        working-directory: src-tauri
+        run: wasm-pack test --node
 
       - name: Lint frontend
         run: bun x biome check .

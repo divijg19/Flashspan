@@ -1,16 +1,7 @@
 /**
- * Runtime abstraction layer for Flashspan.
- *
- * This module defines the platform-agnostic runtime interface that both
- * desktop (Tauri) and browser (WASM) runtimes implement. The UI depends
- * only on this interface, not on platform-specific APIs.
- *
- * Responsibilities:
- * - Manage session lifecycle (start, stop, answer submission)
- * - Emit session events (countdown, show, clear, complete)
- * - Handle app settings (color scheme, theme, sound)
- * - Coordinate with audio playback and fullscreen
- * - Bridge deterministic core logic with platform-specific effects
+ * Platform-agnostic runtime interface implemented by both the Tauri and
+ * browser backends; the UI depends only on this module. Covers session
+ * lifecycle, events, settings, audio/fullscreen coordination and grading.
  */
 
 // Re-export every runtime type, so `./runtime` is the one import the UI needs.

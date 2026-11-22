@@ -1,16 +1,7 @@
 /**
- * The browser's local planner: the TypeScript mirror of the Rust core.
- *
- * Every value this module produces must agree with `src-tauri/src/core` value
- * for value, because it is the *only* planner when the WASM bridge is
- * unavailable. The wasm-parity suites assert that agreement against the real
- * Rust core (see `wasmParity.test.ts`), so the functions here are exported where
- * they are defined rather than wrapped in a seam.
- *
- * It is deliberately pure: no timers, DOM, storage or Web Audio. The mixed
- * browser runtime that drives a session lives in `browser.ts` and imports what
- * it needs from here; keeping the two apart makes the "mirror of Rust" boundary
- * explicit and lets this half be tested without the driver machinery.
+ * The browser's local planner: a pure TypeScript mirror of `src-tauri/src/core`.
+ * It is the only planner when WASM is unavailable, so parity with Rust is
+ * enforced by `wasmParity.test.ts`. No timers, DOM, storage or Web Audio here.
  */
 
 import type {
@@ -188,31 +179,10 @@ export function generateNumber(
 }
 
 /**
- * Deterministic replacement for a generated value that equals the previous one:
- * rotate the magnitude one step inside its own digit-width domain.
- *
- * This mirrors `next_distinct_value` in `core/engine.rs` and is not free to
- * differ from it. The JS planner runs whenever the WASM bridge is unavailable,
- * so a disagreement means the browser and the desktop produce different number
- * sequences for the same config — and a different sign on a flash — under a
- * session the user configured identically.
- *
- * Two rules from the Rust original, both of which this previously got wrong:
- *
- * 1. The sign follows the **previous** value. A negative predecessor stays
- *    negative and a positive one stays positive. The old form returned
- *    `Math.abs(lastVal)` for any negative predecessor, which both dropped the
- *    sign *and* skipped the rotation, so it disagreed with Rust on magnitude as
- *    well as sign.
- * 2. A negative result survives only while the running sum can still fund it.
- *    The old form returned `-next` for *any* positive predecessor whenever
- *    negatives were enabled, so a positive duplicate became a negative.
- *
- * Together those meant that whenever a session allowed negatives — the only
- * configuration where the sign can differ — this function disagreed with the
- * planner that actually ships in the WASM bundle on every reachable input.
- * With negatives disabled the result is always positive on both sides, which
- * is why the parity corpus never caught it.
+ * Deterministic replacement for a repeat: rotate the magnitude one step inside
+ * its digit-width domain, mirroring `next_distinct_value` in `core/engine.rs`.
+ * The sign follows the **previous** value, and a negative result survives only
+ * while the running sum can fund it — both are parity requirements with Rust.
  */
 export function deterministicFallback(
 	lastPayload: string | null,
@@ -254,18 +224,9 @@ export function deterministicFallback(
 }
 
 /**
- * The fallback session plan, generated once up front when no Rust plan is
- * available (the WASM bridge failed to load, or its steps did not validate).
- *
- * The values are generated eagerly rather than lazily at fire time: the driver's
- * fixed-interval chaining means nothing is ever dropped, so the full sequence is
- * always shown, and grading plus the answer reveal must both be able to see it.
- * Generating lazily could only ever know a partial sum.
- *
- * Callers build this plan exactly once and reuse it for both the flashed events
- * and the stored `plannedNumbers`/`plannedSum`. Building it twice produced two
- * independent random sequences, so the browser flashed one set of numbers and
- * then graded against another.
+ * Fallback plan when no Rust plan is available. Generated eagerly so grading
+ * and the reveal see the full sequence, and built exactly once — a second call
+ * would produce a different sequence from the one flashed.
  */
 export function generateLocalPlan(config: SessionConfigEffective): {
 	numbers: number[];

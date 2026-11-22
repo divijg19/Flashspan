@@ -17,24 +17,10 @@ import {
 import { startedOrFail } from "./helpers";
 
 /**
- * Every flashed number must stay on screen for at least its full exposure.
- *
- * This is the "first flash number is short lived" bug. The driver used to
- * schedule each event against an absolute grid anchored at session start, so
- * whatever lateness the *previous* event was delivered with was subtracted from
- * this one's window. The first show is the only one delivered alongside the
- * countdown's paint tail and the countdown->flashing view transition, so its
- * lateness truncated the first number's exposure while later numbers flashed
- * for the full duration.
- *
- * The driver now chains fixed intervals, which makes exposure exact by
- * construction: a late delivery can only delay when an event lands, never
- * shorten how long the previous one stayed up.
- *
- * Lateness is injected where a browser creates it — the timer fires later than
- * asked — by padding the delay the runtime requests. Exposure is then measured
- * from the payloads' own `emitted_at_ms` rather than from the test's tick
- * positions, so the assertion is about what a user would actually see.
+ * Every flashed number must stay on screen for at least its full exposure. The
+ * driver chains fixed intervals so lateness delays an event without shortening
+ * the previous exposure; tests inject lateness into timer delays and measure
+ * exposure from payload timestamps.
  */
 
 const CONFIG = {

@@ -28,16 +28,9 @@ function isEscapeKey(event: KeyboardEvent): boolean {
 }
 
 /**
- * Enter or leave fullscreen, best-effort.
- *
- * Never throws and never blocks a caller on a refusal: the Fullscreen API is
- * simply absent on some targets (iOS Safari has no element `requestFullscreen`,
- * as do cross-origin iframes and some WebViews) and can be refused by policy.
- * Treating a refusal as fatal left the Start button permanently dead there, so
- * a failure is swallowed and the session runs windowed; the countdown tick
- * retries the request, which is the mechanism that actually matters. An absent
- * `requestFullscreen` is not special-cased — calling it throws `TypeError`,
- * which the same handler catches.
+ * Enter or leave fullscreen, best-effort. The API is absent on some targets and
+ * can be refused by policy; a failure is swallowed so the session still runs
+ * windowed. The countdown tick retries the request.
  */
 async function setFullscreen(enabled: boolean): Promise<void> {
 	if (typeof document === "undefined") {

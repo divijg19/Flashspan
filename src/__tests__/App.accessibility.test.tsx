@@ -170,20 +170,9 @@ describe("App accessibility tests", () => {
 	});
 
 	/**
-	 * Opening the advanced settings moves focus into the panel and traps Tab
-	 * inside it.
-	 *
-	 * The trap is driven by a ref on the overlay element that lives in
-	 * `AdvancedSettings` but is read by a `createEffect` in `App.tsx`. Those two
-	 * are in different components now, and `App` holds the element in a plain
-	 * (non-reactive) variable rather than a signal — so the effect depends only
-	 * on `showAdvanced()`, and nothing re-runs it if the ref is assigned late or
-	 * not at all. That failure is silent: the panel still renders and every other
-	 * assertion here passes, while keyboard users tab straight out of the dialog
-	 * into the page behind it.
-	 *
-	 * So assert the focus actually moved, which is the observable consequence of
-	 * the ref having been wired up.
+	 * Opening advanced settings must move focus into the panel. Assert the
+	 * observable consequence: the overlay ref being wired up silently is easy
+	 * to miss otherwise.
 	 */
 	/**
 	 * An interruption while the tab is hidden must return the app to idle and
