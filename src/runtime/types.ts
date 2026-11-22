@@ -6,12 +6,12 @@
 export type Phase = "idle" | "starting" | "countdown" | "flashing" | "complete";
 
 export type ColorScheme =
+	| "ocean"
 	| "midnight"
-	| "ivory"
-	| "crimson"
 	| "aqua"
-	| "violet"
-	| "amber";
+	| "ivory"
+	| "rose"
+	| "sage";
 
 /**
  * The colour schemes the picker offers, in display order.
@@ -27,12 +27,12 @@ export type ColorScheme =
  * `_AllSchemesListed` below rejects a union member the list has forgotten.
  */
 export const COLOR_SCHEMES = [
+	"ocean",
 	"midnight",
-	"crimson",
 	"aqua",
-	"violet",
-	"amber",
 	"ivory",
+	"rose",
+	"sage",
 ] as const satisfies readonly ColorScheme[];
 
 /**
@@ -113,7 +113,6 @@ export interface ShowNumber {
 
 export interface ClearScreen {
 	session_id: number;
-	index: number | null;
 	emitted_at_ms: number;
 }
 

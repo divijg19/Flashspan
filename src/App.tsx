@@ -63,10 +63,22 @@ export default function App() {
 	const [splashVisible, setSplashVisible] = createSignal<boolean>(false);
 	const [splashExiting, setSplashExiting] = createSignal<boolean>(false);
 
-	const [colorScheme, setColorScheme] = createSignal<ColorScheme>("midnight");
+	const [colorScheme, setColorScheme] = createSignal<ColorScheme>("ocean");
 	const [themeMode, setThemeMode] = createSignal<ThemeMode>("dark");
 	const themeClass = () => `theme-${colorScheme()}`;
 	const modeClass = () => `theme-${themeMode()}`;
+
+	// The attribution block is a sibling of `.app`, so it cannot inherit a
+	// theme class scoped to the app root. Mirror the mode on <body> so fixed
+	// chrome outside the app can be themed without relying on :has().
+	createEffect(() => {
+		const light = themeMode() === "light";
+		document.body.classList.toggle("theme-light", light);
+		document.body.classList.toggle("theme-dark", !light);
+		onCleanup(() => {
+			document.body.classList.remove("theme-light", "theme-dark");
+		});
+	});
 
 	onMount(() => {
 		if (!showSplash()) return;
@@ -448,19 +460,13 @@ export default function App() {
 				if (activeSessionId == null) return;
 				if (payload.session_id !== activeSessionId) return;
 
+				// Clears are global only: numbers replace one another in place,
+				// so there is no per-number index to guard against any more.
 				const cur = currentShown();
 				if (cur && payload.emitted_at_ms < cur.emitted_at_ms) return;
 
-				if (payload.index == null) {
-					setDisplayText("");
-					setCurrentShown(null);
-					return;
-				}
-
-				if (cur && cur.index === payload.index) {
-					setDisplayText("");
-					setCurrentShown(null);
-				}
+				setDisplayText("");
+				setCurrentShown(null);
 			}),
 
 			runtime.onAutoRepeatWaiting((payload) => {

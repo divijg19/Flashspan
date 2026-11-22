@@ -1,9 +1,8 @@
 [package]
 name = "Flashspan"
-version = "2.8.2"
+version = "2.9.0"
 description = "Mental Maths training simulator"
 authors = ["you"]
-license = ""
 repository = ""
 edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -19,7 +18,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-rand = "0.10"
+# Only the seeded StdRng and the OS seed source are shipped. The default
+# `thread_rng` feature pulls in a thread-local state machine that adds ~1.8KB
+# to the wasm even though the browser always supplies an explicit seed. Tests
+# still need `rand::rng()`, so they re-enable it as a dev-dependency below.
+rand = { version = "0.10", default-features = false, features = ["std_rng", "sys_rng"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 log = "0.4"
@@ -35,9 +38,11 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
 getrandom = { version = "0.4", features = ["wasm_js"] }
+rand = { version = "0.10", features = ["thread_rng"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = "1.4"
+rand = { version = "0.10", features = ["thread_rng"] }
 
 # Release tuning applies to both shipped targets: the desktop bundle and the
 # wasm32 bundle. `strip` is the dominant size win (both shipped unstripped
@@ -45,10 +50,15 @@ proptest = "1.4"
 # `opt-level = "s"` suits both: the heaviest work is one bounded number
 # generation per session, so size beats speed here.
 #
-# `panic = "abort"` is deliberately not set. Tauri's own template enables it and
-# it would save a little more, but it turns any panic in an audio or UI thread
-# into a hard abort rather than an unwind, which cannot be exercised across all
-# three release platforms from a single machine. Add it deliberately if wanted.
+# `panic = "abort"` is deliberately not set: measured at zero size saving on
+# wasm, and on desktop it would turn a panic in an audio or UI thread into a
+# hard abort rather than an unwind. Likewise rejected after measurement:
+# `opt-level = "z"` (+2.6KB wasm), extra `wasm-opt` strip passes (+118B), and
+# `-C target-cpu=mvp` (+1.9KB). `lto = "thin"` gives the same size for a faster
+# build if build time ever matters more than max optimization. The browser
+# build alone raises the release opt level to 3 (see `build:wasm`); that produced
+# a *smaller* wasm than "s" by giving LLVM more inlining to dead-code-eliminate
+# before wasm-bindgen and `wasm-opt -Oz` see it.
 [profile.release]
 lto = true
 codegen-units = 1

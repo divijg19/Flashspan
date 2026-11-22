@@ -3,9 +3,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize)]
 pub struct ClearScreen {
     pub session_id: u64,
-    /// When set, indicates which flashed number index is being cleared.
-    /// When None, represents a global clear (e.g. session start/stop/complete).
-    pub index: Option<u32>,
     pub emitted_at_ms: u64,
 }
 
@@ -80,10 +77,10 @@ pub enum SessionStep {
         delay_ms_before_next: u64,
     },
 
-    /// Clear the screen: hide the current display
+    /// Clear the screen: hide the current display (session start/stop only;
+    /// numbers now replace one another without a blank in between).
     ClearScreen {
         session_id: u64,
-        index: Option<u32>,
         delay_ms_before_next: u64,
     },
 
@@ -199,20 +196,19 @@ mod schema_tests {
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg_attr(not(target_arch = "wasm32"), test)]
-    fn clear_screen_index_is_null_when_absent() {
-        // `index` is `Option<u32>`; as a JSON null here and as `undefined`
-        // through serde-wasm-bindgen, the browser must treat the initial and
-        // trailing clears as global (no index), never as clearing a number.
+    fn clear_screen_has_no_index_field() {
+        // Clears are now global only: numbers replace one another without a
+        // blank in between, so no per-number index crosses the wire. The step
+        // carries just the session id and its delay.
         let json = serde_json::to_value(SessionStep::ClearScreen {
             session_id: 1,
-            index: None,
             delay_ms_before_next: 0,
         })
         .expect("serialize");
         assert_eq!(
             json,
             serde_json::json!({
-                "ClearScreen": { "session_id": 1, "index": null, "delay_ms_before_next": 0 },
+                "ClearScreen": { "session_id": 1, "delay_ms_before_next": 0 },
             })
         );
     }
@@ -225,7 +221,6 @@ mod schema_tests {
         // finds `null`/`undefined` and must treat it as zero.
         let json = serde_json::to_value(SessionStep::ClearScreen {
             session_id: 1,
-            index: Some(4),
             delay_ms_before_next: 100,
         })
         .expect("serialize");
@@ -301,7 +296,6 @@ mod schema_tests {
         assert_eq!(
             SessionStep::ClearScreen {
                 session_id: 1,
-                index: Some(0),
                 delay_ms_before_next: 100,
             }
             .delay_ms(),
@@ -369,17 +363,15 @@ mod schema_tests {
 
         // The global clear arrives as an explicit `null`, not a missing key.
         let clear: SessionStep = serde_json::from_value(serde_json::json!({
-            "ClearScreen": { "session_id": 1, "index": null, "delay_ms_before_next": 0 },
+            "ClearScreen": { "session_id": 1, "delay_ms_before_next": 0 },
         }))
         .expect("global clear");
         match clear {
             SessionStep::ClearScreen {
                 session_id,
-                index,
                 delay_ms_before_next,
             } => {
                 assert_eq!(session_id, 1);
-                assert_eq!(index, None);
                 assert_eq!(delay_ms_before_next, 0);
             }
             other => panic!("expected ClearScreen, got {other:?}"),
@@ -538,32 +530,20 @@ mod payload_schema_tests {
         );
     }
 
-    /// A global clear (session start/stop/complete) carries `index: null`; the
-    /// UI distinguishes it from a per-number clear by exactly that. A missing key
-    /// would read as `undefined` too, so pin the explicit `null`.
+    /// Numbers now replace one another continuously, so the only clears are
+    /// global (session start, stop, complete). The payload therefore carries
+    /// no index at all — pin that the UI never has to distinguish one.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg_attr(not(target_arch = "wasm32"), test)]
-    fn clear_screen_emits_null_index_for_a_global_clear() {
+    fn clear_screen_carries_no_index() {
         let global = serde_json::to_value(ClearScreen {
             session_id: 1,
-            index: None,
             emitted_at_ms: 5,
         })
         .expect("serialize global clear");
         assert_eq!(
             global,
-            serde_json::json!({ "session_id": 1, "index": null, "emitted_at_ms": 5 }),
-        );
-
-        let indexed = serde_json::to_value(ClearScreen {
-            session_id: 1,
-            index: Some(4),
-            emitted_at_ms: 6,
-        })
-        .expect("serialize indexed clear");
-        assert_eq!(
-            indexed,
-            serde_json::json!({ "session_id": 1, "index": 4, "emitted_at_ms": 6 }),
+            serde_json::json!({ "session_id": 1, "emitted_at_ms": 5 }),
         );
     }
 

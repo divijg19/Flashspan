@@ -36,7 +36,8 @@ const CONFIG: SessionConfigInput = {
 	allow_negative_numbers: false,
 };
 
-// 3 countdown ticks x 1s + 100ms settle + 4 x (500ms show + 100ms gap) = 5.5s.
+// 3 countdown ticks x 1s + 100ms settle + 4 x 500ms exposure = 5.1s with
+// continuous replacement. 6000ms leaves generous slack for timer delivery.
 const SESSION_MS = 6000;
 
 describe("browser JS planner fallback", () => {

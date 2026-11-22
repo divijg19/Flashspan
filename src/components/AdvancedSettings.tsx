@@ -67,7 +67,7 @@ export interface AdvancedSettingsProps {
 /**
  * The display name for each colour scheme on the dark theme.
  *
- * The names differ per theme: the `ivory` swatch is "Obsidian" on dark and
+ * The names differ per theme: the `ivory` swatch is "Sepia" on dark and
  * "Ivory" on light, so a single name per scheme would be wrong half the time.
  *
  * The scheme list itself lives in `runtime/types.ts` next to the `ColorScheme`
@@ -76,21 +76,21 @@ export interface AdvancedSettingsProps {
  * updating this list left the picker without the new option.
  */
 const DARK_NAMES: Record<ColorScheme, string> = {
+	ocean: "Ocean",
 	midnight: "Midnight",
-	crimson: "Crimson",
 	aqua: "Aqua",
-	violet: "Violet",
-	amber: "Amber",
-	ivory: "Obsidian",
+	ivory: "Sepia",
+	rose: "Rose",
+	sage: "Forest",
 };
 
 const LIGHT_NAMES: Record<ColorScheme, string> = {
+	ocean: "Horizon",
 	midnight: "Dawn",
-	crimson: "Blush",
 	aqua: "Sea Glass",
-	violet: "Lilac",
-	amber: "Saffron",
 	ivory: "Ivory",
+	rose: "Blush",
+	sage: "Sage",
 };
 
 export function AdvancedSettings(props: AdvancedSettingsProps): JSX.Element {

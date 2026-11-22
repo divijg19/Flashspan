@@ -11,7 +11,6 @@ import buzzerUrl from "../assets/buzzer.wav?url";
 import {
 	COUNTDOWN_TICK_MS,
 	COUNTDOWN_TICKS,
-	INTER_NUMBER_GAP_MS,
 	PRE_FLASH_SETTLE_MS,
 } from "../timing";
 import { getWasmCoreBridge, type WasmSessionStep } from "../wasm/coreBridge";
@@ -75,7 +74,7 @@ interface BrowserSession {
 const SETTINGS_KEY = "flashspan.runtime.settings";
 const SOUND_KEY = "flashspan.runtime.sound-enabled";
 const DEFAULT_SETTINGS: AppSettings = {
-	color_scheme: "midnight",
+	color_scheme: "ocean",
 	theme_mode: "dark",
 };
 
@@ -431,10 +430,9 @@ function queueTimer(
 	session.timerId = timerId;
 }
 
-function emitClearScreen(sessionId: number, index: number | null): void {
+function emitClearScreen(sessionId: number): void {
 	emit(listeners.clearScreen, {
 		session_id: sessionId,
-		index,
 		emitted_at_ms: nowMs(),
 	});
 }
@@ -628,7 +626,6 @@ type PlannedDriverEvent =
 			value: number;
 			runningSum: number;
 	  }
-	| { at: number; kind: "clear"; index: number }
 	| { at: number; kind: "finish" };
 
 /** Serde enum tags the WASM bridge can produce, in schema order. */
@@ -788,17 +785,11 @@ export function planStepsToEvents(
 			}
 			shows += 1;
 		} else if (tag === "ClearScreen") {
-			if (body.index == null) {
-				at += delay ?? 0;
-				continue;
-			}
-			const index = asNonNegativeInt(body.index);
-			if (index == null || index < 1) {
-				return null;
-			}
-			if (!pushEvent(events, at, { at, kind: "clear", index: index - 1 })) {
-				return null;
-			}
+			// Clears are global only now (session start/stop): numbers replace
+			// one another continuously, so a plan step never clears a number.
+			// The runtime emits the global clear itself around the session.
+			at += delay ?? 0;
+			continue;
 		}
 
 		at += delay ?? 0;
@@ -936,7 +927,7 @@ function finishSession(session: BrowserSession): void {
 
 	session.completed = true;
 	clearSessionTimers(session);
-	emitClearScreen(session.sessionId, null);
+	emitClearScreen(session.sessionId);
 	// The reveal reflects the session's plan, matching native: the full
 	// sequence and its total, not a subset of what was actually painted.
 	emit(listeners.sessionComplete, {
@@ -1033,7 +1024,7 @@ async function startSessionImpl(
 
 		currentSession = session;
 		silenceAudio();
-		emitClearScreen(sessionId, null);
+		emitClearScreen(sessionId);
 
 		// Single-source execution when the WASM planner yields valid steps:
 		// times, values, and running sums come straight from the Rust plan.
@@ -1068,10 +1059,10 @@ async function startSessionImpl(
 			for (let index = 0; index < plannedNumbers.length; index += 1) {
 				const value = plannedNumbers[index];
 				running += value;
+				// Continuous replacement: the next show lands exactly one
+				// exposure later, with no blank event in between.
 				push({ at, kind: "show", index, value, runningSum: running });
 				at += numberDurationMs;
-				push({ at, kind: "clear", index });
-				at += INTER_NUMBER_GAP_MS;
 			}
 			push({ at, kind: "finish" });
 			events = local;
@@ -1115,10 +1106,6 @@ async function startSessionImpl(
 							emitted_at_ms: nowMs(),
 						});
 						void playAudio("beep");
-						break;
-					}
-					case "clear": {
-						emitClearScreen(sessionId, event.index + 1);
 						break;
 					}
 					case "finish": {
@@ -1264,7 +1251,7 @@ export const browserRuntime: Runtime = {
 		silenceAudio();
 		if (currentSession) {
 			clearSessionTimers(currentSession);
-			emitClearScreen(currentSession.sessionId, null);
+			emitClearScreen(currentSession.sessionId);
 		}
 
 		cancelPendingAutoRepeat();

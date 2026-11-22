@@ -57,13 +57,13 @@ export function createMockRuntime() {
 			return "pong (mock)";
 		},
 		async getAppSettings() {
-			return { color_scheme: "midnight", theme_mode: "dark" };
+			return { color_scheme: "ocean", theme_mode: "dark" };
 		},
 		async setColorScheme(s) {
 			return { color_scheme: s, theme_mode: "dark" };
 		},
 		async setThemeMode(m) {
-			return { color_scheme: "midnight", theme_mode: m };
+			return { color_scheme: "ocean", theme_mode: m };
 		},
 		async startSession() {
 			return {

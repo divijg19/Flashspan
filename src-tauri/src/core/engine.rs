@@ -1,7 +1,5 @@
 use crate::core::generate::{magnitude_bounds, random_number_with_constraints};
-use crate::core::timing::{
-    COUNTDOWN_FROM, COUNTDOWN_TICK_MS, INTER_NUMBER_GAP_MS, PRE_FLASH_SETTLE_MS,
-};
+use crate::core::timing::{COUNTDOWN_FROM, COUNTDOWN_TICK_MS, PRE_FLASH_SETTLE_MS};
 use crate::core::types::{SessionConfig, SessionConfigEffective, SessionPlan, SessionStep};
 use crate::core::validate::effective_from;
 use rand::SeedableRng;
@@ -63,15 +61,20 @@ pub fn build_session_plan(
         "config_snapshot must be the effective view of the config it is built from"
     );
 
-    let mut rng: StdRng =
-        seed_opt.map_or_else(|| StdRng::from_rng(&mut rand::rng()), StdRng::seed_from_u64);
+    // An explicit seed is used verbatim; otherwise take one draw straight from
+    // the OS source. This avoids ThreadRng's thread-local state machine while
+    // keeping the same CSPRNG quality, and it works identically on wasm (where
+    // the OS source is `crypto.getRandomValues`).
+    let mut rng: StdRng = seed_opt.map_or_else(
+        || StdRng::try_from_rng(&mut rand::rngs::SysRng).expect("OS entropy"),
+        StdRng::seed_from_u64,
+    );
 
     let mut steps: Vec<SessionStep> = Vec::new();
 
     // Phase 1: Initial clear screen
     steps.push(SessionStep::ClearScreen {
         session_id,
-        index: None,
         delay_ms_before_next: 0,
     });
 
@@ -142,7 +145,9 @@ pub fn build_session_plan(
             .expect("value exceeds i64; normalization bound violated");
         numbers.push(value_i64);
 
-        // Add show_number step
+        // Add show_number step. The next number replaces this one in place as
+        // soon as the exposure is over — continuous replacement, no blank
+        // frame in between (see crate::core::timing).
         steps.push(SessionStep::ShowNumber {
             session_id,
             index: i + 1,
@@ -153,19 +158,11 @@ pub fn build_session_plan(
                 .expect("running_sum exceeds i64; normalization bound violated"),
             delay_ms_before_next: config.number_duration_ms,
         });
-
-        // Add clear_screen step with the fixed inter-number gap.
-        steps.push(SessionStep::ClearScreen {
-            session_id,
-            index: Some(i + 1),
-            delay_ms_before_next: INTER_NUMBER_GAP_MS,
-        });
     }
 
     // Phase 4: Global clear before complete
     steps.push(SessionStep::ClearScreen {
         session_id,
-        index: None,
         delay_ms_before_next: 0,
     });
 
@@ -319,9 +316,10 @@ mod tests {
         let plan = build_session_plan(1, &config, config_eff, Some(999u64));
 
         // Verify step sequence structure
-        // Expected: ClearScreen (initial) + 3x CountdownTick + 3x (ShowNumber + ClearScreen) + ClearScreen (final) + Complete
-        // = 1 + 3 + 6 + 1 + 1 = 12 steps
-        let expected_step_count = 1 + 3 + (3 * 2) + 1 + 1;
+        // Expected: ClearScreen (initial) + 3x CountdownTick + 3x ShowNumber
+        // + ClearScreen (final) + Complete = 1 + 3 + 3 + 1 + 1 = 9 steps.
+        // Numbers replace one another directly, with no clear step between.
+        let expected_step_count = 1 + 3 + 3 + 1 + 1;
         assert_eq!(
             plan.steps.len(),
             expected_step_count,
@@ -422,8 +420,8 @@ mod tests {
         let (config, config_eff) = normalize_session_config(&input);
         let plan = build_session_plan(1, &config, config_eff, Some(456u64));
 
-        // With total_numbers=1: 1 + 3 + 2 + 1 + 1 = 8 steps
-        assert_eq!(plan.steps.len(), 8);
+        // With total_numbers=1: 1 + 3 + 1 + 1 + 1 = 7 steps
+        assert_eq!(plan.steps.len(), 7);
         assert_eq!(plan.numbers_generated.len(), 1);
         assert!(
             plan.numbers_generated[0] >= 0,
@@ -446,13 +444,13 @@ mod tests {
             allow_negative_numbers: false,
         };
         let (config, config_eff) = normalize_session_config(&input);
-        // number_duration_ms = 500, fixed gap = 100 (INTER_NUMBER_GAP_MS)
+        // number_duration_ms = 500, continuous replacement (no gap).
         let plan = build_session_plan(1, &config, config_eff, Some(789u64));
 
         // total_duration_ms = initial_clear(0) + 3*1000(countdown) + PRE_FLASH_SETTLE_MS(100)
-        //   + 3*500(number_durations) + 3*100(delays) + final_clear(0) + complete(0)
-        //   = 0 + 3000 + 100 + 1500 + 300 = 4900
-        assert_eq!(plan.total_duration_ms, 4900);
+        //   + 3*500(number_durations) + final_clear(0) + complete(0)
+        //   = 0 + 3000 + 100 + 1500 + 0 + 0 = 4600
+        assert_eq!(plan.total_duration_ms, 4600);
     }
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
@@ -509,8 +507,8 @@ mod tests {
         // Should not panic
         let plan = build_session_plan(1, &config, config_eff, Some(42u64));
 
-        // Step count: 1(clear) + 3(countdown) + 2*9(show+clear) + 1(final clear) + 1(complete) = 24
-        assert_eq!(plan.steps.len(), 24);
+        // Step count: 1(clear) + 3(countdown) + 9(shows) + 1(final clear) + 1(complete) = 15
+        assert_eq!(plan.steps.len(), 15);
         assert_eq!(plan.numbers_generated.len(), 9);
         assert!(plan.expected_sum >= 0, "sum should be non-negative");
         // Every value and the sum must stay exactly representable in f64.
@@ -565,9 +563,10 @@ mod tests {
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg_attr(not(target_arch = "wasm32"), test)]
-    fn inter_number_gap_is_fixed_and_exposure_is_uniform() {
-        // The gap is fixed by the timing budget (see crate::core::timing),
-        // not by user input: any session must produce it.
+    fn continuous_replacement_keeps_exposure_uniform() {
+        // Numbers replace one another directly (see crate::core::timing):
+        // every exposure is the configured duration, and the only clears are
+        // the initial and final ones, both with zero delay.
         for total in [1, 3] {
             let input = SessionConfigInput {
                 digits_per_number: 1,
@@ -596,23 +595,19 @@ mod tests {
                 vec![500; usize::try_from(total).expect("test total fits usize")]
             );
 
-            // Each indexed clear must carry the fixed 100ms blank gap.
+            // Exactly two clears remain (start and end), neither waits.
             let clear_delays: Vec<u64> = plan
                 .steps
                 .iter()
                 .filter_map(|s| match s {
                     SessionStep::ClearScreen {
-                        index: Some(_),
                         delay_ms_before_next,
                         ..
                     } => Some(*delay_ms_before_next),
                     _ => None,
                 })
                 .collect();
-            assert_eq!(
-                clear_delays,
-                vec![100; usize::try_from(total).expect("test total fits usize")]
-            );
+            assert_eq!(clear_delays, vec![0, 0]);
         }
     }
 

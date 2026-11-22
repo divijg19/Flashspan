@@ -308,7 +308,13 @@ jobs:
       #
       # After the tests rather than before them, because it is this job's most
       # expensive step and a failing test should not pay for it first.
+      # Remap the runner's home out of the shipped artefact: Rust embeds
+      # `#[track_caller]` source paths in the data section, and the static
+      # prefix keeps those paths from identifying the build machine. The
+      # release opt-level override itself lives in `build:wasm`.
       - name: Build the release WASM package
+        env:
+          RUSTFLAGS: "--remap-path-prefix=/home/runner=/U"
         run: bun run build:wasm
 
       # `src/wasm/pkg` only exists here, so this is the one place the JS/WASM

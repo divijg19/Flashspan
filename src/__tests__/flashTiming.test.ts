@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { browserRuntime } from "../runtime/browser";
 
-describe("flash timing: uniform exposure with fixed 100ms gap", () => {
+describe("flash timing: uniform exposure with continuous replacement", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.setSystemTime(0);
@@ -13,12 +13,12 @@ describe("flash timing: uniform exposure with fixed 100ms gap", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("schedules countdown, uniform flashes, and 100ms blanks", async () => {
+	it("schedules countdown and uniform flashes with no blank between them", async () => {
 		await browserRuntime.setSoundEnabled(false);
 
 		const countdowns: Array<{ value: string; at: number }> = [];
 		const shows: Array<{ index: number; at: number }> = [];
-		const indexedClears: Array<{ index: number; at: number }> = [];
+		const clears: number[] = [];
 		let completedAt: number | null = null;
 
 		await browserRuntime.onCountdownTick((value) => {
@@ -27,10 +27,8 @@ describe("flash timing: uniform exposure with fixed 100ms gap", () => {
 		await browserRuntime.onShowNumber((payload) => {
 			shows.push({ index: payload.index, at: Date.now() });
 		});
-		await browserRuntime.onClearScreen((payload) => {
-			if (payload.index != null) {
-				indexedClears.push({ index: payload.index, at: Date.now() });
-			}
+		await browserRuntime.onClearScreen(() => {
+			clears.push(Date.now());
 		});
 		await browserRuntime.onSessionComplete(() => {
 			completedAt = Date.now();
@@ -55,29 +53,21 @@ describe("flash timing: uniform exposure with fixed 100ms gap", () => {
 		await vi.advanceTimersByTimeAsync(1100);
 		expect(shows).toEqual([{ index: 1, at: 3100 }]);
 
-		// Uniform 500ms exposure for the first flash (no first-flash bonus).
-		// This pins the *plan*; `flashExposure.test.tsx` pins the same property at
-		// the driver level, under injected delivery lateness.
+		// Continuous replacement: the second number takes the first one's place
+		// exactly one exposure later. There is no clear event in between — only
+		// the global clear at session start and the one after the last number.
 		await vi.advanceTimersByTimeAsync(500);
-		expect(indexedClears).toEqual([{ index: 1, at: 3600 }]);
-
-		// Fixed 100ms blank before the second flash.
-		await vi.advanceTimersByTimeAsync(100);
 		expect(shows).toEqual([
 			{ index: 1, at: 3100 },
-			{ index: 2, at: 3700 },
+			{ index: 2, at: 3600 },
 		]);
+		expect(clears).toEqual([0]);
 
-		// Second exposure is identical to the first.
+		// Uniform 500ms exposure for the second flash too, then the closing
+		// clear and completion with no trailing gap.
 		await vi.advanceTimersByTimeAsync(500);
-		expect(indexedClears).toEqual([
-			{ index: 1, at: 3600 },
-			{ index: 2, at: 4200 },
-		]);
-
-		// 100ms trailing gap, then completion.
-		await vi.advanceTimersByTimeAsync(100);
-		expect(completedAt).toBe(4300);
+		expect(clears).toEqual([0, 4100]);
+		expect(completedAt).toBe(4100);
 	});
 
 	it("schedules large sessions without upfront generation", async () => {
@@ -109,15 +99,15 @@ describe("flash timing: uniform exposure with fixed 100ms gap", () => {
 		expect(shows).toEqual([]);
 		expect(started?.effective_config.total_numbers).toBe(500);
 
-		// Early events keep exact golden times.
+		// Early events keep exact golden times: one exposure per number, no gap.
 		await vi.advanceTimersByTimeAsync(3100);
 		expect(shows[0]).toEqual({ index: 1, at: 3100 });
-		await vi.advanceTimersByTimeAsync(200);
-		expect(shows[1]).toEqual({ index: 2, at: 3300 });
+		await vi.advanceTimersByTimeAsync(100);
+		expect(shows[1]).toEqual({ index: 2, at: 3200 });
 
 		// The chained driver runs the full session to identical completion:
-		// 3100 + 500 * (100 + 100).
-		await vi.advanceTimersByTimeAsync(100000 - 200);
+		// 3100 + 500 * 100.
+		await vi.advanceTimersByTimeAsync(50000 - 100);
 		if (completion.current === null) {
 			throw new Error("large session did not complete");
 		}

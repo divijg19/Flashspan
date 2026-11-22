@@ -5,7 +5,6 @@ import {
 	COUNTDOWN_FROM,
 	COUNTDOWN_TICK_MS,
 	COUNTDOWN_TICKS,
-	INTER_NUMBER_GAP_MS,
 	PRE_FLASH_SETTLE_MS,
 } from "../timing";
 
@@ -150,7 +149,6 @@ describe("countdown stylesheet covers the countdown surface", () => {
 		expect(COUNTDOWN_FROM).toBe(3);
 		expect(COUNTDOWN_TICK_MS).toBe(1000);
 		expect(PRE_FLASH_SETTLE_MS).toBe(100);
-		expect(INTER_NUMBER_GAP_MS).toBe(100);
 
 		// The displayed sequence must be exactly one value per count, descending.
 		expect(COUNTDOWN_TICKS).toHaveLength(COUNTDOWN_FROM);

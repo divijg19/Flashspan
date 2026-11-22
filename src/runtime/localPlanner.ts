@@ -77,7 +77,7 @@ export function normalizeSessionConfig(
 	return {
 		digits_per_number: digits,
 		number_duration_s: round1(clamp(input.number_duration_s, 0.1, 60)),
-		// No inter-number gap field: the gap is fixed (INTER_NUMBER_GAP_MS).
+		// No inter-number gap field: numbers replace one another continuously.
 		total_numbers: Math.min(
 			clamp(safeInt(input.total_numbers), 1, MAX_TOTAL_NUMBERS),
 			maxTotalForDigits(digits),

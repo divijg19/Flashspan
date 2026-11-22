@@ -23,5 +23,7 @@ export const COUNTDOWN_TICK_MS = 1000;
  */
 export const PRE_FLASH_SETTLE_MS = 100;
 
-/** Fixed blank gap between consecutive numbers. Rust: `INTER_NUMBER_GAP_MS`. */
-export const INTER_NUMBER_GAP_MS = 100;
+/**
+ * Numbers replace one another continuously during a session: there is no
+ * inter-number gap and no blank step. Rust: `core/timing.rs`.
+ */

@@ -7,10 +7,12 @@ Ascent Flash is a desktop flash-mental-math trainer. It shows a sequence of numb
 ## Features
 
 - Fast, consistent flashing: on desktop, timing is driven by the Rust backend; the browser build uses the same fixed schedule
-- Configurable session settings: digits per number (1–15), flash duration, count, optional negative numbers; numbers are separated by a fixed 100ms blank
+- Configurable session settings: digits per number (1–15), flash duration, count, optional negative numbers; numbers replace one another continuously with no blank frame between them
 - Audio cues: beep during flashes, applause/buzzer on validation (toggleable)
 - Auto-repeat: optionally run multiple rounds with a countdown between sessions
-- Theme + color schemes
+- Theme + color schemes carried consistently from the interface through every
+  flashing session; large tabular lining numerals at regular weight, sized for
+  children
 
 ## Install (from Release)
 

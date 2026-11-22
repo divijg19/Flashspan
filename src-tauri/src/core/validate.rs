@@ -144,8 +144,8 @@ pub fn normalize_session_config(
         allow_negative_numbers: input.allow_negative_numbers,
     };
 
-    // The inter-number gap is fixed (see crate::core::timing) and no longer
-    // part of the config wire format.
+    // There is no inter-number gap: numbers replace one another continuously
+    // (see crate::core::timing), so no gap is part of the config wire format.
     let effective = effective_from(&config);
 
     (config, effective)

@@ -38,7 +38,6 @@ export type WasmSessionStep =
 	| {
 			ClearScreen: {
 				session_id: number;
-				index: number | null;
 				delay_ms_before_next: number;
 			};
 	  }

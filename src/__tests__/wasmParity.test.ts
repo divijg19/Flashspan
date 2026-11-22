@@ -233,8 +233,8 @@ describe.skipIf(!HAS_WASM)("WASM bridge ABI", () => {
 			expect(Math.abs(value)).toBeGreaterThanOrEqual(100);
 			expect(Math.abs(value)).toBeLessThanOrEqual(999);
 		}
-		// 1 initial clear + 3 countdown ticks + 2 per number + final clear +
-		// complete.
-		expect(plan.steps).toHaveLength(1 + 3 + 2 * 20 + 1 + 1);
+		// 1 initial clear + 3 countdown ticks + 1 show per number
+		// (continuous replacement) + final clear + complete.
+		expect(plan.steps).toHaveLength(1 + 3 + 20 + 1 + 1);
 	});
 });
