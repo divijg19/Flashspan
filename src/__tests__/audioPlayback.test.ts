@@ -148,18 +148,10 @@ describe("browser audio playback", () => {
 	});
 
 	/**
-	 * Warmup's whole job is to have the bytes decoded before the countdown
-	 * ends, and it used to also mark the device ready from a muted play-through
-	 * that was rewound straight away — so one early "success" silenced every
-	 * later failure, including a device that died mid-session.
-	 *
-	 * It also runs on the only cold cache a page ever gets, which is where the
-	 * two claims meet: the ticks that arrive while the first decode is still in
-	 * flight are waiting on the same promise, so when it lands they would both
-	 * sound. Only the newest may — a beep that fires a tick late is a beep
-	 * attached to the wrong number. That is why this is the first test in the
-	 * file to touch the buffers: a load that *succeeds* is cached for the life
-	 * of the page, and no later test can be slow again.
+	 * Warmup decodes bytes without claiming device readiness. This is the only
+	 * cold cache a page gets, so it is also where the slow-load race is tested:
+	 * ticks waiting on the same promise must not both sound. It runs first
+	 * because a successful load is cached for the page's lifetime.
 	 */
 	it("decodes on warmup without claiming anything, and lets only the newest tick sound", async () => {
 		const started = mark();

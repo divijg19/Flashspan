@@ -105,14 +105,9 @@ let soundEnabled = loadSoundEnabled();
 let hasLoggedWasmPlannerReady = false;
 let hasLoggedWasmPlannerFallback = false;
 /**
- * What audio has actually done so far: nothing yet, a sound played, or a
- * playback attempt failed. `getAudioStatus` reports this instead of a static
- * capability guess, so it can never claim "ready" for a dead device.
- *
- * A later success clears a failure, so a device that comes back — a headset
- * that reconnects, an audio server that finishes starting — stops being
- * reported as broken without a reload. That is the same self-healing the
- * native worker does, and it is why there is no one-way latch here.
+ * What audio has actually done so far. `getAudioStatus` reports this instead
+ * of a static capability guess; a later success clears a failure so a device
+ * that comes back is reported as working again, matching the native worker.
  */
 let audioState: "not-started" | "ready" | "failed" = "not-started";
 
@@ -167,16 +162,9 @@ function ensureAudioContext(): AudioContext | null {
 }
 
 /**
- * Unlock the graph from inside a user gesture.
- *
- * The autoplay policy only accepts a *direct* user gesture, and the Start
- * click has already been spent by the time anything asynchronous reaches
- * audio: the UI awaits a fullscreen transition first, so a resume attempted
- * from the session start is outside the gesture it came from. This listener is
- * the fix, because `pointerdown` and `keydown` fire synchronously with the
- * gesture — the one thing the policy asks for. It stays registered for the life
- * of the page, since an engine may suspend the context again at any time (a
- * backgrounded tab, or any audio interruption on iOS).
+ * Unlock the graph from inside a direct user gesture. The Start click's async
+ * work happens after a fullscreen await, so a `pointerdown`/`keydown` listener
+ * is required. It stays registered because engines may re-suspend the context.
  */
 function unlockAudio(): void {
 	const ctx = ensureAudioContext();
@@ -353,22 +341,9 @@ function addListener<T>(
 }
 
 /**
- * Abandon any pending auto-repeat restart.
- *
- * Four call sites need this exact teardown — starting a new session, the
- * hidden-tab abort, stopping, and the explicit cancel control — and each had
- * its own copy of the block. They have to stay in step, which is the same
- * "one algorithm, several copies, no test between them" shape as the planner
- * sign divergence this file used to have.
- *
- * Clearing the handle *is* the cancellation. The block used to set a separate
- * `cancelled` flag first, but it was written in the same breath as the nulling,
- * so every reader's `pendingAutoRepeat?.cancelled` was already false by the
- * time it could be observed — dead state that read as if a timer callback had
- * some other way of surviving. Nulling makes every existing guard see the
- * teardown, so the flag bought nothing.
- *
- * A no-op when nothing is pending, so callers do not need to guard.
+ * Abandon any pending auto-repeat restart. Clearing the handle *is* the
+ * cancellation: every existing guard reads `pendingAutoRepeat`, so nulling it
+ * makes them all see the teardown. No-op when nothing is pending.
  */
 function cancelPendingAutoRepeat(): void {
 	if (!pendingAutoRepeat) {
@@ -489,15 +464,9 @@ function errorName(error: unknown): string {
 }
 
 /**
- * Record a playback failure.
- *
- * Deliberately has neither of the two exemptions the media-element version
- * needed. There is no "already proven working" guard, because one early
- * success used to silence every later failure — including a device that died
- * mid-session. And there is no `AbortError` exemption, because that rejection
- * was an artefact of cutting by seeking a media element, which is the whole
- * reason this is Web Audio now. What survives is the autoplay policy, which is
- * a state rather than a fault, and clears on the next gesture.
+ * Record a playback failure. No "already proven working" guard and no
+ * `AbortError` exemption: a genuine failure is always reported. Only
+ * `NotAllowedError` — the autoplay policy, a state not a fault — is ignored.
  */
 function recordAudioFailure(error: unknown): void {
 	if (errorName(error) === "NotAllowedError") {
@@ -515,15 +484,10 @@ function silenceAudio(): void {
 }
 
 /**
- * Prime the graph ahead of the first flash: bring the context up if a gesture
- * is still live, and start fetching and decoding the clips so the beep lands
- * on time instead of stalling on first use.
- *
- * It says nothing about availability on purpose. The version this replaces
- * marked the device ready from a muted play-through that was rewound straight
- * away, so one early "success" proved a device that was never heard at all.
- * Decoding shows what it actually shows — that the bytes are there — and
- * `audioState` moves on the first real play.
+ * Prime the graph ahead of the first flash: resume the context within a live
+ * gesture and start decoding clips. Says nothing about availability — decoding
+ * proves only that the bytes are there; `audioState` moves on the first real
+ * play.
  */
 function warmupAudio(): void {
 	if (!soundEnabled) {
@@ -682,15 +646,9 @@ function asFiniteNumber(value: unknown): number | null {
 }
 
 /**
- * Append an event, refusing a timestamp that would collide with the previous
- * one.
- *
- * The driver chains fixed intervals, so two events sharing an `at` would fire in
- * the same turn of the event loop and a flashed number would never be seen.
- * Rust's schedule guarantees a minimum spacing (invariant I2 in `core/timing.rs`),
- * but nothing in TypeScript enforced it, and a zero-delay step from a foreign or
- * corrupt module would otherwise slip through. Rejecting the plan here falls
- * back to the local planner, which cannot produce a collision.
+ * Append an event, refusing a timestamp colliding with the previous one: two
+ * events at the same `at` would fire in one turn and a flash would be unseen.
+ * Rejecting such a plan falls back to the local planner.
  */
 function pushEvent(
 	events: PlannedDriverEvent[],
@@ -1068,18 +1026,10 @@ async function startSessionImpl(
 			events = local;
 		}
 
-		// Chained single-timer driver: at most one pending timeout, so timer
-		// bookkeeping stays O(1) and stopping clears a single handle.
-		//
-		// Each event is scheduled the fixed interval after the previous one,
-		// *not* against an absolute grid. Anchoring to absolute times makes the
-		// previous event's delivery lateness eat into this one's window: the
-		// countdown's paint tail and the countdown->flashing view transition
-		// delay the first show, which then shortened the first number's exposure
-		// by the same amount, so it visibly flashed for less than the rest.
-		// Fixed intervals make exposure exact by construction: a late callback
-		// can only delay when an event lands, never shorten how long the
-		// previous one stays on screen.
+		// Chained single-timer driver: at most one pending timeout. Schedule each
+		// event at a fixed interval after the previous one, not on an absolute
+		// grid — a late delivery can delay an event but never shorten the
+		// previous number's exposure.
 		const previousAtMs = (pos: number): number =>
 			pos === 0 ? 0 : events[pos - 1].at;
 		const fireEvent = (pos: number): void => {
@@ -1174,17 +1124,9 @@ export function validateAnswer(
 }
 
 /**
- * A session abandoned while the tab is hidden must not run on forever.
- *
- * The driver chains fixed intervals, so a late delivery stretches the session
- * rather than dropping stimulus. Chrome throttles a deeply-nested chained timer
- * to one wake per minute once a page has been hidden past five minutes, which
- * would leave a 10,000-number session crawling for hours with nothing to show
- * for it. Interrupting the session at the boundary keeps that case finite and
- * tells the user what happened, instead of a screen that appears stuck.
- *
- * The threshold is a product decision, not a correctness one: the schedule
- * itself never needed it.
+ * A session abandoned while the tab is hidden must not run on forever. Browsers
+ * throttle deeply-nested timers in hidden pages to one wake per minute, which
+ * would stretch a long session over hours; abort at the boundary instead.
  */
 const MAX_HIDDEN_SESSION_MS = 30_000;
 let hiddenAtMs: number | null = null;
@@ -1376,29 +1318,9 @@ export const browserRuntime: Runtime = {
 	},
 };
 
-// ---------------------------------------------------------------------------
-// Test seams
-//
-// Internals exported purely so tests can drive them without a full session.
-// They are not part of the app's API: nothing in `src/` outside this module and
-// the test suite reads them.
-//
-//   `planStepsToEvents` — the WASM-plan-to-driver-event converter, a pure
-//   function with no ambient state, declared `export` where it is defined.
-//
-//   `validateAnswer` — the answer-grading entry point, exercised directly
-//   because it is where the answer key comes from.
-//
-//   `__test_clearSessionTimers` / `__test_setCompletedSession` — thin wrappers
-//   around module-private state. Named with the `__test_` prefix so it is
-//   obvious at the call site that this is a seam, not API.
-//
-// The pure planner that mirrors the Rust core — `normalizeSessionConfig`,
-// `normalizeAutoRepeat`, `maxTotalForDigits`, `generateNumber`,
-// `deterministicFallback`, `generateLocalPlan`, `parseProvidedAnswerText` and
-// `parseWithNumberFallback` — now lives in `./localPlanner`, which is where the
-// wasm-parity suites reach it.
-// ---------------------------------------------------------------------------
+// Test seams: exported only so tests can drive internals without a full
+// session. `planStepsToEvents` and `validateAnswer` are pure entry points;
+// `__test_*` names mark wrappers around module-private state.
 
 /** Simulate a driver timer firing, so `clearSessionTimers` can be unit-tested. */
 export function __test_clearSessionTimers(session: {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { browserRuntime } from "../runtime/browser";
 import { normalizeAutoRepeat } from "../runtime/localPlanner";
-import type { StartSessionResponse } from "../runtime/types";
+import { startedOrFail } from "./helpers";
 
 /**
  * Auto-repeat must terminate after the requested number of repeats.
@@ -22,24 +22,11 @@ const BASE_CONFIG = {
 	allow_negative_numbers: false,
 } as const;
 
-// A 2-number session is 3.1s of countdown plus 2 x (500ms + 100ms) = 4.3s.
+// A 2-number session is 3.1s of countdown plus 2 x 500ms exposure = 5.1s;
+// 6000ms leaves slack for timer delivery.
 const SESSION_MS = 6000;
 
 describe("auto-repeat", () => {
-	/**
-	 * None of these cases exercise the superseded-stop path, so a null response
-	 * here would mean the runtime broke its own contract rather than declined.
-	 */
-	function startedOrFail(
-		response: Awaited<ReturnType<typeof browserRuntime.startSession>>,
-	): StartSessionResponse {
-		expect(response).not.toBeNull();
-		if (!response) {
-			throw new Error("startSession unexpectedly returned null");
-		}
-		return response;
-	}
-
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.setSystemTime(0);
@@ -157,20 +144,8 @@ describe("auto-repeat", () => {
 	});
 
 	/**
-	 * Leaving the end screen must destroy the pending restart.
-	 *
-	 * This is the property that makes a manual Start safe. The end screen shows
-	 * the auto-repeat countdown bar, and its only way back to the home screen is
-	 * the "Home" button, which calls `stop()`. `stopSession` cancels
-	 * `pendingAutoRepeat` and bumps `sessionEpoch`, so by the time the user can
-	 * press Start again there is no repeat left to race them.
-	 *
-	 * If that ever stops holding — a new route off the end screen that skips
-	 * `stop`, or a `stopSession` that stops clearing the timer — the manual Start
-	 * and the pending restart both reach `startSession`, the loser throws
-	 * "A session is already starting", and `App.tsx`'s catch sets the phase to
-	 * idle while a session is live and flashing numbers. So pin the cancellation
-	 * rather than the UI layout: the layout is easy to read, the invariant is not.
+	 * Leaving the end screen must cancel the pending restart, so a manual Start
+	 * cannot race it. Pin the cancellation rather than the UI route.
 	 */
 	it("cancels the pending restart when the user leaves the end screen", async () => {
 		await browserRuntime.setSoundEnabled(false);

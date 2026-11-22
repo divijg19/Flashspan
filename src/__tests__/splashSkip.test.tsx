@@ -105,22 +105,9 @@ describe("skipping the splash", () => {
 });
 
 /**
- * The splash must not move after it appears, and its fade-out must never be cut
- * short.
- *
- * Two independent defects produced the stutter:
- *
- * 1. The banner declared no intrinsic size, so its box had zero height until the
- *    278KB PNG decoded and the flex column re-centred mid-fade. The
- *    width/height attributes below are what fix that; if they are ever dropped,
- *    the layout jump comes straight back.
- * 2. The fade lived in CSS while the schedule lived in JS as separate literals,
- *    so the unmount could land before the transition finished (cutting the last
- *    frames) or long after it (an invisible, click-through overlay). Unmount now
- *    hangs off the opacity transition ending, with a timer as the backstop.
- *
- * Honest caveat: jsdom does not run CSS transitions, so the lifecycle test
- * exercises the JS schedule and the backstop, not real fade timing.
+ * The splash must not shift when its PNG decodes (hence the width/height
+ * attributes) and its JS unmount schedule must outlast the CSS fade. jsdom does
+ * not run transitions, so these tests cover the schedule and backstop only.
  */
 describe("splash presentation", () => {
 	afterEach(async () => {

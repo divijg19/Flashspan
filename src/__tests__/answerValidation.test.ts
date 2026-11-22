@@ -194,16 +194,9 @@ describe("validateAnswer", () => {
 });
 
 /**
- * `deterministicFallback` must agree with `next_distinct_value` in
- * `core/engine.rs`: rotate the magnitude one step inside the digit-width domain,
- * and carry the previous value's sign while the running sum can still fund it.
- *
- * This block previously pinned the opposite rule. It asserted that a negative
- * predecessor comes back positive ("strips minus") and that an affordable
- * positive duplicate becomes negative — the two halves of the divergence
- * `src/__tests__/generatorFallback.test.ts` now pins against. Its comments also
- * referred to a `maxExclusive` the implementation no longer had, so the values
- * they claimed to explain were stale.
+ * `deterministicFallback` must mirror `next_distinct_value` in `core/engine.rs`:
+ * rotate the magnitude within the digit width, carry the previous sign while
+ * the sum funds it. Parity is pinned by `generatorFallback.test.ts`.
  */
 describe("deterministicFallback", () => {
 	it("keeps a negative payload negative while the sum funds it", () => {

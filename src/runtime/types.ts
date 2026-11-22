@@ -14,17 +14,9 @@ export type ColorScheme =
 	| "sage";
 
 /**
- * The colour schemes the picker offers, in display order.
- *
- * Declared once, next to the `ColorScheme` union it enumerates. The union used
- * to be repeated twice more — as a `const` array in the settings panel and as a
- * six-way inline comparison in the settings loader — so adding a scheme to the
- * type without updating both left the picker without the new option and the
- * loader silently resetting a saved preference to the default.
- *
- * Both drift directions are compile errors now, by different mechanisms:
- * `satisfies` rejects a scheme the union does not know about, and
- * `_AllSchemesListed` below rejects a union member the list has forgotten.
+ * Colour schemes the picker offers, in display order. `satisfies` and
+ * `_AllSchemesListed` make both drift directions against `ColorScheme` a
+ * compile error.
  */
 export const COLOR_SCHEMES = [
 	"ocean",
